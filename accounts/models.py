@@ -23,9 +23,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     email = models.EmailField(unique=True)
-    nickname = models.CharField(
-        max_length=20, unique=True, validators=[MinLengthValidator(2)]
-    )
+    nickname = models.CharField(max_length=20, unique=True, validators=[MinLengthValidator(2)])
     active_role = models.CharField(
         max_length=8, choices=ActiveRole.choices, default=ActiveRole.USER
     )

@@ -13,6 +13,7 @@ UUIDv7 is time-ordered, which (unlike random UUIDv4) keeps B-Tree index inserts
 mostly sequential and avoids random page flushes — the reason for choosing it
 as the PK strategy (model.md §1.2).
 """
+
 import uuid
 
 import uuid_utils

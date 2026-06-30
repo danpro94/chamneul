@@ -5,6 +5,7 @@ Secrets and connection details come from environment variables (CLAUDE.md §10);
 python-dotenv loads a local .env for developer convenience. The .env file itself
 is never committed — only .env.example is. (Future option: pydantic-settings.)
 """
+
 import os
 from pathlib import Path
 

@@ -250,3 +250,68 @@ CLAUDE.md 직접 수정도 이번 세션에 한해 추가 승인(헌법 잠금 1
 
 1. Milestone 2 — `accounts`의 `UserRole` / `RoleGrant` / `GoogleIdentity` + createsuperuser→ADMIN UserRole 훅.
 2. 이후 Milestone 3 — 인증(signup/login/logout/OAuth) + DRF serializer/viewset/permission.
+
+---
+
+## 2026-06-30 — 독립 git 저장소 초기화 + 전략 IP 공개범위 분할 + ruff 도입
+
+### 작업
+
+1. 비밀정보 교차검증: chamneul이 상위 `personal` 저장소에 추적된 적 없음, `.env`/자격증명/하드코딩 비밀값 부재 확인.
+2. Public 공개 전략 분석(Data-Driven): 코드/기술 문서는 공개 안전, 사업전략·평가 알고리즘 설계는 별도 IP 범주임을 분석.
+3. `docs/1 서비스기획_v1.md` 전략 IP(ELO 점수 설계·조언자 평가 모델·승인 트리)를 공개 요약본 / 비공개 상세본으로 분할 (ADR-004).
+4. ruff(lint+format) dev 의존성 도입. 운영 이미지 제외 구조 검증. 코드베이스 check/format 적용.
+5. README_AIUSAGE 갱신 후 GitHub Public 저장소 생성·push.
+
+### 사용 도구
+
+* Claude Opus 4.8 (claude-opus-4-8)
+* Claude Code CLI
+
+### 인간 결정 (Owner, 2026-06-30)
+
+| ID | 결정 |
+| --- | --- |
+| G1 | chamneul을 상위 `personal` 저장소에서 분리해 독립 git 저장소로 초기화 |
+| G2 | 저장소는 Public 공개. 단 핵심 전략 IP는 비공개 처리 |
+| G3 | 전략 문서 처리 = 옵션 B(분할 발행: 공개 요약본 + 비공개 상세본) + ADR-004 기록 |
+| G4 | ruff(lint/format)는 dev 의존성으로 먼저 도입 |
+| G5 | pytest 등 운영 불필요한 개발자 전용 테스트 패키지는 설치 제외 (테스트는 Django 기본 test runner 사용) |
+
+### 생성된 산출물
+
+신규:
+
+* `docs/adr/ADR-004-strategy-doc-visibility-split.md` — 공개범위 3단계 분류 + 분할 발행 결정
+* `docs/_private/1 서비스기획_v1_full.md` — 전략 IP 원본 보존 (gitignored, 비추적)
+* `pyproject.toml` `[dependency-groups].dev` + `[tool.ruff]` 설정 블록
+
+수정:
+
+* `docs/1 서비스기획_v1.md` — 공개 요약본으로 교체 (ELO/평가/승인 로직 제거, ADR-004 참조 명시)
+* `.gitignore` — `docs/_private/` 추가
+* `pyproject.toml`/`uv.lock` — ruff dev 그룹 추가
+* ruff format 적용: `accounts/models.py`, `common/uuid7.py`, `config/settings/{base,local,test,prod}.py`, `manage.py` (7개)
+
+### 검증 결과 (전부 실행 완료)
+
+* `git ls-files` → 추적 45→갱신, `.env`/`docs/_private` 추적 0건 ✅
+* `git check-ignore` → `.env`·`docs/_private/`·`.venv` 모두 무시됨 ✅
+* `uv export --no-dev` → 운영 의존성에 ruff 없음 (dev 그룹 격리 확인) ✅
+* `uv run ruff check .` → All checks passed ✅
+* `uv run ruff format .` → 7 files reformatted ✅
+* `manage.py check` → 0 issues ✅
+* `makemigrations --check --dry-run` → No changes detected ✅
+* 공개 요약본 IP 누출 grep → ELO/Layer/점수설계/승인트리 키워드 부재 ✅
+
+### 잔여 리스크
+
+1. **`docs/_private/`는 git 백업 부재** — 별도 백업(private Notion/암호화) 권장 (ADR-004 trade-off 명시).
+2. **중첩 저장소** — chamneul/.git이 상위 `personal` 저장소 디렉터리 내부에 위치. 상위가 chamneul을 커밋하지 않으므로 동작엔 무해하나, 장기적으로 chamneul을 별도 경로로 분리 이전하는 것이 깔끔.
+3. **이전 리스크 해소**: 직전 Milestone 1의 "ruff 미도입"(§16 패키지 게이트) 리스크는 본 세션 G4로 해소됨.
+4. **Notion drift 유지** — api.md §7 패치 미반영 상태 지속.
+
+### 다음 단계 권장
+
+1. Milestone 2 — `accounts`의 `UserRole` / `RoleGrant` / `GoogleIdentity` + createsuperuser→ADMIN 훅.
+2. CI에 ruff check 게이트 추가 (Phase 3 CI/CD 진입 시).

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Django command-line utility. Run via `uv run python manage.py <command>`."""
+
 import os
 import sys
 
@@ -10,8 +11,7 @@ def main():
         from django.core.management import execute_from_command_line
     except ImportError as exc:
         raise ImportError(
-            "Couldn't import Django. Are you inside the uv venv? "
-            "Try `uv run python manage.py ...`."
+            "Couldn't import Django. Are you inside the uv venv? Try `uv run python manage.py ...`."
         ) from exc
     execute_from_command_line(sys.argv)
 

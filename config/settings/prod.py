@@ -1,4 +1,5 @@
 """Production settings. Secret and allowed hosts are mandatory from the env."""
+
 import os
 
 from .base import *  # noqa: F401,F403
