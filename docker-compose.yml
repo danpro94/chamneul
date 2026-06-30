@@ -1,0 +1,43 @@
+# Local runtime: one app container + one postgres container on a shared
+# compose network. The app reaches Postgres by the service name `db`.
+services:
+  db:
+    image: postgres:16
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      # host:container — 15432 on the host avoids clashing with a local 5432.
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.local
+      # Override the host-facing DB settings: inside the network it's db:5432.
+      DB_HOST: db
+      DB_PORT: 5432
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        # Wait until Postgres actually accepts connections, not just "started".
+        condition: service_healthy
+    volumes:
+      - .:/app
+      # Anonymous volume keeps the container-built .venv from being shadowed by
+      # the host .venv (which was built for macOS, not the linux container).
+      - /app/.venv
+
+volumes:
+  pgdata:

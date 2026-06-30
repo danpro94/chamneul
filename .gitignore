@@ -1,0 +1,32 @@
+# --- Secrets / local env (CLAUDE.md §10) ---
+.env
+.env.*
+!.env.example
+
+# --- Private strategy IP (ADR-004) ---
+# 신뢰 점수 알고리즘 설계 / 평가 모델 / 승인 로직 등 핵심 전략 IP.
+# public 저장소에는 가공 요약본만 공개한다.
+docs/_private/
+
+# --- Python virtual env (uv-managed) ---
+.venv/
+
+# --- Python bytecode / caches ---
+__pycache__/
+*.py[cod]
+*$py.class
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# --- Django ---
+*.log
+staticfiles/
+media/
+# Note: migration files ARE committed (schema source of truth). Do not ignore them.
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+# .vscode/ is intentionally tracked (shared interpreter path); add specific
+# ignores below if a file becomes machine-local.
