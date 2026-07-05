@@ -30,3 +30,6 @@ media/
 .idea/
 # .vscode/ is intentionally tracked (shared interpreter path); add specific
 # ignores below if a file becomes machine-local.
+
+# --- Claude Agents ---
+.claude/agents/
