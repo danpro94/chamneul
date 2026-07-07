@@ -60,13 +60,15 @@ class Concern(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    objects = ConcernManager()
     # Unfiltered manager: FK traversal(advice.concern 등)과 Django 내부 동작은
     # soft-deleted row에도 닿아야 한다(감사 기록 보존, §6.6). base_manager를
     # 필터된 objects로 두면 삭제된 고민에 딸린 advice에서 DoesNotExist가 터진다.
+    # 어느 매니저가 어떤 역할인지는 Meta에서 명시적으로 지정한다.
     all_objects = models.Manager()
+    objects = ConcernManager()
 
     class Meta:
+        default_manager_name = "objects"
         base_manager_name = "all_objects"
         indexes = [
             models.Index(
