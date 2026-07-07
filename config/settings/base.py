@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     # local
     "accounts",
     "advisors",
+    "concerns",
 ]
 
 MIDDLEWARE = [
