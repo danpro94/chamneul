@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "advisors",
     "concerns",
     "advice",
+    "notifications",
 ]
 
 MIDDLEWARE = [
