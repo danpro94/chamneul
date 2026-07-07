@@ -11,8 +11,18 @@ class AdviceAdmin(admin.ModelAdmin):
     list_filter = ("status",)
     search_fields = ("advisor__email", "concern__concern_summary")
     list_select_related = ("concern", "advisor")
-    # version은 감사 카운터 — 수동 편집 금지 (CLAUDE.md §6.7)
-    readonly_fields = ("id", "version", "created_at", "updated_at")
+    # version은 감사 카운터 — 수동 편집 금지 (CLAUDE.md §6.7).
+    # status/reviewed_*는 M4 review action 전까지 readonly — 직접 편집하면 부수효과
+    # (concern 상태 전이 + Notification)가 우회된다 (data-modeler I-1).
+    readonly_fields = (
+        "id",
+        "status",
+        "reviewed_at",
+        "reviewed_by",
+        "version",
+        "created_at",
+        "updated_at",
+    )
 
 
 @admin.register(AdviceHistory)

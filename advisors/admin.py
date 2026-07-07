@@ -11,4 +11,6 @@ class AdvisorApplicationAdmin(admin.ModelAdmin):
     list_filter = ("status", "domain_category")
     search_fields = ("display_name", "applicant__email")
     list_select_related = ("applicant", "reviewed_by")
-    readonly_fields = ("id", "submitted_at")
+    # status/reviewed_*는 M4 review action이 생기기 전까지 readonly — 직접 편집하면
+    # 승인 부수효과(UserRole+RoleGrant+Notification)가 우회된다 (data-modeler I-1).
+    readonly_fields = ("id", "status", "reviewed_at", "reviewed_by", "submitted_at")
