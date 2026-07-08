@@ -78,6 +78,7 @@
 ```
 [진입]
 1. 랜딩 → 회원가입(2, 자동 로그인 Set-Cookie) 또는 로그인(3) 또는 Google(5→6, 302 복귀)
+   (첫 Google 가입 시 서버가 nickname 자동 부여 — 프론트는 첫 홈에서 닉네임 확인 넛지 배너 + /me 유도, C-11 확정)
 2. 앱 부트스트랩: GET /users/me(7) + GET /users/me/roles(9)
    → 401이면 로그인 화면, 200이면 홈
 
@@ -92,7 +93,7 @@
      조언가를 연결" — 자동 매칭 아님을 명시)
 4. /concerns 목록(17): 상태 뱃지 + has_approved_advice 표시
 5. /concerns/{id} 상세(18): 상태 타임라인 + approved_advices[]
-6. 조언 도착: 알림(39, ADVICE_APPROVED) 클릭 → 읽음(41) → target_url 이동
+6. 조언 도착: 알림(39, ADVICE_APPROVED) 클릭 → 읽음(41) → 리졸버가 (type, target_url)로 목적지 결정 후 이동 (C-10)
    → 조언 상세(27) → 피드백 1회 작성(34, 점수 1~5 + 내용, 수정/삭제 불가 사전 고지)
 
 [상태별 분기 — 사용자 화면 표기]
@@ -130,7 +131,7 @@ CLOSED     "마무리된 고민" (읽기 전용. Phase 2 v1에는 사용자 닫�
      APPROVED → 읽기 전용 "승인되어 요청자에게 전달됨" (수정/삭제 불가 — 30은 409)
      REJECTED → 읽기 전용 + 반려 사유(※현재 27 응답에 없음 — §7 C-5)
 4. /advisor/advices(31): 전체 이력 (상태·버전) → 상세(27)
-5. 결과 통보: ADVICE_REJECTED 알림(39) → 해당 조언으로 이동
+5. 결과 통보: ADVICE_REJECTED 알림(39) → 리졸버가 advisor 컨텍스트 목적지로 이동 (C-10). active_role이 USER면 전환 유도(#10) 후 이동
 [역할 회수 엣지] ADVISOR 회수(43) 시 서버가 active_role을 USER로 강제 전환
    → advisor 라우트 403 수신 시 roles 재조회(9) 후 USER 홈으로 안내
 ```
@@ -216,7 +217,7 @@ CLOSED     "마무리된 고민" (읽기 전용. Phase 2 v1에는 사용자 닫�
 2. **`intended_lane` — 관리자 심사 상세(#14) 단일 화면 한정.** 신청 폼(#11)에서는 "어느 쪽에 가깝다고 생각하시나요?(참고용)"으로 묻고, "이 선택은 자격 등급이 아니며 다른 사용자에게 공개되지 않습니다" 마이크로카피를 필드 바로 아래 배치. 내 신청 상태(#12)에서도 미표시(응답에 없음).
 3. **`real_name` — 신청 폼에 필드 자체가 없다.** 폼에 실명 입력을 추가하지 않는다. 조언가 공개 표시명은 `display_name` 하나뿐.
 4. **APPROVED만 사용자 노출(§6.2).** 받은 조언함(#26)·고민 상세(#18)는 서버가 이미 필터하지만, 클라이언트도 "검토 중인 조언 N건" 같은 **존재 암시 카운트를 만들지 않는다**(has_approved_advice bool만 사용). 사용자 화면에서 조언 status 뱃지는 렌더링하지 않는다(항상 APPROVED이므로 무의미 + 검토 파이프라인 노출 방지).
-5. **익명 표시.** 조언가 화면(#20, #21)에서 요청자는 `requester_display_alias`로만 표시. alias 공백 시 폴백은 "익명의 요청자"(잠정 — §7 C-7). 요청자 email/nickname/user_id는 조언가 화면에 절대 렌더링하지 않는다. 사용자 화면에서도 배정 전까지 조언가 신원을 보여주지 않으며(#18 응답에 배정 정보 없음 — 의도), 조언 도착 후에야 `advisor_display_name`이 보인다.
+5. **요청자 표시 (Owner 결정 2026-07-08 확정, D-2 / C-6·C-7).** 조언가 화면(#20, #21)의 요청자 표시명은 서버가 `requester_display_name`으로 파생한다: `display_alias`가 있으면 그것, 없고 `is_anonymous=true`면 "익명의 요청자", 없고 `is_anonymous=false`면 계정 `nickname`. 즉 **사용자가 능동적으로 비익명을 선택한 경우에 한해 nickname이 조언가에게 노출된다.** email·user_id는 어떤 경우에도 조언가 화면에 렌더링하지 않는다. 방어 장치: 고민 작성 시 `is_anonymous=false` 선택 지점에 "닉네임이 조언가에게 표시됩니다" 고지 문구(§6)를 둔다(nickname에 실명을 쓴 사용자 보호). 사용자 화면에서도 배정 전까지 조언가 신원을 보여주지 않으며(#18 응답에 배정 정보 없음 — 의도), 조언 도착 후에야 `advisor_display_name`이 보인다.
 6. **관리자 화면 격리.** author_user_id·author_nickname·intended_lane 등은 `/admin/*` 라우트에서만 렌더링하고, 공용 컴포넌트(조언 카드 등)를 admin에 재사용할 때 admin 전용 필드를 props 기본값으로 끄는 계약을 명시한다.
 
 ### 5.2 세션/CSRF 프론트 계약 (ADR-002 → 구현 가능한 규칙)
@@ -236,7 +237,7 @@ CLOSED     "마무리된 고민" (읽기 전용. Phase 2 v1에는 사용자 닫�
 | StateFrame | 화면당 6상태 필수: loading(스켈레톤) / empty(구조화된 빈 상태 — 다음 행동 1개 제시) / error(재시도) / 401 / 403 / success. 409·422는 인라인 필드/배너로 |
 | PendingReviewBanner | "검토 대기" 공통 배너 (조언가 신청 #12, 조언 제출 후 #21) — 기한 약속 없이 절차만 설명 |
 | ConfirmModal(destructive) | 삭제(#19, #30)·피드백 제출(#34, 비가역) 전용. 비가역성 명시 카피 필수 |
-| NotificationBell | #39 폴링(간격은 구현 시 결정). unread_count 배지. 클릭 항목 → #41 → target_url 라우팅 |
+| NotificationBell | #39 폴링(간격은 구현 시 결정). unread_count 배지. 클릭 → #41 → 리졸버(타입 5종 매핑 = §7 C-10 값표) → 이동. 대상 리소스 소실(404/403) 시 `/notifications` 폴백 + 안내 카피. 읽음 처리는 이동 성공 여부와 무관하게 클릭 시점에 수행 |
 | Paginator | page_info 규격(api.md §1.4) 공통 소비. size 기본 20 |
 
 접근성: 모든 상태 뱃지는 색상 외 텍스트 병기, 폼 에러는 aria-describedby 연결, 모달 포커스 트랩, 키보드로 역할 스위처 조작 가능.
@@ -249,6 +250,9 @@ CLOSED     "마무리된 고민" (읽기 전용. Phase 2 v1에는 사용자 닫�
 | --- | --- |
 | 고민 작성 진입 | "이 고민은 회원님과 연결된 조언가, 그리고 검토 담당자만 볼 수 있습니다. 공개 게시판이 아닙니다." |
 | 익명 설정(기본 ON) | "기본적으로 익명으로 전달됩니다. 원하시면 별칭을 정할 수 있어요." |
+| 비익명 선택 시(D-2 방어) | "익명을 끄면 회원님의 닉네임이 조언가에게 표시됩니다. 별칭을 따로 정하면 닉네임 대신 별칭이 보여요." |
+| 넛지 배너(Google 첫 가입, C-11) | "Google 계정으로 시작하면서 닉네임을 '{nickname}'(으)로 설정했어요. 프로필에서 언제든 바꿀 수 있습니다." |
+| 알림 대상 소실 폴백(C-10) | "안내해 드린 항목을 더 이상 볼 수 없어요. 최근 알림 목록으로 이동했습니다." |
 | 고민 제출 완료 | "고민이 안전하게 접수되었습니다. 담당자가 내용을 확인한 뒤 어울리는 조언가를 연결해 드려요. 연결되면 알림으로 알려드립니다." |
 | 조언 열람 상단 고지 | "조언은 정답이 아니라 방향을 함께 고민한 기록입니다. 최종 결정은 언제나 회원님의 몫이에요." |
 | intended_lane 필드(신청 폼) | "본인의 조언 방향에 가까운 쪽을 골라주세요(참고용). 이 선택은 자격 등급이 아니며, 다른 사용자에게 공개되지 않습니다. 최종 구분은 검토 과정에서 정해집니다." |
@@ -272,12 +276,12 @@ CLOSED     "마무리된 고민" (읽기 전용. Phase 2 v1에는 사용자 닫�
 | C-3 | api.md #33 | 412(version mismatch)가 명세됐으나 요청에 기대 버전 필드가 없음 | 요청에 `expected_version` 추가 검토 | API 개선 |
 | C-4 | api.md #21/#27/#31 | `is_submitted`(draft 여부)가 응답에 없어 "임시저장/제출됨" 구분 표시 불가 | 응답에 is_submitted 노출 필요 | API 개선 |
 | C-5 | api.md #27 | `reject_reason`이 응답에 없음 — 조언가가 반려 사유를 알림으로만 확인 | 작성자 한정 조건부 노출 검토 | API 개선 |
-| C-6 | api.md #21 | `is_anonymous=false` 고민의 조언가측 요청자 표시명 미정 | 모델 대조로도 해소 안 됨 | **data-modeler 검증 필요** + Owner 결정 |
-| C-7 | model.md §3.6 | `display_alias` 기본 "" + 익명일 때 폴백 표시명 미정 | 잠정 폴백 "익명의 요청자" — 서버/클라 책임 확정 필요 | Owner 결정 |
-| C-8 | ADR-002 §5, api.md §1.2 | 비로그인 최초 POST 전에 csrftoken 쿠키를 발급받는 명세상 경로 없음 | M4에서 ensure_csrf_cookie 적용 또는 전용 GET — 신규 엔드포인트는 §16 게이트 | API 개선 + Owner 결정 |
+| C-6 | api.md #21 | `is_anonymous=false` 고민의 조언가측 요청자 표시명 미정 | **확정(2026-07-08, D-2)**: 서버 파생 `requester_display_name` = alias or (is_anonymous면 "익명의 요청자" else nickname). 컬럼 추가 없음. §5.1-5 반영 | 확정 |
+| C-7 | model.md §3.6 | `display_alias` 기본 "" + 익명일 때 폴백 표시명 미정 | **확정(2026-07-08)**: 폴백 "익명의 요청자"는 서버 파생 필드 책임(C-6과 동일 규칙) | 확정 |
+| C-8 | ADR-002 §5, api.md §1.2 | 비로그인 최초 POST 전에 csrftoken 쿠키를 발급받는 명세상 경로 없음 | **확정(2026-07-08, D-1)**: 전용 엔드포인트 `GET /api/v1/csrf` 신설(`@ensure_csrf_cookie`). API 표면 43→44. §16 게이트 승인됨 | 확정 |
 | C-9 | api.md #42/#43 | 역할 부여에 user-id(UUID) 필요하나 관리자용 사용자 검색 API 없음 | Phase 2: Django Admin에서 UUID 확인 → UUID 직접 입력 필드로 설계 | 설계로 흡수(개선 후보) |
-| C-10 | api.md OQ-6, model.md O-6 | 알림 `target_url` 상대 경로 ↔ 프론트 라우트 규약 미확정 | 본 명세는 "프론트 라우트 키"로 가정 — 규약 확정 필요 | Owner 결정 |
-| C-11 | api.md OQ-8 | Google 첫 가입 닉네임 자동 산정 → 온보딩 확인 화면 여부 미정 | 화면 옵션만 제시 | Owner 결정 |
+| C-10 | api.md OQ-6, model.md O-6 | 알림 `target_url` 상대 경로 ↔ 프론트 라우트 규약 미확정 | **확정(2026-07-08)**: target_url = 수신자가 GET 가능한 상세 API 상대 경로(`/api/v1/...`). 화면 이동은 클라이언트 리졸버가 `(type, target_url)`로 결정 — 서버는 프론트 라우트 미저장. 타입 5종 값표는 api.md #39 참조 | 확정 |
+| C-11 | api.md OQ-8 | Google 첫 가입 닉네임 자동 산정 → 온보딩 확인 화면 여부 미정 | **확정(2026-07-08)**: 자동 산정(Google name→이메일 로컬파트→`user`, 15자 절단, unique 충돌 시 `_랜덤4자리` 5회 재시도→`user_{uuid7 8자}`, IntegrityError 기반). 강제 온보딩 화면 없음 + 넛지 배너 | 확정 |
 | C-12 | docs/2 mvp-scope_v1.md flow 2 vs api.md #20 | mvp-scope는 "조언가가 고민 목록 확인"으로 읽히나 API는 배정된 고민만 조회 | CLAUDE.md §5 + api.md 우선 — 배정 목록으로 확정 | 문서 drift |
 | C-13 | CLAUDE.md §2/§17 파일명 | `docs/2 mvp-scope.md`·`docs/0 README.md` 참조 vs 실제 `docs/2 mvp-scope_v1.md`·`docs/README.md` | 참조 정리만 필요 | 문서 drift |
 
@@ -308,10 +312,11 @@ CLOSED     "마무리된 고민" (읽기 전용. Phase 2 v1에는 사용자 닫�
 
 ---
 
-## 10. Owner 결정 필요 사항 (M4 구현 전 최소 질문)
+## 10. Owner 결정 (2026-07-08 전부 확정 — 기록 보존)
 
-1. **CLOSED 전이** (C-2): 사용자 "고민 마무리" 버튼용 API를 추가할지, Phase 2는 표시 전용으로 확정할지.
-2. **CSRF 부트스트랩 방식** (C-8): 기존 GET에 ensure_csrf_cookie vs 전용 엔드포인트.
-3. **비익명 고민의 조언가측 표시명 정책** (C-6) + 익명 alias 공백 폴백의 서버/클라 책임 (C-7).
-4. **알림 target_url ↔ 프론트 라우트 규약** (C-10): 본 명세의 라우트 제안(§2)을 규약 기준으로 채택하는가.
-5. **Google 첫 가입 닉네임 확인 온보딩** (C-11): 둘지, 자동 부여 후 프로필 수정(#8)으로 갈음할지.
+1. **CLOSED 전이** (C-2, D-4): **Phase 2는 Django Admin으로만 닫음(표시 전용), 신규 API 없음.** §6.6 "user closes explicitly" 문구와의 긴장은 M5 스모크 문서에 갭 기록.
+2. **CSRF 부트스트랩** (C-8, D-1): **전용 엔드포인트 `GET /api/v1/csrf` 신설**(API 표면 44).
+3. **비익명 표시명** (C-6·C-7, D-2): **서버 파생 `requester_display_name`** — alias or (익명이면 "익명의 요청자" else nickname). 컬럼 추가 없음. 비익명 선택 지점에 노출 고지 문구.
+4. **알림 target_url** (C-10): **수신자 GET 가능 상세 API 상대 경로 + 클라이언트 리졸버**(type로 목적지 분기). 서버는 프론트 라우트 미저장.
+5. **Google 첫 가입 닉네임** (C-11): **서버 자동 산정 + 넛지 배너**, 강제 온보딩 화면 없음.
+6. **응답 필드 보강** (D-3): `is_submitted`(#21/#27/#31)·작성자 한정 `reject_reason`(#27)·`expected_version`(#33) 3건 수용.

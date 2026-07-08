@@ -1,6 +1,8 @@
 # API Specification v1
 
-본 문서는 `chamneul` Phase 2 v1의 공식 API 명세이다. Notion v0 export(41건)을 정합성 검토한 뒤, `토큰 재발급`을 제거하고 `/healthz` + 관리자 역할 부여/해제 2건을 추가하여 **총 43 엔드포인트**를 확정한다.
+본 문서는 `chamneul` Phase 2 v1의 공식 API 명세이다. Notion v0 export(41건)을 정합성 검토한 뒤, `토큰 재발급`을 제거하고 `/healthz` + 관리자 역할 부여/해제 2건을 추가하여 43 엔드포인트를 확정했고, 2026-07-08 Owner 결정으로 CSRF 부트스트랩 엔드포인트(`GET /api/v1/csrf`, D-1)를 추가하여 **총 44 엔드포인트**로 확정한다.
+
+> 2026-07-08 M4 착수 전 Owner 결정 반영 (D-1~D-8, C-10·C-11): §3 요약표 #44 추가, §1.2 CSRF 부트스트랩, 응답 필드 3건 보강(`is_submitted`·작성자 한정 `reject_reason`·`expected_version`, D-3), 알림 `target_url` 규약(C-10), Google nickname 자동 산정(C-11), `domain_category` 11종 확정(D-6), `is_deleted` 표기 정리(C-1). 기존 #1~43 번호는 ux/01 등 상호참조 안정성을 위해 유지하고 신규 엔드포인트만 #44로 덧붙인다.
 
 확정 결정의 출처:
 
@@ -25,6 +27,7 @@
 * Session-based (HttpOnly Cookie `sessionid`). 자세한 정책은 ADR-002.
 * 인증이 필요한 모든 요청은 `Cookie: sessionid=...` 헤더를 동반한다.
 * 상태 변경(POST/PATCH/DELETE) 요청은 CSRF 토큰을 동반한다: `X-CSRFToken: <csrftoken cookie 값>`.
+* **CSRF 부트스트랩 (D-1)**: 비로그인 클라이언트는 첫 상태 변경 요청(로그인/회원가입 POST) 전에 `GET /api/v1/csrf`(#44)를 1회 호출해 `csrftoken` 쿠키를 발급받는다. 이 쿠키는 non-HttpOnly(JS가 읽어 `X-CSRFToken` 헤더로 되돌려보냄)이며, HttpOnly인 `sessionid`와 역할이 다르다 — 세션은 숨기고 CSRF 토큰은 일부러 읽게 한다. 서버 설정: `CSRF_COOKIE_HTTPONLY=False`, `SESSION_COOKIE_HTTPONLY=True`, 전용 뷰에 `@ensure_csrf_cookie`.
 
 ### 1.3 공통 Request Header (인증 필요 API)
 
@@ -120,7 +123,7 @@ CLAUDE.md §7 참조. 요지:
 
 ## 3. API Summary Table
 
-총 43 엔드포인트. **MVP 열 ✓ = Phase 2 v1 구현 대상 (전 항목 ✓)**.
+총 44 엔드포인트. **MVP 열 ✓ = Phase 2 v1 구현 대상 (전 항목 ✓)**.
 
 | # | Domain | Method | Endpoint | Permission | Description | MVP |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -167,6 +170,7 @@ CLAUDE.md §7 참조. 요지:
 | 41 | notification | PATCH | `/api/v1/notifications/{notification-id}/read` | Authenticated (수신자) | 알림 읽음 처리 | ✓ |
 | 42 | admin · role | POST | `/api/v1/admin/users/{user-id}/roles` | Admin | 역할 부여 (ADMIN/ADVISOR) | ✓ |
 | 43 | admin · role | DELETE | `/api/v1/admin/users/{user-id}/roles/{role}` | Admin | 역할 해제 | ✓ |
+| 44 | auth · csrf | GET | `/api/v1/csrf` | Anonymous | CSRF 부트스트랩 — `csrftoken` 쿠키 발급(비로그인 최초 POST 전, D-1). 논리적으로 auth 그룹이나 번호 안정성 위해 말미 배치 | ✓ |
 
 URI 변경 요약 (Notion v0 → v1):
 
@@ -498,9 +502,9 @@ URI 변경 요약 (Notion v0 → v1):
 | Permission | Advisor (배정된 경우만) |
 | Description | 배정된 고민 상세. |
 | Request 주요 필드 | Path: `concern-id` |
-| Response 주요 필드 | `concern_id`, `concern_summary`, `concern_type`, `concern_type_secondary[]`, `decision_context`, `is_anonymous`, `requester_display_alias?`, `assigned_at`, `assignment_id`, `my_advice?`: { `advice_id`, `status`, `version` } |
+| Response 주요 필드 | `concern_id`, `concern_summary`, `concern_type`, `concern_type_secondary[]`, `decision_context`, `is_anonymous`, `requester_display_name`, `assigned_at`, `assignment_id`, `my_advice?`: { `advice_id`, `status`, `version`, `is_submitted` } |
 | Status | 200 / 401 / 403(배정 안 됨) / 404 / 500 |
-| 접근 제어 조건 | 해당 concern에 active 배정이 있는 advisor 본인만. |
+| 접근 제어 조건 | 해당 concern에 active 배정이 있는 advisor 본인만. `requester_display_name`은 서버 파생(C-6/C-7, D-2): `display_alias` 있으면 그것 / 없고 익명이면 "익명의 요청자" / 없고 비익명이면 계정 `nickname`. email·user_id는 미노출. |
 | Side Effect | 없음. |
 | MVP 여부 | ✓ |
 
@@ -588,9 +592,9 @@ URI 변경 요약 (Notion v0 → v1):
 | Permission | Mixed |
 | Description | 조언 상세. 조회 가능 주체별로 응답 필드가 다르다. |
 | Request 주요 필드 | Path: `advice-id` |
-| Response 주요 필드 | `advice_id`, `concern_id`, `advisor_display_name`, `directional_guidance`, `reflective_questions?`, `considerations?`, `out_of_scope_flag`, `status`, `version`, `created_at`, `updated_at` |
+| Response 주요 필드 | `advice_id`, `concern_id`, `advisor_display_name`, `directional_guidance`, `reflective_questions?`, `considerations?`, `out_of_scope_flag`, `status`, `version`, `is_submitted`, `created_at`, `updated_at`, `reject_reason?` (작성자/Admin에게만, D-3) |
 | Status | 200 / 401 / 403 / 404 / 500 |
-| 접근 제어 조건 | (a) 조언 작성자: 자신의 advice는 상태 무관 조회 가능. (b) 고민 작성자: 해당 advice가 APPROVED일 때만 조회 가능. (c) ADMIN: 상태 무관 조회 가능. 그 외 403. |
+| 접근 제어 조건 | (a) 조언 작성자: 자신의 advice는 상태 무관 조회 가능. `is_submitted`(draft 구분)·`reject_reason`(반려 사유) 노출. (b) 고민 작성자: 해당 advice가 APPROVED일 때만 조회 가능. `reject_reason`은 미노출(항상 APPROVED이므로 무의미). (c) ADMIN: 상태 무관 + `reject_reason` 노출. 그 외 403. |
 | Side Effect | 없음. |
 | MVP 여부 | ✓ |
 
@@ -648,9 +652,9 @@ URI 변경 요약 (Notion v0 → v1):
 | Permission | Advisor |
 | Description | 내가 작성한 조언 전체 목록(상태 무관). |
 | Request 주요 필드 | Query: `concern_id?`, `status?`, `from_date?`, `to_date?`, `page?`, `size?` |
-| Response 주요 필드 | `items[]`: { `advice_id`, `concern_id`, `status`, `version`, `created_at`, `updated_at` }, `page_info` |
+| Response 주요 필드 | `items[]`: { `advice_id`, `concern_id`, `status`, `version`, `is_submitted`, `created_at`, `updated_at` }, `page_info` |
 | Status | 200 / 401 / 403 / 500 |
-| 접근 제어 조건 | active_role=ADVISOR. |
+| 접근 제어 조건 | active_role=ADVISOR. `is_submitted`로 draft/제출 구분(D-3). |
 | Side Effect | 없음. |
 | MVP 여부 | ✓ |
 
@@ -677,9 +681,9 @@ URI 변경 요약 (Notion v0 → v1):
 | Endpoint | `/api/v1/admin/advices/{advice-id}/review` |
 | Permission | Admin |
 | Description | 조언 승인/반려. `review`는 단순 status 변경 이상의 액션(부수효과 다수) 이므로 액션 sub-resource 유지. |
-| Request 주요 필드 | `decision` (필수, `approved`/`rejected`), `reason?` (rejected 시 필수 — 422 검증) |
+| Request 주요 필드 | `decision` (필수, `approved`/`rejected`), `reason?` (rejected 시 필수 — 422 검증), `expected_version` (필수, 낙관적 잠금 — 관리자가 조회한 advice.version. 서버가 현재 version과 비교, 불일치 시 412, D-3) |
 | Response 주요 필드 | `advice_id`, `status`, `review`: { `decision`, `reviewed_by`, `reviewed_at`, `reason` }, `concern_id`, `concern_status` (전이 후), `version` |
-| Status | 200 / 401 / 403 / 404 / 409(허용되지 않는 전이) / 412(advice가 이미 외부에서 변경됨 — version mismatch) / 422 / 500 |
+| Status | 200 / 401 / 403 / 404 / 409(허용되지 않는 전이) / 412(`expected_version` ≠ 현재 version — 리뷰 중 조언가가 수정함, 재조회 유도) / 422 / 500 |
 | 접근 제어 조건 | ADMIN. 허용 전이: `PENDING|REVIEWING → APPROVED|REJECTED`. |
 | Side Effect | `APPROVED` → 고민 작성자에게 `ADVICE_APPROVED` 알림 + concern.status → `ANSWERED` (아직 ANSWERED가 아닌 경우). `REJECTED` → advisor에게 `ADVICE_REJECTED` 알림. |
 | MVP 여부 | ✓ |
@@ -774,6 +778,18 @@ URI 변경 요약 (Notion v0 → v1):
 | Side Effect | 없음. |
 | MVP 여부 | ✓ |
 
+**`target_url` 규약 (C-10 확정 2026-07-08)**: `target_url`에는 **수신자 본인이 GET 가능한 상세 API의 상대 경로**(`/api/v1/...` 포함, 쿼리·trailing slash 없음)를 저장한다. 프론트 라우트를 저장하지 않는다(라우트 개편에 알림이 깨지는 것 방지). 화면 이동은 클라이언트 리졸버가 `(type, target_url)` 조합으로 결정하며, 부가 식별자는 `Notification.payload`(JSONField)에 id로 담는다. 대상 리소스가 404/403이면 클라이언트는 `/notifications`로 폴백. M4 서비스가 타입별로 채우는 값:
+
+| type | 수신자 | target_url (저장값) | payload 키 |
+| --- | --- | --- | --- |
+| ADVICE_APPROVED | 고민 작성자 | `/api/v1/advices/{advice-id}` | `advice_id`, `concern_id` |
+| ADVICE_REJECTED | 조언가(작성자) | `/api/v1/advices/{advice-id}` | `advice_id`, `concern_id` |
+| ADVISOR_APPLICATION_APPROVED | 신청자 | `/api/v1/advisor-applications/me` | `application_id` |
+| ADVISOR_APPLICATION_REJECTED | 신청자 | `/api/v1/advisor-applications/me` | `application_id` |
+| ASSIGNMENT_CREATED | 조언가 | `/api/v1/users/me/assigned-concerns/{concern-id}` | `concern_id`, `assignment_id` |
+
+같은 `target_url`이라도 `type`이 수신자·목적지를 구분한다(ADVICE_APPROVED=사용자 vs ADVICE_REJECTED=조언가). 신청 결과 2종은 신청자가 GET 가능한 `/advisor-applications/me`(#12)를 가리킨다(#14 admin 경로 아님).
+
 ### 40. GET /api/v1/notifications/{notification-id}
 
 | 항목 | 내용 |
@@ -834,6 +850,21 @@ URI 변경 요약 (Notion v0 → v1):
 | Side Effect | UserRole 삭제, RoleGrant(action=REVOKE) audit 레코드 추가. ADVISOR 회수 시 active_role이 ADVISOR였다면 USER로 강제 전환. |
 | MVP 여부 | ✓ |
 
+### 44. GET /api/v1/csrf
+
+| 항목 | 내용 |
+| --- | --- |
+| Method | GET |
+| Endpoint | `/api/v1/csrf` |
+| Permission | Anonymous |
+| Description | CSRF 부트스트랩. 비로그인 클라이언트가 첫 상태 변경 요청(로그인/회원가입) 전에 1회 호출해 `csrftoken` 쿠키를 발급받는다(D-1). 전용 뷰에 `@ensure_csrf_cookie`. |
+| Request 주요 필드 | 없음 |
+| Response 주요 필드 | 본문 최소(`{ "detail": "CSRF cookie set" }`). 핵심은 `Set-Cookie: csrftoken=...`(non-HttpOnly, SameSite=Lax). |
+| Status | 200 / 500 |
+| 접근 제어 조건 | 없음(Anonymous). 상태 변경 아님이므로 CSRF 검사 대상 아님. |
+| Side Effect | `csrftoken` 쿠키 발급. 세션 미생성. |
+| MVP 여부 | ✓ |
+
 ---
 
 ## 5. Deferred APIs
@@ -852,16 +883,19 @@ Owner 결정(2026-06-22)에 따라 **Notion v0 명세에서 v1으로 미루는 A
 
 ## 6. Open Questions
 
-Phase 2 코드 시작 전 / 진행 중 확정해야 할 작은 결정들. **차단 결정 아님**.
+Phase 2 코드 시작 전 / 진행 중 확정해야 할 작은 결정들. **차단 결정 아님**. (2026-07-08 D-decision으로 4·5·6·8 확정, `domain_category`(O-1) 확정.)
 
 1. `concern_summary` 100자 제한이 최종? (현재 명세 기준 100자, 추후 도메인 검증에서 조정 가능)
-2. `decision_context`의 글자 수 상한은? (현재 미정 — 4000자 권장)
+2. `decision_context`의 글자 수 상한은? (현재 미정 — 4000자 권장, model.md O-2)
 3. `directional_guidance` 1500자 상한이 최종?
-4. advice draft(`submit=false`)를 별도 status로 모델링할지, 같은 `PENDING`에 플래그로 표현할지 — 본 명세는 후자(`is_submitted` 플래그)로 가정.
-5. concern의 `CLOSED` 전이는 사용자가 명시적으로 트리거하는 API가 필요한지? (현재 미정. Phase 2 v1에서는 Django Admin으로만 전이 가능)
-6. 알림 `target_url`의 도메인은 환경별로 다를 수밖에 없음 — 응답에서는 상대 경로(`/users/me/concerns/{id}` 등)로 통일 권장.
+4. ~~advice draft 모델링~~ **확정(D-3)**: `PENDING` 유지 + `is_submitted` 플래그. `is_submitted`를 #21/#27/#31 응답에 노출.
+5. ~~concern CLOSED 전이~~ **확정(D-4)**: 사용자 트리거 API 없음. Phase 2는 Django Admin으로만 전이(표시 전용). CLAUDE.md §6.6 "user closes explicitly" 문구와의 긴장은 M5 스모크 문서에 갭 기록.
+6. ~~target_url 도메인~~ **확정(C-10)**: `/api/v1/` 포함 상대 경로 = 수신자 GET 가능 상세 API. #39 규약표 참조.
 7. 페이지네이션 `size` 최대 100이 적절한지 (현재 미검증).
-8. Google OAuth 첫 가입 시 `nickname`을 어떻게 산정하는가? — 권장: Google profile name → unique 충돌 시 `name_NNNN` 자동 부여. 최종 확정 필요.
+8. ~~Google 첫 가입 nickname 산정~~ **확정(C-11)**: Google `name` 정제값 → 이메일 로컬파트 → `user`, 15자 절단, unique 충돌 시 `_랜덤4자리` 5회 재시도 → `user_{uuid7 hex 8자}`. 사전 조회 없이 INSERT + IntegrityError 기반(동시성). 강제 온보딩 화면 없음.
+9. **`domain_category` (O-1) 확정(D-6)**: `기획·전략 / 인사·조직 / 마케팅·PR / 재무·회계 / IT·데이터 / 영업·무역 / 상품기획·MD / R&D / 의료 / 교육 / 기타` 11종(저장값 한국어). advisors.0002 마이그레이션 반영.
+
+> **`is_deleted` 표기 정리 (C-1)**: 본 명세의 `is_deleted`(요청/응답 필드)는 저장 컬럼이 아니라 `deleted_at IS NOT NULL`에서 파생되는 boolean이다. 저장 컨벤션은 `deleted_at` timestamp(CLAUDE.md §6.6, model.md §1.4). 요청 `include_deleted`는 `Concern.objects.with_deleted()` 경로를 트리거한다.
 
 ---
 
