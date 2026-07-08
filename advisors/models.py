@@ -18,12 +18,16 @@ class AdvisorApplicationStatus(models.TextChoices):
 
 
 class DomainCategory(models.TextChoices):
-    # O-1 잠정안 (model.md §11) — 사업 도메인 확정 시 재검토. 한국어 저장값은
-    # api.md 11의 표기를 그대로 따른 것.
-    IT = "IT", "IT"
-    BUSINESS = "경영", "경영"
-    HR = "인사", "인사"
-    FINANCE = "금융", "금융"
+    # O-1 확정값 (Owner 결정 2026-07-08): 채용 포털 직무 표준 8종 + 의료·교육
+    # (taxonomy 조언 수요와 직결) + 기타(잔여 수요 수용). 저장값은 한국어.
+    PLANNING_STRATEGY = "기획·전략", "기획·전략"
+    HR_ORG = "인사·조직", "인사·조직"
+    MARKETING_PR = "마케팅·PR", "마케팅·PR"
+    FINANCE_ACCOUNTING = "재무·회계", "재무·회계"
+    IT_DATA = "IT·데이터", "IT·데이터"
+    SALES_TRADE = "영업·무역", "영업·무역"
+    MERCHANDISING = "상품기획·MD", "상품기획·MD"
+    RND = "R&D", "R&D"
     MEDICAL = "의료", "의료"
     EDUCATION = "교육", "교육"
     ETC = "기타", "기타"
