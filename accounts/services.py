@@ -6,7 +6,13 @@ and M4-8 (admin grant/revoke). USER is the implicit default every account holds;
 only ADVISOR/ADMIN are stored as UserRole rows (model.md §3.2).
 """
 
+import re
+import secrets
+
+from django.db import IntegrityError, transaction
 from rest_framework.exceptions import PermissionDenied
+
+from common.uuid7 import uuid7
 
 from .models import Role, UserRole
 
@@ -52,3 +58,63 @@ def set_active_role(user, target: str) -> None:
         raise PermissionDenied("보유하지 않은 역할로는 전환할 수 없습니다.")
     user.active_role = target
     user.save(update_fields=["active_role", "updated_at"])
+
+
+# --- Google OAuth account linking / creation (C-11, ADR-002 §7) -----------
+
+
+def _derive_nickname_base(name: str, email: str) -> str:
+    """C-11 base value: Google name -> email local part -> "user".
+    Trim, collapse internal whitespace, truncate to 15 chars (leaves room for a
+    5-char `_NNNN` suffix under nickname's max_length=20). Falls through until a
+    candidate is >= 2 chars (nickname's MinLengthValidator)."""
+    for candidate in (name or "", (email or "").split("@")[0], "user"):
+        cleaned = re.sub(r"\s+", " ", candidate.strip())[:15]
+        if len(cleaned) >= 2:
+            return cleaned
+    return "user"
+
+
+def _create_with_nickname(email: str, google_sub: str, base: str):
+    """Create User + GoogleIdentity atomically, resolving nickname collisions by
+    INSERT-then-retry (C-11): the DB unique constraint is the final arbiter, no
+    check-then-insert race. base -> base_NNNN (random) x5 -> user_{uuid7 hex8}."""
+    from .models import GoogleIdentity, User
+
+    candidates = [base] + [f"{base}_{secrets.randbelow(10000):04d}" for _ in range(5)]
+    candidates.append(f"user_{uuid7().hex[:8]}")  # effectively collision-proof
+    last_error = None
+    for nickname in candidates:
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(email=email, nickname=nickname, password=None)
+                GoogleIdentity.objects.create(user=user, google_sub=google_sub, email=email)
+            return user
+        except IntegrityError as exc:
+            last_error = exc
+            continue
+    raise last_error
+
+
+def link_or_create_google_user(google_sub: str, email: str, name: str = ""):
+    """Resolve a verified Google identity to a local User (ADR-002 §7, CLAUDE.md
+    §10 — link by verified email, never fork the account).
+
+    1. Known google_sub -> that user.
+    2. Same verified email as an existing account -> link identity to it.
+    3. Otherwise -> new account with a derived nickname (C-11).
+    """
+    from .models import GoogleIdentity, User
+
+    email = email.lower()
+
+    identity = GoogleIdentity.objects.filter(google_sub=google_sub).select_related("user").first()
+    if identity is not None:
+        return identity.user
+
+    existing = User.objects.filter(email=email).first()
+    if existing is not None:
+        GoogleIdentity.objects.create(user=existing, google_sub=google_sub, email=email)
+        return existing
+
+    return _create_with_nickname(email, google_sub, _derive_nickname_base(name, email))

@@ -1,12 +1,17 @@
+import secrets
+
+from django.conf import settings
 from django.contrib.auth import login, logout
+from django.http import HttpResponseRedirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework import status
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from . import services
+from . import oauth, services
 from .serializers import (
     ActiveRoleSerializer,
     LoginSerializer,
@@ -24,6 +29,27 @@ from .serializers import (
 # anonymous POSTs we re-assert the check explicitly with csrf_protect.
 # Authenticated PATCH/POST/DELETE below are CSRF-checked by SessionAuthentication.
 csrf_protected = method_decorator(csrf_protect, name="dispatch")
+
+# OAuth-specific error responses (api.md #6 status set).
+OAUTH_STATE_COOKIE = "oauth_state"
+
+
+class _BadGateway(APIException):
+    status_code = status.HTTP_502_BAD_GATEWAY
+    default_detail = "Google 인증 서버와 통신하지 못했습니다."
+    default_code = "bad_gateway"
+
+
+class _AuthFailed(APIException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    default_detail = "Google 인증 검증에 실패했습니다."
+    default_code = "google_auth_failed"
+
+
+class _OAuthUnavailable(APIException):
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    default_detail = "Google 로그인이 구성되지 않았습니다."
+    default_code = "oauth_unconfigured"
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -84,6 +110,78 @@ class LogoutView(APIView):
     def post(self, request):
         logout(request)
         return Response({"message": "로그아웃 되었습니다."}, status=status.HTTP_200_OK)
+
+
+class GoogleAuthorizeView(APIView):
+    """GET /api/v1/auth/google/authorize (#5) — 302 to Google consent screen.
+
+    A random `state` is set as an HttpOnly cookie and echoed in the redirect;
+    the callback compares the two (CSRF for OAuth). No session is created here.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if not oauth.is_configured():
+            raise _OAuthUnavailable()
+        state = secrets.token_urlsafe(32)
+        response = HttpResponseRedirect(oauth.build_authorize_url(state))
+        response.set_cookie(
+            OAUTH_STATE_COOKIE,
+            state,
+            max_age=600,
+            httponly=True,
+            secure=settings.SESSION_COOKIE_SECURE,
+            samesite="Lax",
+        )
+        return response
+
+
+class GoogleCallbackView(APIView):
+    """GET /api/v1/auth/google/callback (#6) — verify, link/create, issue session.
+
+    state mismatch -> 400, upstream/Google failure -> 502, token verify failure
+    -> 401. On success: same session model as email login (ADR-002 §7), 302 to
+    the frontend entry.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        if request.query_params.get("error"):
+            # User denied consent, or Google returned an error.
+            raise ValidationError("Google 로그인이 취소되었거나 실패했습니다.")
+
+        state = request.query_params.get("state")
+        cookie_state = request.COOKIES.get(OAUTH_STATE_COOKIE)
+        # Constant-time compare; empty/missing values must not match.
+        if not state or not cookie_state or not secrets.compare_digest(state, cookie_state):
+            raise ValidationError("state 검증에 실패했습니다.")
+
+        code = request.query_params.get("code")
+        if not code:
+            raise ValidationError("인가 코드가 없습니다.")
+
+        try:
+            id_token = oauth.exchange_code_for_id_token(code)
+            claims = oauth.verify_id_token(id_token)
+        except oauth.OAuthConfigError as exc:
+            raise _OAuthUnavailable() from exc
+        except oauth.OAuthVerifyError as exc:
+            raise _AuthFailed() from exc
+        except oauth.OAuthUpstreamError as exc:
+            raise _BadGateway() from exc
+
+        user = services.link_or_create_google_user(
+            google_sub=claims["sub"],
+            email=claims["email"],
+            name=claims.get("name", ""),
+        )
+        login(request, user)
+
+        response = HttpResponseRedirect(settings.GOOGLE_OAUTH_SUCCESS_REDIRECT)
+        response.delete_cookie(OAUTH_STATE_COOKIE)
+        return response
 
 
 class UserMeView(APIView):

@@ -138,6 +138,18 @@ CSRF_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
+# --- Google OAuth (ADR-002 §7; D-5: stdlib urllib + tokeninfo verify) ---
+# Client id/secret come from .env (Owner-owned). Empty until configured — the
+# OAuth endpoints return 500 while unset rather than crashing at import.
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.environ.get(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    "http://localhost:8000/api/v1/auth/google/callback",
+)
+# Where the browser lands after a successful callback (frontend entry, api.md #6).
+GOOGLE_OAUTH_SUCCESS_REDIRECT = os.environ.get("GOOGLE_OAUTH_SUCCESS_REDIRECT", "/")
+
 # --- DRF ---------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
