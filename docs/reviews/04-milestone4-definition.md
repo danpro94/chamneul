@@ -37,7 +37,7 @@
 | D-2 | 비익명 고민의 조언가측 표시명 | serializer 파생 필드(컬럼 불요). 정책만: `is_anonymous=false ∧ alias=""`일 때 nickname 노출 vs 폴백 문구 | UX C-6/C-7, data-modeler I-2 |
 | D-3 | UX발 API 응답 보강 3건 수용 여부 | `is_submitted` 노출(#21/#27/#31) · 작성자 한정 `reject_reason`(#27) · `expected_version`(#33) — 전부 저비용, api.md 갱신 동반 | UX §8 |
 | D-4 | Concern CLOSED 전이 | (권고) Phase 2는 Django Admin으로만 닫기(표시 전용) — 신규 API 없음. CLAUDE.md §6.6 문구와의 긴장은 M5 문서에 기록 | UX C-2 |
-| D-5 | Google OAuth 구현 수단 | (권고) 표준 라이브러리(urllib) 직접 호출 — 신규 패키지 없음. 대안: httpx/requests 추가(§16 게이트) 또는 google-auth(§4상 신규 ADR 필요) | CLAUDE.md §4 |
+| D-5 | Google OAuth 구현 수단 | **확정(Owner 2026-07-09): A — 표준 라이브러리(urllib) 직접 호출 + Google tokeninfo 검증. 신규 패키지 없음, 신규 ADR 없음.** 2026-07-08에 잠정 채택했던 C(google-auth)는 **폐기**(ADR-005 삭제) — ADR-002 세션 단일 전략 유지, 서드파티 인증 패키지 미도입. `requests` 전이 의존을 피하고 §4/§16 게이트 없이 진행 | CLAUDE.md §4 |
 | D-6 | O-1 DomainCategory 확정 | 잠정안(한국어 값) 유지 여부 — 실데이터 축적 전 확정 권고 | model.md §11 |
 | D-7 | 테스트 범위 | (권고) Django test runner로 핵심 3축(인증 플로우, 권한 매트릭스 401/403, 상태 전이+부수효과) 테스트 포함 — §12, PG 테스트 DB | CLAUDE.md §12 |
 | D-8 | 알림 target_url 규약 / Google 첫 가입 온보딩 | UX C-10·C-11 — 프론트 구현 전까지 유예 가능(target_url은 API 경로 아닌 "프론트 라우트 키"로 잠정) | UX §10 |
