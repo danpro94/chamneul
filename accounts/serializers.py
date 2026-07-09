@@ -2,6 +2,9 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
+from common.exceptions import Conflict
+
+from . import services
 from .models import User
 
 
@@ -50,13 +53,75 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
-class UserMeSerializer(serializers.ModelSerializer):
-    """Response body for the authenticated subject. Intentionally omits sensitive
-    fields (password, permission flags) — only what a signup/login response and
-    /users/me need to render (api.md §8, response fields chosen deliberately).
+class UserCardSerializer(serializers.ModelSerializer):
+    """Shared identity card. Response key is `user_id` (api.md #2/#3/#7), not the
+    raw `id`. Sensitive fields (password, permission flags) never appear here.
     """
+
+    user_id = serializers.UUIDField(source="id", read_only=True)
 
     class Meta:
         model = User
-        fields = ("id", "email", "nickname", "active_role")
+        fields = ("user_id", "email", "nickname", "active_role")
         read_only_fields = fields
+
+
+class SignupResultSerializer(UserCardSerializer):
+    """Signup response (#2): identity card + created_at (flat)."""
+
+    class Meta(UserCardSerializer.Meta):
+        fields = ("user_id", "email", "nickname", "active_role", "created_at")
+        read_only_fields = fields
+
+
+class UserMeSerializer(UserCardSerializer):
+    """GET /users/me (#7): identity card + held roles + created_at.
+    `advisor_type` is deliberately absent (CLAUDE.md §6.1 / api.md Q15).
+    """
+
+    roles = serializers.SerializerMethodField()
+
+    class Meta(UserCardSerializer.Meta):
+        fields = ("user_id", "email", "nickname", "active_role", "roles", "created_at")
+        read_only_fields = fields
+
+    def get_roles(self, obj):
+        return services.held_roles(obj)
+
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    """PATCH /users/me (#8): partial profile update. nickname uniqueness returns
+    409 (not DRF's default 400) — the model's auto UniqueValidator is dropped and
+    the check is done here so the conflict maps to Conflict/409.
+    """
+
+    nickname = serializers.CharField(min_length=2, max_length=20, required=False)
+
+    class Meta:
+        model = User
+        fields = ("nickname", "job", "interest", "profile_image_url")
+
+    def validate_nickname(self, value):
+        if User.objects.filter(nickname=value).exclude(pk=self.instance.pk).exists():
+            raise Conflict("이미 사용 중인 닉네임입니다.")
+        return value
+
+
+class UserUpdateResultSerializer(serializers.ModelSerializer):
+    """PATCH /users/me response (#8): user_id, email, nickname, updated_at."""
+
+    user_id = serializers.UUIDField(source="id", read_only=True)
+
+    class Meta:
+        model = User
+        fields = ("user_id", "email", "nickname", "updated_at")
+        read_only_fields = fields
+
+
+class ActiveRoleSerializer(serializers.Serializer):
+    """PATCH /users/me/active-role (#10). ADMIN is never an active_role — the
+    choices exclude it (accounts.models.ActiveRole). Whether the user actually
+    holds the target role is enforced in services.set_active_role (403 if not).
+    """
+
+    active_role = serializers.ChoiceField(choices=["USER", "ADVISOR"])

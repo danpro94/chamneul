@@ -6,12 +6,23 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .serializers import LoginSerializer, SignupSerializer, UserMeSerializer
+from . import services
+from .serializers import (
+    ActiveRoleSerializer,
+    LoginSerializer,
+    SignupResultSerializer,
+    SignupSerializer,
+    UserCardSerializer,
+    UserMeSerializer,
+    UserUpdateResultSerializer,
+    UserUpdateSerializer,
+)
 
 # Anonymous state-changing endpoints (signup/login) still require CSRF (ADR-002
 # §5). DRF's SessionAuthentication only enforces CSRF for *authenticated*
 # requests, and DRF marks APIViews csrf_exempt at the middleware layer — so for
 # anonymous POSTs we re-assert the check explicitly with csrf_protect.
+# Authenticated PATCH/POST/DELETE below are CSRF-checked by SessionAuthentication.
 csrf_protected = method_decorator(csrf_protect, name="dispatch")
 
 
@@ -42,7 +53,7 @@ class SignupView(APIView):
         user = serializer.save()
         # Issue the session immediately — the response carries Set-Cookie: sessionid.
         login(request, user)
-        return Response(UserMeSerializer(user).data, status=status.HTTP_201_CREATED)
+        return Response(SignupResultSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
 @csrf_protected
@@ -56,7 +67,8 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
         login(request, user)
-        return Response(UserMeSerializer(user).data, status=status.HTTP_200_OK)
+        # api.md #3: response wraps the identity card under `user`.
+        return Response({"user": UserCardSerializer(user).data}, status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):
@@ -71,4 +83,54 @@ class LogoutView(APIView):
 
     def post(self, request):
         logout(request)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({"message": "로그아웃 되었습니다."}, status=status.HTTP_200_OK)
+
+
+class UserMeView(APIView):
+    """GET/PATCH /api/v1/users/me (#7, #8) — read / partial-update own profile."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(UserMeSerializer(request.user).data)
+
+    def patch(self, request):
+        serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(UserUpdateResultSerializer(request.user).data)
+
+
+class UserRolesView(APIView):
+    """GET /api/v1/users/me/roles (#9) — held roles + active role + advisor status."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        return Response(
+            {
+                "roles": services.held_roles(user),
+                "active_role": user.active_role,
+                "advisor_status": services.advisor_status(user),
+            }
+        )
+
+
+class ActiveRoleView(APIView):
+    """PATCH /api/v1/users/me/active-role (#10) — switch to a held role."""
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request):
+        serializer = ActiveRoleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        services.set_active_role(user, serializer.validated_data["active_role"])
+        return Response(
+            {
+                "user_id": str(user.id),
+                "active_role": user.active_role,
+                "roles": services.held_roles(user),
+            }
+        )

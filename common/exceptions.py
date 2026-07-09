@@ -1,6 +1,16 @@
 from rest_framework import status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.views import exception_handler as drf_default_handler
+
+
+class Conflict(APIException):
+    """409 — the request conflicts with the current resource state (api.md §1.8):
+    duplicate nickname, already-held role, non-allowed state transition, etc.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+    default_detail = "요청이 현재 상태와 충돌합니다."
+    default_code = "conflict"
 
 # Map HTTP status to the SCREAMING_SNAKE_CASE `code` fixed by api.md §1.5.
 _STATUS_TO_CODE = {
