@@ -102,6 +102,8 @@ def verify_id_token(id_token: str) -> dict:
     email is verified before trusting it.
     """
     claims = _get_json(f"{GOOGLE_TOKENINFO_URL}?{urllib.parse.urlencode({'id_token': id_token})}")
+    if claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        raise OAuthVerifyError("id_token issuer mismatch")
     if claims.get("aud") != settings.GOOGLE_OAUTH_CLIENT_ID:
         raise OAuthVerifyError("id_token audience mismatch")
     if str(claims.get("email_verified")).lower() != "true":

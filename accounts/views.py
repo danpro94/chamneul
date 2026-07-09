@@ -2,6 +2,7 @@ import secrets
 
 from django.conf import settings
 from django.contrib.auth import login, logout
+from django.db import IntegrityError
 from django.http import HttpResponseRedirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
@@ -10,6 +11,8 @@ from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from common.exceptions import Conflict
 
 from . import oauth, services
 from .serializers import (
@@ -177,6 +180,11 @@ class GoogleCallbackView(APIView):
             email=claims["email"],
             name=claims.get("name", ""),
         )
+        # The email/password path gates on is_active via authenticate(); OAuth
+        # skips authenticate(), so gate here too (S1 — required before any
+        # account-deactivation feature; no such state exists in Phase 2 yet).
+        if not user.is_active:
+            raise _AuthFailed()
         login(request, user)
 
         response = HttpResponseRedirect(settings.GOOGLE_OAUTH_SUCCESS_REDIRECT)
@@ -195,7 +203,12 @@ class UserMeView(APIView):
     def patch(self, request):
         serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        try:
+            serializer.save()
+        except IntegrityError as exc:
+            # validate_nickname pre-checks, but a concurrent request can still win
+            # the unique race — the DB constraint is the final arbiter (S8).
+            raise Conflict("이미 사용 중인 닉네임입니다.") from exc
         return Response(UserUpdateResultSerializer(request.user).data)
 
 

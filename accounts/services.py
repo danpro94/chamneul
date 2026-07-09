@@ -12,6 +12,7 @@ import secrets
 from django.db import IntegrityError, transaction
 from rest_framework.exceptions import PermissionDenied
 
+from common.exceptions import Conflict
 from common.uuid7 import uuid7
 
 from .models import Role, UserRole
@@ -101,7 +102,9 @@ def link_or_create_google_user(google_sub: str, email: str, name: str = ""):
     §10 — link by verified email, never fork the account).
 
     1. Known google_sub -> that user.
-    2. Same verified email as an existing account -> link identity to it.
+    2. Same verified email as an existing account -> link identity to it,
+       unless that account is already linked to a *different* Google account
+       (409, api.md #6 — one local account maps to at most one Google account).
     3. Otherwise -> new account with a derived nickname (C-11).
     """
     from .models import GoogleIdentity, User
@@ -114,6 +117,12 @@ def link_or_create_google_user(google_sub: str, email: str, name: str = ""):
 
     existing = User.objects.filter(email=email).first()
     if existing is not None:
+        # Reaching here means this google_sub is NOT yet linked (step 1 missed).
+        # If the matched account already has a Google link, it is a different
+        # account — refuse rather than silently overwrite or violate the
+        # OneToOne (which would surface as an opaque 500).
+        if GoogleIdentity.objects.filter(user=existing).exists():
+            raise Conflict("이 계정은 이미 다른 Google 계정과 연결되어 있습니다.")
         GoogleIdentity.objects.create(user=existing, google_sub=google_sub, email=email)
         return existing
 
