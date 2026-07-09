@@ -9,4 +9,5 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     # All versioned APIs live under /api/v1/ (CLAUDE.md §7).
     path("api/v1/", include("accounts.urls")),
+    path("api/v1/", include("advisors.urls")),
 ]

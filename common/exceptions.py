@@ -12,6 +12,16 @@ class Conflict(APIException):
     default_detail = "요청이 현재 상태와 충돌합니다."
     default_code = "conflict"
 
+
+class UnprocessableEntity(APIException):
+    """422 — request is well-formed but semantically invalid (api.md §1.8):
+    e.g. a rejection with no reason. Distinct from 400 (malformed syntax).
+    """
+
+    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    default_detail = "요청을 처리할 수 없습니다."
+    default_code = "unprocessable_entity"
+
 # Map HTTP status to the SCREAMING_SNAKE_CASE `code` fixed by api.md §1.5.
 _STATUS_TO_CODE = {
     status.HTTP_400_BAD_REQUEST: "INVALID_REQUEST",
