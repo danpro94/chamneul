@@ -865,7 +865,12 @@ Phase 2 코드 시작 전 / 진행 중 확정해야 할 작은 결정들. **차�
 
 ---
 
-## 7. Notion Update Plan (notion_editing_rule 준수)
+## 7. Notion Update Plan (notion_editing_rule 준수) — 은퇴
+
+> ⚠️ **RETIRED (ADR-005, 2026-09-08)**
+> Notion은 더 이상 source of truth가 아니다. 본 절의 패치 테이블은 작성 이후 한 번도 실행되지 않았고, 이제 실행할 이유가 없다. Notion DB는 v0(41건)에서 멈춰 있으며 본 문서가 v1(43건)의 **정본**이다.
+> Notion에 수기로 동기화하는 작업은 폐지되었다. 이력 보존 목적으로만 아래 내용을 남긴다.
+> 근거: `docs/adr/ADR-005-ai-native-spec-driven-migration.md` §4.1
 
 Notion DB는 직접 수정하지 않는다. 다음 패치 테이블을 Notion에 복사해 v0 → v1 일괄 갱신할 수 있도록 정리한다.
 

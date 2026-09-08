@@ -1,3 +1,11 @@
+> 📦 **아카이브 문서 (ADR-005, 2026-09-08 이동)**
+> 이전 경로: `docs/README_AIUSAGE.md`
+> **현행 AI 활용 대장은 루트 `README_AIUSAGE.md`다.** 이 문서는 갱신하지 않는다.
+> 보존 이유: Owner 결정 표 Q1~Q22 / M1~M8 / D1~D6 / G1~G5의 유일한 보관처이며,
+> `docs/api.md`와 `docs/model.md`가 왜 지금 모습인지의 출처다. 삭제하지 않는다.
+
+---
+
 # README — AI Usage Log
 
 본 문서는 `chamneul` 프로젝트에서 AI(Claude) 보조 작업을 투명하게 기록하기 위한 로그이다. CLAUDE.md §13 / docs/0 README.md "AI 활용 원칙"에 따라, AI 사용 사실·결정 주체·산출물·검증 결과·잔여 리스크를 세션 단위로 누적한다.
