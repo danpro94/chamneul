@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-09-08 — AI-Native / Spec-Driven 스켈레톤 전환 (VS Code 이관)
+
+* **작업**: 개발 환경을 Claude Code CLI + Claude App(Notion)에서 VS Code + Claude Code Extension으로 이관. Notion 수기 문서화 폐지. 비어 있던 Harness 레이어 구축 — ADR-005, 루트 `README.md`, `docs/00-project/` 6종, `docs/testing/TEST_CRITERIA.md`, `.claude/`(설정·규칙 4종·슬래시 명령 4종), `.vscode/`, `specs/` 템플릿 + SPEC-001 정의, M3 리뷰 노트 소급 작성
+* **AI 도구**: Claude Code (Opus 5) — 원격 세션. `update-config` 스킬로 settings.json 스키마 검증
+* **인간 결정**: ① CLAUDE.md는 ADR-005 최소 개정(본문 무수정, §2·§3·§17 supersede, §13 확장, §16은 명확화만) ② 학습 게이트 속도 우선 축소 — 라우팅 태그 유지하고 드릴·퀴즈·백지재현은 Phase 3 이월 ③ 첫 SPEC = 로컬 세션 인증 5개 + 테스트 하네스, Google OAuth는 SPEC-002로 분리 ④ 산출물은 스켈레톤 + 플레이북 + SPEC 정의까지, 코드 변경 0 ⑤ OS는 macOS/Linux ⑥ CLAUDE.md 개정 고지 6줄은 플레이북 권장 단계로 포함
+* **생성 산출물**: `docs/adr/ADR-005-*.md`, `README.md`, `docs/00-project/{STATUS,PROJECT_CONTEXT,GLOSSARY,DECISION_INDEX,LEARNING_DEBT,VSCODE_MIGRATION_PLAYBOOK}.md`, `docs/testing/TEST_CRITERIA.md`, `.claude/{settings.json,rules/*,commands/*}`, `.vscode/*`, `specs/_TEMPLATE/*`, `specs/SPEC-001-local-session-auth/*`, `docs/reviews/03-milestone3-review.md` — 커밋 `2122b0f`·`a083f32`·`45da3ab`·`34e7192`·`c15e27c`·`22d930e`·`63383b5`
+* **검증 결과**: **헌법 불변식 실측 통과** — `git diff origin/main...HEAD -- CLAUDE.md` 출력 없음, 삭제 0건(`--diff-filter=D` 무출력), `*.py` diff 0. `git mv` 2건 이력 보존 확인(`--follow`가 `a3ffab2`까지 추적). JSON 3종 파싱 통과. **SessionStart 훅이 이 세션에서 실제 발화하는 것을 확인** — 규칙 파일이 자동 주입됨. `manage.py check`/`ruff`는 코드 무변경이므로 미실행(권장 명령)
+* **잔여 리스크**: SessionStart 훅이 VS Code Extension에서도 뜨는지 **Owner 실기기 검증 필요**(플레이북 Step 4-2 왕복 검증) — 실패 시 ADR-005 §11-2 개정 블록이 대비책. `.claude/agents/` 3종은 gitignore라 이 체크아웃에 없어 커밋 불가 — **머신 전환 전 Owner가 직접 백업해야 소실 방지**(플레이북 Step 0). SPEC-001 OQ-1(CSRF 부트스트랩)은 구현 차단 항목으로 Owner 결정 대기. 학습 부채 9건 중 ④⑤는 SPEC-001이 해소 예정, 나머지 7건 존치
+
 ## 2026-07-08 — M3: 도메인 앱 모델 4종 [위임] + UX 사양
 
 * **작업**: advisors/concerns/advice/notifications 4개 앱 모델 7종 + Admin 등록 + 마이그레이션 생성(앱 단위 커밋 분할). 병렬로 Phase 2 화면 흐름·API-to-screen 매핑 UX 사양 작성
