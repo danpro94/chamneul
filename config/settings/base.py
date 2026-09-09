@@ -130,18 +130,38 @@ SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 14  # 14 days
 SESSION_SAVE_EVERY_REQUEST = True  # sliding renewal on every request
+# CSRF: the token cookie must be readable by JS (client sends it back in the
+# X-CSRFToken header, ADR-002 §5) — so it is NOT HttpOnly, unlike sessionid.
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = "Lax"
 # Secure by default; local.py relaxes these for plain-http localhost.
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
+# --- Google OAuth (ADR-002 §7; D-5: stdlib urllib + tokeninfo verify) ---
+# Client id/secret come from .env (Owner-owned). Empty until configured — the
+# OAuth endpoints return 500 while unset rather than crashing at import.
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI = os.environ.get(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    "http://localhost:8000/api/v1/auth/google/callback",
+)
+# Where the browser lands after a successful callback (frontend entry, api.md #6).
+GOOGLE_OAUTH_SUCCESS_REDIRECT = os.environ.get("GOOGLE_OAUTH_SUCCESS_REDIRECT", "/")
+
 # --- DRF ---------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",
+        # 401 (not 403) for anonymous requests — see the class docstring.
+        "common.authentication.CsrfSessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    # api.md §1.4: list responses are {items, page_info}.
+    "DEFAULT_PAGINATION_CLASS": "common.pagination.StandardPagination",
     "PAGE_SIZE": 20,
+    # api.md §1.5: errors are {error: {code, message, details}}.
+    "EXCEPTION_HANDLER": "common.exceptions.api_exception_handler",
 }

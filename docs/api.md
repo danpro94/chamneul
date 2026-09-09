@@ -275,12 +275,13 @@ URI 변경 요약 (Notion v0 → v1):
 | Method | GET |
 | Endpoint | `/api/v1/auth/google/callback` |
 | Permission | Anonymous |
-| Description | Google 콜백 처리. `state` 검증 → ID token 검증 → User 조회/생성 → Session 발급 → 프론트 진입 URL로 302. |
+| Description | Google 콜백 처리. `state` 검증 → ID token 검증(tokeninfo: `aud`+`email_verified`) → 검증 이메일로 User 조회/링크/생성 → Session 발급 → 프론트 진입 URL로 302. |
 | Request 주요 필드 | Query: `code`, `state`, `error?` |
 | Response Header | `Set-Cookie: sessionid=...; HttpOnly; Secure; SameSite=Lax`, `Location: /` |
-| Status | 302 / 400 / 401 / 409(다른 로그인 방식으로 이미 가입) / 500 / 502 |
-| 접근 제어 조건 | `state` 불일치 시 400. |
-| Side Effect | User 조회 또는 생성, Session 생성. 이메일 매칭 시 OAuth 식별자만 기존 계정에 링크. |
+| Status | 302 / 400(state 불일치·error·code 없음) / 401(id_token 검증 실패: aud/email_verified) / 409(계정 링크 충돌 — 아래) / 500(미구성) / 502(Google 통신 실패) |
+| 접근 제어 조건 | `state`(HttpOnly `oauth_state` 쿠키 ↔ query) 상수시간 비교, 불일치 시 400. |
+| Side Effect | 검증 이메일 기준 계정 처리(ADR-002 §7, CLAUDE.md §10): (a) 알려진 `google_sub` → 해당 User 로그인. (b) 동일 검증 이메일의 기존 계정 → OAuth 식별자만 링크. (c) 그 외 → 신규 User 생성(nickname 자동 산정, C-11). Session 생성. |
+| **409 재정의 (Owner 2026-07-09)** | 409는 "다른 로그인 방식으로 이미 가입"(= 이메일 중복)이 **아니다** — 이메일 중복은 (b)로 링크 처리한다. 409는 **하나의 Google 계정(`google_sub`)이 이미 다른 로컬 계정에 연결된 상태에서, 검증 이메일이 매칭된 또 다른 로컬 계정에 중복 연결을 시도**할 때 반환한다(로컬 계정 ↔ Google 계정 1:1 불변식 보호). 즉 (b) 경로에서 대상 계정이 이미 다른 `google_sub`와 링크돼 있으면 409. |
 | MVP 여부 | ✓ |
 
 ### 7. GET /api/v1/users/me

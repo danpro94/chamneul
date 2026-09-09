@@ -37,9 +37,9 @@
 | D-2 | 비익명 고민의 조언가측 표시명 | serializer 파생 필드(컬럼 불요). 정책만: `is_anonymous=false ∧ alias=""`일 때 nickname 노출 vs 폴백 문구 | UX C-6/C-7, data-modeler I-2 |
 | D-3 | UX발 API 응답 보강 3건 수용 여부 | `is_submitted` 노출(#21/#27/#31) · 작성자 한정 `reject_reason`(#27) · `expected_version`(#33) — 전부 저비용, api.md 갱신 동반 | UX §8 |
 | D-4 | Concern CLOSED 전이 | (권고) Phase 2는 Django Admin으로만 닫기(표시 전용) — 신규 API 없음. CLAUDE.md §6.6 문구와의 긴장은 M5 문서에 기록 | UX C-2 |
-| D-5 | Google OAuth 구현 수단 | (권고) 표준 라이브러리(urllib) 직접 호출 — 신규 패키지 없음. 대안: httpx/requests 추가(§16 게이트) 또는 google-auth(§4상 신규 ADR 필요) | CLAUDE.md §4 |
+| D-5 | Google OAuth 구현 수단 | **확정(Owner 2026-07-09): A — 표준 라이브러리(urllib) 직접 호출 + Google tokeninfo 검증. 신규 패키지 없음, 신규 ADR 없음.** 2026-07-08에 잠정 채택했던 C(google-auth)는 **폐기**(ADR-005 삭제) — ADR-002 세션 단일 전략 유지, 서드파티 인증 패키지 미도입. `requests` 전이 의존을 피하고 §4/§16 게이트 없이 진행 | CLAUDE.md §4 |
 | D-6 | O-1 DomainCategory 확정 | 잠정안(한국어 값) 유지 여부 — 실데이터 축적 전 확정 권고 | model.md §11 |
-| D-7 | 테스트 범위 | (권고) Django test runner로 핵심 3축(인증 플로우, 권한 매트릭스 401/403, 상태 전이+부수효과) 테스트 포함 — §12, PG 테스트 DB | CLAUDE.md §12 |
+| D-7 | 테스트 범위 | **확정(Owner 2026-09-09): 도입.** Django test runner + PostgreSQL 테스트 DB(`config/settings/test.py`)로 핵심 3축(인증 플로우, 권한 매트릭스 401/403/404/409, 상태 전이+부수효과)을 커버한다. 신규 테스트 패키지 미도입(pytest 등 §16 게이트 회피). M4-5부터는 **AC를 실패하는 테스트로 먼저 작성한 뒤 구현**한다(test-first). 기 구현분 M4-1~M4-4의 소급 테스트는 M4-5 진행과 병행해 채운다 | CLAUDE.md §12 |
 | D-8 | 알림 target_url 규약 / Google 첫 가입 온보딩 | UX C-10·C-11 — 프론트 구현 전까지 유예 가능(target_url은 API 경로 아닌 "프론트 라우트 키"로 잠정) | UX §10 |
 
 ## 3. 범위 — 코드 `[위임]` (모듈 단위 커밋 8개)
@@ -57,7 +57,7 @@
 | M4-7 | notifications | 목록(unread_count)/상세/읽음 — 수신자 객체 수준 검사 | 39~41 |
 | M4-8 | admin roles | grant/revoke + RoleGrant 기록 + 가드 3종(자기 ADMIN 회수·마지막 ADMIN·미보유 → 409, ADR-003) | 42~43 |
 
-공통 규칙: 명시적 Serializer 분리(list/detail/admin — §8, intended_lane은 admin 상세만), N+1 점검(select_related/prefetch_related — §8·ADR-001), 매 모듈 `check`+`ruff`+(D-7 시) 테스트.
+공통 규칙: 명시적 Serializer 분리(list/detail/admin — §8, intended_lane은 admin 상세만), N+1 점검(select_related/prefetch_related — §8·ADR-001), 매 모듈 `check`+`ruff`+`manage.py test`(D-7 확정).
 
 ## 4. 명시적 비범위
 
@@ -77,7 +77,7 @@
 - [ ] 부수효과 3종 실측: 신청 승인→역할+감사+알림 / 조언 승인→ANSWERED+알림 / 배정→ASSIGNED+알림
 - [ ] 소프트 삭제: 삭제된 concern이 사용자 API에서 404, admin `include_deleted`로만 조회
 - [ ] 목록 API N+1 없음 (쿼리 로그로 확인)
-- [ ] `check` 0 issues / `makemigrations --check` No changes / `ruff` 통과 / (D-7 시) `manage.py test` 통과
+- [ ] `check` 0 issues / `makemigrations --check` No changes / `ruff` 통과 / `manage.py test` 통과(D-7 확정)
 
 ## 6. 학습 게이트 (Owner 결정에 따라 M4 완료 후 일괄)
 
