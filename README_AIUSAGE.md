@@ -6,6 +6,53 @@
 
 ---
 
+## 2026-09-10 — SPEC-001/TASK-001: concern 생성+목록 (api.md #16·#17) [위임]
+
+### 작업
+
+프롬프트 3(SPEC 단위 구현 루프)로 SPEC-001의 TASK-001만 구현:
+
+1. `concerns/tests.py` 작성(8개 케이스: 인증 필요, 생성 성공/실패 3종, 목록 필터링·soft-delete/타인 배제) → `manage.py test concerns` 실행해 전부 404로 실패하는 것을 먼저 확인(라우팅 자체가 없었으므로).
+2. 최소 구현: `concerns/serializers.py`(Create/CreateResult/List 분리) + `concerns/services.py`(`create_concern`, `has_approved_advice` annotation 포함 `list_my_concerns`) + `concerns/views.py`(`ConcernListCreateView`, GET/POST 한 경로) + `concerns/urls.py` + `config/urls.py`에 include.
+3. `check`/`makemigrations --check`/`ruff check`/`manage.py test` 4종 실행 — 전부 통과 확인(테스트 8/8 OK).
+4. Owner 요청에 따라 추가로 시각적 확인: `docker compose up`으로 앱+DB 기동, Playwright(임시 설치)로 DRF Browsable API를 헤드리스 브라우저로 조작 — 로그인 → 빈 목록+POST 폼 스크린샷 → 고민 1건 제출(201) 스크린샷 → 재조회 시 목록에 반영됨 스크린샷. 3장을 Owner에게 전송.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+* Playwright(1.48, npx로 임시 설치·실행 — 프로젝트 의존성에는 추가하지 않음, 데모 전용)
+
+### 인간 결정 (Owner, 2026-09-10)
+
+| 결정 | 내용 |
+| --- | --- |
+| 결정 1 | 착수 전 12살 눈높이 브리핑 요구 → 브리핑 제시 후 승인 |
+| 결정 2 | 백엔드 테스트만으로는 부족, 가벼운 Mock-up 수준 UI/UX로 데이터/사용자 흐름을 시각적으로 확인 요청(화려함 불필요, 최소 구현 허용) |
+
+### 생성된 산출물
+
+신규: `concerns/{serializers,services,views,urls,tests}.py`. 수정: `config/urls.py`(concerns.urls include, `DEBUG`에서만 `api-auth/`(DRF 로그인) 추가).
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test concerns` → 구현 전 7 failures + 1 error(전부 404) → 구현 후 **8/8 OK**
+* `manage.py check` → 0 issues
+* `makemigrations --check --dry-run` → No changes detected
+* `ruff check .` → All checks passed(신규 파일 전량; 기존 파일 7종의 `ruff format` drift는 이번 작업과 무관 — 미변경)
+* 시각 확인: Playwright 스크린샷 3장(로그인+빈 목록 → POST 201 → 목록에 반영) Owner에게 전송, 육안 확인 요청
+
+### 잔여 리스크
+
+1. **DRF Browsable API 데모용 `api-auth/` 경로**: `settings.DEBUG`에서만 노출되도록 가드했으나, prod 설정(`config/settings/prod.py`)에서 `DEBUG=False`가 실제로 강제되는지는 이번 작업에서 재확인하지 않음(M2/M1에서 이미 설정된 것으로 추정 — M5 스모크에서 재검증 권장).
+2. **Playwright는 프로젝트 의존성이 아님** — `pyproject.toml`/`uv.lock`에 추가하지 않았고, 데모 스크립트는 스크래치패드(`/private/tmp/...`)에만 존재해 저장소에 남지 않음. 다음 시각 확인이 필요하면 재설치 필요.
+3. **TASK-002부터는 approved_advices 등 advice 연동이 등장** — `advice` 앱은 아직 views 없음(모델만 존재), #18 구현 시 빈 배열로 시작 가능(spec.md §5 Non-Goals에 이미 명시).
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-002(#18 상세 + #19 소프트 삭제) 착수.
+
+---
+
 ## 2026-09-09 — VS Code 마이그레이션 부트스트랩: AI-Native/Spec-Driven 구조 전환 [위임]
 
 ### 작업

@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-09 (커밋 `b2eaf90` 기준)
+> 마지막 실측: 2026-09-10 (SPEC-001/TASK-001 커밋 기준, 이전 실측 2026-09-09 `b2eaf90`)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | 4/8 모듈, **16/44 엔드포인트** |
+| M4 진행률 | 4/8 모듈 진행 중(M4-5 concerns 2/10), **18/44 엔드포인트** |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,9 +24,9 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (16 / 44)
+## 2. 구현된 엔드포인트 (18 / 44)
 
-실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls` 2개만 include.
+실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls` 3개 include.
 
 | # | Method | Endpoint | 구현 파일 |
 | --- | --- | --- | --- |
@@ -45,15 +45,17 @@
 | 13 | GET | `/api/v1/admin/advisor-applications` | `AdminAdvisorApplicationListView` |
 | 14 | GET | `/api/v1/admin/advisor-applications/{application-id}` | `AdminAdvisorApplicationDetailView.get` |
 | 15 | PATCH | `/api/v1/admin/advisor-applications/{application-id}` | `AdminAdvisorApplicationDetailView.patch` |
+| 16 | POST | `/api/v1/users/me/concerns` | [concerns/views.py](../../concerns/views.py) `ConcernListCreateView.post` (SPEC-001/TASK-001) |
+| 17 | GET | `/api/v1/users/me/concerns` | `ConcernListCreateView.get` (SPEC-001/TASK-001) |
 | 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
 
-## 3. 미구현 엔드포인트 (28 / 44)
+## 3. 미구현 엔드포인트 (26 / 44)
 
-`concerns/`·`advice/`·`notifications/` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 **views/serializers/urls/services 파일이 아직 없다** (실측: `git ls-files`).
+`advice`·`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`는 #16·#17만 구현됨(실측: `git ls-files`, `config/urls.py`).
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-5 concerns | #16~25 (10개) | §4-16~25 |
+| M4-5 concerns (남은 8개) | #18~25 | §4-18~25 |
 | M4-6 advice + feedback | #26~38 (13개) | §4-26~38 |
 | M4-7 notifications | #39~41 (3개) | §4-39~41 |
 | M4-8 admin roles | #42~43 (2개) | §4-42~43 |
@@ -62,7 +64,8 @@
 
 **SPEC-001-concerns-api** (`specs/SPEC-001-concerns-api/`) — api.md #16~25 (M4-5 concerns 모듈) 대상.
 
-**다음 최소 작업 단위**: TASK-001 — `POST /api/v1/users/me/concerns` (#16) + `GET /api/v1/users/me/concerns` (#17). 순서: 실패하는 Django 테스트 작성 → 최소 구현 → `check`/`makemigrations --check`/`ruff`/`test` 실행 → 커밋 → STATUS.md 갱신.
+* [x] TASK-001 — `POST /api/v1/users/me/concerns` (#16) + `GET /api/v1/users/me/concerns` (#17). 테스트 8종 작성(선-실패 확인) → 구현(`concerns/{serializers,services,views,urls}.py`) → `check`/`makemigrations --check`/`ruff`/`test` 전부 통과 → DRF Browsable API로 로그인→생성→목록 확인(스크린샷) → 커밋.
+* [ ] **다음 최소 작업 단위**: TASK-002 — `GET /api/v1/users/me/concerns/{concern-id}` (#18) + `DELETE .../{concern-id}` (#19).
 
 ## 5. 미결 Owner 결정
 
