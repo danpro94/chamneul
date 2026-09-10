@@ -1,9 +1,12 @@
-"""Serializers for concerns API (SPEC-001, api.md #16-#18).
+"""Serializers for concerns API (SPEC-001, api.md #16-#21).
 
 List/create/detail are kept separate (CLAUDE.md §8-§9): the create response is
 minimal (concern_id/status/message), the list response excludes large text
 fields (decision_context) and internal-only fields (display_alias), and only
-the detail response carries the nested approved_advices[].
+the detail response carries the nested approved_advices[]. #20's assigned-list
+serializer is a plain Serializer (not a ModelSerializer): its rows are
+Assignment instances annotated with a Concern-derived field, not a 1:1 model
+mapping.
 """
 
 from rest_framework import serializers
@@ -99,3 +102,18 @@ class ConcernDetailSerializer(serializers.ModelSerializer):
 
     def get_approved_advices(self, obj):
         return services.approved_advices_view_data(obj)
+
+
+class AssignedConcernListSerializer(serializers.Serializer):
+    """GET /api/v1/users/me/assigned-concerns (#20) list item (api.md #20
+    response fields). Rows come from services.list_assigned_concerns — an
+    Assignment queryset joined to its Concern, so fields are sourced across
+    both (a ModelSerializer would only cover one).
+    """
+
+    concern_id = serializers.UUIDField(read_only=True)  # Assignment.concern_id (the FK's raw id)
+    concern_summary = serializers.CharField(source="concern.concern_summary", read_only=True)
+    concern_type = serializers.CharField(source="concern.concern_type", read_only=True)
+    assigned_at = serializers.DateTimeField(read_only=True)
+    assignment_id = serializers.UUIDField(source="id", read_only=True)
+    advice_status = serializers.CharField(read_only=True, allow_null=True)

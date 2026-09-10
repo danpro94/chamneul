@@ -6,6 +6,53 @@
 
 ---
 
+## 2026-09-10 — SPEC-001/TASK-003: advisor 배정 목록+상세 (api.md #20·#21) [위임]
+
+### 작업
+
+프롬프트 3 루프로 SPEC-001의 TASK-003만 구현:
+
+1. `concerns/tests.py`에 `AssignedConcernTests` 14케이스 추가(role 게이트 401/403 3종, 목록 스코핑, `advice_status` 반영, 배정 안 됨/미존재/`requester_display_name` 3분기/이메일·user_id 미노출/`my_advice` 유무 등) → 실행해 7 fail + 6 error 확인(라우트 없음).
+2. 최소 구현: `common/permissions.py`에 `IsActiveAdvisor`(active_role=ADVISOR 게이트, `IsAdmin`과 동일한 지연 import 패턴) 신설. `concerns/services.py`에 `list_assigned_concerns`(advisor 본인 활성 배정 + 본인 advice_status를 상관 서브쿼리로 annotate, N+1 없음) / `get_assigned_concern`(미존재 404, 미배정 403 — `django.core.exceptions.PermissionDenied`를 DRF가 자동 403 변환) / `requester_display_name` / `my_advice_view_data` / `assigned_concern_detail_view_data` 추가. `concerns/serializers.py`에 `AssignedConcernListSerializer`(plain Serializer — Assignment+Concern 혼합 소스) 추가. `concerns/views.py`에 `AssignedConcernListView`/`AssignedConcernDetailView` 추가. `concerns/urls.py`에 `/assigned-concerns`, `/assigned-concerns/<uuid:concern_id>` 추가.
+3. 4종 검증 실행 — 테스트 14/14 한 번에 통과(구현 재시도 없음), 전체 concerns 30/30, check/migrations/ruff 전부 통과.
+4. 시각 확인: `docker compose exec app python manage.py shell`로 advisor 계정+배정 fixture 생성 → Playwright로 advisor 로그인 → 배정 목록(#20) → 배정 상세(#21, `requester_display_name`="익명의 요청자", `my_advice`=null) → 존재하지 않는 concern-id 조회 시 404까지 스크린샷 3장 전송.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+* Playwright(1.48, npx 임시 설치 — 데모 전용, 저장소 의존성 아님)
+
+### 인간 결정 (Owner, 2026-09-10)
+
+TASK-001에서 승인된 방식(테스트 + Mock-up 시각 확인)을 동일 적용 — 이번 턴은 TASK-003 진행 승인만.
+
+### 발견한 문서 모순 (신규 1건, Owner 결정 대기)
+
+api.md #20의 쿼리 파라미터 `status?`가 "(assignment 상태)"라고 되어 있으나, `Assignment` 모델(model.md §3.7, concerns/models.py)에는 상태 enum이 없고 `is_active`(bool)만 존재한다. tasks.md TASK-003 체크리스트에 이 필터에 대한 테스트가 없어 **구현하지 않고 미해결로 남김**(파라미터는 받되 무시) — STATUS.md §5에 후보안 3가지와 함께 기록.
+
+### 생성된 산출물
+
+수정: `common/permissions.py`(`IsActiveAdvisor` 추가), `concerns/{services,serializers,views,urls,tests}.py`(각 확장).
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test concerns.tests.AssignedConcernTests` → 구현 전 7 fail + 6 error → 구현 후 **14/14 OK**(재시도 없이 1차 구현으로 전부 통과)
+* `manage.py test concerns` (전체) → **30/30 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: 배정 목록/상세/404 스크린샷 3장 Owner에게 전송
+
+### 잔여 리스크
+
+1. **api.md #20 `status?` 쿼리 필터 미구현** (위 모순 참조) — Owner 결정 후 TASK-006(SPEC-001 마무리)에서 일괄 반영 권장.
+2. **`#21`의 403 vs 404 정책이 `#18`과 다름**(존재 자체를 숨기지 않음)을 코드 주석으로 명시했으나, 이 비대칭성 자체가 향후 보안 리뷰(security-reviewer) 대상으로 재확인 필요.
+3. plan.md가 제안했던 `IsAssignedAdvisor`(객체 수준 배정 확인까지 포함한 단일 permission 클래스) 대신, role 게이트만 permission 클래스(`IsActiveAdvisor`)로 분리하고 배정 여부(403)는 서비스 함수 안에서 직접 판정하도록 설계를 변경했다 — 404/403 구분을 명확히 제어하기 위함(plan.md 대비 구현상 조정, 기능은 AC와 100% 일치).
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-004(#22 admin 전체 목록 + #23 admin 상세) 착수.
+
+---
+
 ## 2026-09-10 — SPEC-001/TASK-002: concern 상세+소프트 삭제 (api.md #18·#19) [위임]
 
 ### 작업

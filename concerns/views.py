@@ -1,8 +1,9 @@
-"""Views for concerns API (SPEC-001: api.md #16-#19).
+"""Views for concerns API (SPEC-001: api.md #16-#21).
 
 #16/#17 share one path (POST/GET on .../concerns) and #18/#19 share another
 (GET/DELETE on .../concerns/{concern-id}) — each pair is one APIView, the
-same shape as accounts.UserMeView (GET+PATCH on one path).
+same shape as accounts.UserMeView (GET+PATCH on one path). #20/#21 are the
+advisor-side counterpart under .../assigned-concerns.
 """
 
 from rest_framework.permissions import IsAuthenticated
@@ -10,9 +11,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.pagination import StandardPagination
+from common.permissions import IsActiveAdvisor
 
 from . import services
 from .serializers import (
+    AssignedConcernListSerializer,
     ConcernCreateResultSerializer,
     ConcernCreateSerializer,
     ConcernDetailSerializer,
@@ -66,3 +69,39 @@ class ConcernDetailView(APIView):
         concern = services.get_own_concern_including_deleted(request.user, concern_id)
         services.soft_delete_concern(concern)
         return Response(status=204)
+
+
+class AssignedConcernListView(APIView):
+    """GET (#20) — /api/v1/users/me/assigned-concerns.
+
+    Requires active_role=ADVISOR, not just holding the role (CLAUDE.md §2
+    Roles — see IsActiveAdvisor). The `status` query param api.md documents
+    here ("assignment 상태") has no matching field on Assignment (only
+    is_active, not a status enum) — left unimplemented pending an Owner
+    decision (STATUS.md §5); it is accepted but silently ignored for now.
+    """
+
+    permission_classes = [IsAuthenticated, IsActiveAdvisor]
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        queryset = services.list_assigned_concerns(request.user)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = AssignedConcernListSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class AssignedConcernDetailView(APIView):
+    """GET (#21) — /api/v1/users/me/assigned-concerns/{concern-id}.
+
+    404 if the concern doesn't exist, 403 if it exists but isn't assigned to
+    this advisor (api.md #21 — unlike #18, existence is not hidden here).
+    """
+
+    permission_classes = [IsAuthenticated, IsActiveAdvisor]
+
+    def get(self, request, concern_id):
+        concern, assignment = services.get_assigned_concern(request.user, concern_id)
+        data = services.assigned_concern_detail_view_data(concern, assignment, request.user)
+        return Response(data)

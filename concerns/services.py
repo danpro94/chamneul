@@ -2,10 +2,12 @@
 
 Owns query construction and state changes the view must not inline: creating
 a concern, building the "my concerns" list queryset, fetching a single owned
-concern (#18/#19), and the soft-delete transition (#19, CLAUDE.md §6.6).
+concern (#18/#19), the soft-delete transition (#19, CLAUDE.md §6.6), and the
+advisor-side assigned-concern queries (#20/#21).
 """
 
-from django.db.models import Exists, OuterRef
+from django.core.exceptions import PermissionDenied
+from django.db.models import Exists, OuterRef, Subquery
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -13,7 +15,7 @@ from advice.models import Advice, AdviceStatus
 from advisors.models import AdvisorApplication, AdvisorApplicationStatus
 from common.exceptions import Conflict
 
-from .models import Concern
+from .models import Assignment, Concern
 
 
 def create_concern(author, validated_data) -> Concern:
@@ -98,3 +100,89 @@ def approved_advices_view_data(concern: Concern) -> list[dict]:
         }
         for advice in advices
     ]
+
+
+def list_assigned_concerns(advisor):
+    """Queryset for #20 — the advisor's own active assignments, newest first,
+    annotated with `advice_status`: the advisor's own (non-deleted) advice
+    status for that concern, or null if they haven't written one yet. A
+    correlated Subquery keeps this to one query regardless of list size
+    (CLAUDE.md §8 — avoid N+1).
+    """
+    own_advice_status = (
+        Advice.objects.filter(concern=OuterRef("concern_id"), advisor=advisor)
+        .exclude(status=AdviceStatus.DELETED)
+        .order_by("-created_at")
+        .values("status")[:1]
+    )
+    return (
+        Assignment.objects.filter(advisor=advisor, is_active=True)
+        .select_related("concern")
+        .annotate(advice_status=Subquery(own_advice_status))
+        .order_by("-assigned_at")
+    )
+
+
+def get_assigned_concern(advisor, concern_id):
+    """Fetch the target concern for #21 — 404 if the concern doesn't exist
+    (or is soft-deleted), 403 if it exists but isn't assigned to this advisor
+    (api.md #21: existence is not hidden the way an unrelated user's concern
+    is — CLAUDE.md §10's "don't reveal existence" applies to *ownership*,
+    not to an advisor's assignment queue).
+    """
+    concern = get_object_or_404(Concern.objects, pk=concern_id)
+    assignment = Assignment.objects.filter(
+        concern=concern, advisor=advisor, is_active=True
+    ).first()
+    if assignment is None:
+        raise PermissionDenied("배정되지 않은 고민입니다.")
+    return concern, assignment
+
+
+def requester_display_name(concern: Concern) -> str:
+    """api.md #21 `requester_display_name` derivation (D-2, UX C-6/C-7):
+    display_alias if set, else an anonymous placeholder or the account
+    nickname depending on is_anonymous. Never the requester's email/user_id.
+    """
+    if concern.display_alias:
+        return concern.display_alias
+    if concern.is_anonymous:
+        return "익명의 요청자"
+    return concern.author.nickname
+
+
+def my_advice_view_data(concern: Concern, advisor) -> dict | None:
+    """api.md #21 `my_advice` — the advisor's own (non-deleted) advice on
+    this concern, or None if they haven't written one."""
+    advice = (
+        Advice.objects.filter(concern=concern, advisor=advisor)
+        .exclude(status=AdviceStatus.DELETED)
+        .order_by("-created_at")
+        .first()
+    )
+    if advice is None:
+        return None
+    return {
+        "advice_id": str(advice.id),
+        "status": advice.status,
+        "version": advice.version,
+        "is_submitted": advice.is_submitted,
+    }
+
+
+def assigned_concern_detail_view_data(concern: Concern, assignment: Assignment, advisor) -> dict:
+    """api.md #21 full response payload — mixes Concern fields with the
+    caller's own Assignment/Advice context, so it is assembled here rather
+    than through a single ModelSerializer."""
+    return {
+        "concern_id": str(concern.id),
+        "concern_summary": concern.concern_summary,
+        "concern_type": concern.concern_type,
+        "concern_type_secondary": concern.concern_type_secondary,
+        "decision_context": concern.decision_context,
+        "is_anonymous": concern.is_anonymous,
+        "requester_display_name": requester_display_name(concern),
+        "assigned_at": assignment.assigned_at,
+        "assignment_id": str(assignment.id),
+        "my_advice": my_advice_view_data(concern, advisor),
+    }
