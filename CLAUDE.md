@@ -49,20 +49,27 @@ Do not jump to AWS, Kubernetes, CI/CD, Terraform, or production architecture unl
 When documents conflict, follow this priority:
 
 1. CLAUDE.md
-2. docs/adr/ADR-001-local-container-architecture.md
-3. docs/2 mvp-scope.md
-4. docs/1 서비스기획_v1.md
-5. docs/0 README.md
-6. Notion-exported API specification
-7. docs/api.md
-8. docs/model.md
-9. code
+2. .claude/rules/*.md (§9-§12 split-out detail rules — equal authority to CLAUDE.md; see ADR-006)
+3. docs/adr/ (highest-numbered ADR wins on its subject; includes ADR-006)
+4. docs/00-project/STATUS.md (sole source of truth for actual implementation status)
+5. specs/SPEC-00N-*/ (the Active SPEC's spec/plan/tasks/acceptance)
+6. docs/2 mvp-scope_v1.md
+7. docs/1 서비스기획_v1.md
+8. docs/README.md
+9. Notion-exported API specification (read-only archive as of ADR-006 — no longer updated)
+10. docs/api.md
+11. docs/model.md
+12. code
 
 If there is a conflict, do not silently resolve it. Create a short conflict table and ask the Owner for a decision.
+
+> Order revised by ADR-006 (2026-09-10): items 2-5 added, path typos in items 6-8 corrected (`mvp-scope.md`→`mvp-scope_v1.md`, `0 README.md`→`README.md`), Notion demoted to read-only archive.
 
 ---
 
 ## 3. Current Known Project Tree
+
+> The actual, up-to-date implementation state lives in `docs/00-project/STATUS.md` (ADR-006) — the trees below are the historical 2026-06-22 snapshot and the originally expected layout, kept for context only.
 
 Current root:
 
@@ -98,12 +105,16 @@ chamneul/
 ├── advisors/
 ├── advice/
 ├── notifications/
+├── .claude/rules/           # §9-§12 detail rules (ADR-006)
+├── specs/                   # SPEC-00N-*/ work breakdown (ADR-006)
 └── docs/
     ├── api.md
     ├── model.md
     ├── smoke-test.md
     ├── reviews/
-    └── adr/
+    ├── adr/
+    ├── 00-project/STATUS.md  # implementation status (ADR-006)
+    └── testing/TEST_CRITERIA.md
 ```
 
 Do not create all apps at once unless the Owner requests it. Prefer incremental MVP implementation.
@@ -162,7 +173,7 @@ Authentication:
 
 ## 5. MVP Scope Boundaries
 
-Owner decision (2026-06-22): Phase 2 v1 implements the **full 43-endpoint API surface** derived from Notion v0 (41 original − 1 refresh-token removed + `/healthz` + admin-role grant/revoke). Outcome tracking and trust score are the only domain capabilities deferred to a later phase.
+Owner decision (2026-06-22): Phase 2 v1 implements the **full API surface** derived from Notion v0 (41 original − 1 refresh-token removed + `/healthz` + admin-role grant/revoke = 43), **extended to 44 endpoints on 2026-07-08 (D-1)** with the CSRF-bootstrap endpoint (`GET /api/v1/csrf`) — see docs/api.md §3 for the authoritative count (corrected here by ADR-006). Outcome tracking and trust score are the only domain capabilities deferred to a later phase.
 
 In scope for Phase 2:
 
@@ -429,112 +440,25 @@ For nested relationships:
 
 ## 9. Coding Rules
 
-Code must be clean, boring, maintainable, and explainable.
-
-Follow these rules:
-
-* Prefer small, cohesive modules.
-* Avoid spaghetti code.
-* Avoid magic numbers.
-* Avoid premature abstraction.
-* Avoid unnecessary cleverness.
-* Use meaningful names.
-* Keep comments sparse and useful.
-* Add comments only for intent, side effects, security concerns, non-obvious logic, TODO, or FIXME.
-* Do not hide business rules deep inside serializers without explanation.
-* Do not implement broad features in one huge patch.
-* Do not create files unrelated to the current task.
-
-When using DRF:
-
-* ModelViewSet is allowed for simple CRUD.
-* Use custom permissions for access control.
-* Use explicit serializers for different actions when list/detail/create responses differ.
-* Consider service functions for business actions.
-* Consider database transactions for multi-write operations.
-* Avoid N+1 queries.
+See [.claude/rules/coding.md](.claude/rules/coding.md) (moved verbatim by ADR-006 — equal authority to this document; no rule changed).
 
 ---
 
 ## 10. Security Rules
 
-Never commit secrets.
-
-Sensitive files:
-
-* .env
-* private keys
-* credential files
-* local database dumps
-* token files
-* OAuth client secrets
-
-Required:
-
-* .env.example only
-* .gitignore must exclude secrets
-* DEBUG must not be true in production settings
-* ALLOWED_HOSTS must be explicit outside local development
-* user-owned data must enforce object-level access control
-* only approved advice is visible to concern owners
-* admin-only actions must not be exposed as public endpoints
-
-Authentication implementation rules (Session-based, see §4 and ADR-002):
-
-* The session cookie must be set with HttpOnly, Secure, and SameSite=Lax. `Secure` is required for all non-localhost environments.
-* Logout must invalidate the server-side session record AND clear the client cookie (`Set-Cookie` with `Max-Age=0`). It must not rely on client-side cookie deletion alone.
-* Google OAuth callback must reuse the same session model — do not create a parallel auth path. Account linking is by verified email.
-* Password storage uses Django's default PBKDF2 hasher with the project default iteration count. Do not store plaintext or reversible-encrypted passwords.
-* CSRF protection must be enabled for all state-changing endpoints. SPA clients must read the `csrftoken` cookie and send it back in the `X-CSRFToken` header.
-* Brute-force login protection (IP + account based rate limiting) is documented as a Phase 3 follow-up; in Phase 2, document the gap explicitly in the smoke test note.
+See [.claude/rules/security.md](.claude/rules/security.md) (moved verbatim by ADR-006 — equal authority to this document; no rule changed).
 
 ---
 
 ## 11. DevOps and Local Runtime Rules
 
-The Owner must be able to explain:
-
-* how a request reaches Django
-* how Django connects to PostgreSQL
-* how environment variables are loaded
-* how containers communicate
-* what happens when DB is unavailable
-* how /healthz is used
-* how migration is applied
-* how logs are checked
-* how to reset local DB safely
-
-Docker rules:
-
-* app and db must be separate services
-* postgres data must use named volume
-* host port conflicts must be documented
-* .dockerignore must exist
-* Dockerfile must be minimal and readable
-* docker-compose.yml must be understandable by a junior DevOps learner
-
-Do not introduce Kubernetes before local Compose is stable.
+See [.claude/rules/infrastructure.md](.claude/rules/infrastructure.md) (moved verbatim by ADR-006 — equal authority to this document; no rule changed).
 
 ---
 
 ## 12. Testing and Validation Rules
 
-Every code change must include at least one validation method.
-
-Possible validation:
-
-* python manage.py check
-* python manage.py test
-* python manage.py makemigrations --check
-* python manage.py migrate
-* curl /healthz
-* curl API create/list/detail
-* Django Admin verification
-* docker compose up
-* docker compose ps
-* docker compose logs
-
-When a command is not executed, state it as “recommended command,” not as completed work.
+See [.claude/rules/testing.md](.claude/rules/testing.md) (moved verbatim by ADR-006 — equal authority to this document; no rule changed). Automated judgment criteria: [docs/testing/TEST_CRITERIA.md](docs/testing/TEST_CRITERIA.md).
 
 ---
 
@@ -551,6 +475,8 @@ Maintain:
 * docs/smoke-test.md
 * docs/adr/
 * docs/reviews/
+* docs/00-project/STATUS.md (ADR-006) — every implementation commit must update this file
+* specs/SPEC-00N-*/ (ADR-006) — the Active SPEC's spec/plan/tasks/acceptance
 
 After meaningful AI-assisted work, update or remind the Owner to update README_AIUSAGE.md.
 
@@ -638,24 +564,18 @@ Constitutional lock (Owner directive):
 
 * This CLAUDE.md is the project constitution. The 2026-06-22 alignment session and the 2026-06-26 model alignment session are the only authorized in-place edit windows. After 2026-06-26 ends, **CLAUDE.md is frozen** — changes happen only through a new ADR that explicitly supersedes the affected clause. A future Claude session must never edit CLAUDE.md directly; it must read it as ground truth and propose an ADR if it disagrees.
 * The 2026-06-26 edit explicitly absorbed the SQLite-exclusion rule (§4) and the `deleted_at` soft-delete convention with partial-unique enforcement (§6.6) directly into CLAUDE.md, so no separate supersession ADR is required for these clauses.
+* ADR-006 (AI-Native / Spec-Driven skeleton, Accepted 2026-09-10) explicitly supersedes §2 (Source of Truth Order), §3 (Current Known Project Tree), §5 (endpoint count 43→44), §9-§12 (split into `.claude/rules/*.md`), §13 (STATUS.md/specs maintenance added), and §17 (workflow replaced) per the process this section requires. The edits are applied verbatim from ADR-006's Consequences section.
 
 ---
 
-## 17. First Recommended Workflow
+## 17. Session Workflow
 
-Initial workflow:
+> Replaced by ADR-006 (2026-09-10). The original bootstrap workflow (read docs → reconcile Notion v0 → produce api.md/model.md) is complete history — see README_AIUSAGE.md 2026-06-22/06-26 entries. It no longer applies to new sessions.
 
-1. Read CLAUDE.md.
-2. Read docs/0 README.md.
-3. Read docs/1 서비스기획_v1.md.
-4. Read docs/2 mvp-scope.md.
-5. Read docs/adr/ADR-001-local-container-architecture.md.
-6. Wait for Notion API export markdown to be added.
-7. Review API spec against this CLAUDE.md.
-8. Produce API issue ledger.
-9. Ask Owner decision questions.
-10. After confirmation, create docs/api.md v1.
-11. Create docs/model.md based on api.md.
-12. Only then begin Django code scaffolding.
+Every session start:
 
-Do not start coding before API and model direction are coherent unless the Owner explicitly instructs otherwise.
+1. Read CLAUDE.md → README.md → docs/00-project/STATUS.md.
+2. Read the Active SPEC (specs/SPEC-00N-*/) and its related ADR/api.md sections only.
+3. Do not modify code yet. Report: (1) project purpose (2) current Active SPEC (3) that SPEC's completion criteria (4) related Architecture Decisions (5) actual implementation state, from code (6) anything uncertain or conflicting (7) the next minimum unit of work.
+4. Implement one SPEC TASK at a time, test-first: write the acceptance.md AC as a failing Django test → minimal implementation (state transitions/side effects in services.py, access control in common/permissions.py + object-level checks) → run check/makemigrations --check/ruff/test and show the actual output → commit (message includes the SPEC/TASK id) → update STATUS.md → add one README_AIUSAGE.md entry → stop for Owner confirmation before the next TASK.
+5. Dockerfile / docker-compose* / .env* remain untouchable without explicit Owner approval (§16). Never edit a test or its AC just to make it pass.

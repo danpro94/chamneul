@@ -3,6 +3,8 @@
 본 문서는 `chamneul` Phase 2 v1의 공식 API 명세이다. Notion v0 export(41건)을 정합성 검토한 뒤, `토큰 재발급`을 제거하고 `/healthz` + 관리자 역할 부여/해제 2건을 추가하여 43 엔드포인트를 확정했고, 2026-07-08 Owner 결정으로 CSRF 부트스트랩 엔드포인트(`GET /api/v1/csrf`, D-1)를 추가하여 **총 44 엔드포인트**로 확정한다.
 
 > 2026-07-08 M4 착수 전 Owner 결정 반영 (D-1~D-8, C-10·C-11): §3 요약표 #44 추가, §1.2 CSRF 부트스트랩, 응답 필드 3건 보강(`is_submitted`·작성자 한정 `reject_reason`·`expected_version`, D-3), 알림 `target_url` 규약(C-10), Google nickname 자동 산정(C-11), `domain_category` 11종 확정(D-6), `is_deleted` 표기 정리(C-1). 기존 #1~43 번호는 ux/01 등 상호참조 안정성을 위해 유지하고 신규 엔드포인트만 #44로 덧붙인다.
+>
+> 2026-09-10 SPEC-001(M4-5 concerns) 구현 중 Owner 결정 반영: (1) #20 `status` 쿼리 파라미터를 "assignment 상태"에서 **"concern 상태"**로 정정 — `Assignment` 모델에는 상태 enum이 없고 `is_active`(bool)만 존재하며, 그 값은 이미 목록의 전제 조건이다(STATUS.md §5). (2) #16·#18·#19·#24의 상태 서술에서 `is_deleted=true/false` 표기를 실제 저장 컬럼인 `deleted_at`으로 교체 — C-1(§6) 규약대로 `is_deleted`는 **응답 필드**로만 쓰고(#22), 저장·상태 서술에는 쓰지 않는다. 엔드포인트 계약(경로·메서드·상태 코드)은 변경 없음.
 
 확정 결정의 출처:
 
@@ -431,7 +433,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Response 주요 필드 | `concern_id`, `status` (`SUBMITTED`), `message` |
 | Status | 201 / 400 / 401 / 500 |
 | 접근 제어 조건 | User 역할 활성 상태에서만 가능. |
-| Side Effect | Concern 생성(`status=SUBMITTED`, `is_deleted=false`). |
+| Side Effect | Concern 생성(`status=SUBMITTED`, `deleted_at=NULL`). |
 | MVP 여부 | ✓ |
 
 ### 17. GET /api/v1/users/me/concerns
@@ -460,7 +462,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Request 주요 필드 | Path: `concern-id` |
 | Response 주요 필드 | `concern_id`, `concern_summary`, `concern_type`, `concern_type_secondary[]`, `preferred_advisor_lane`, `decision_context`, `is_anonymous`, `status`, `created_at`, `approved_advices[]`: { `advice_id`, `advisor_display_name`, `created_at` } |
 | Status | 200 / 401 / 403 / 404 / 500 |
-| 접근 제어 조건 | 본인만. `is_deleted=true`는 404. `approved_advices`는 APPROVED 상태만 포함(CLAUDE.md §6.2). |
+| 접근 제어 조건 | 본인만. 소프트 삭제된 고민(`deleted_at IS NOT NULL`)은 404. `approved_advices`는 APPROVED 상태만 포함(CLAUDE.md §6.2). |
 | Side Effect | 없음. |
 | MVP 여부 | ✓ |
 
@@ -471,12 +473,12 @@ URI 변경 요약 (Notion v0 → v1):
 | Method | DELETE |
 | Endpoint | `/api/v1/users/me/concerns/{concern-id}` |
 | Permission | User |
-| Description | 내 고민 소프트 삭제(`is_deleted=true`). 연결된 advice/assignment는 보존. |
+| Description | 내 고민 소프트 삭제(`deleted_at` 기록). 연결된 advice/assignment는 보존. |
 | Request 주요 필드 | Path: `concern-id` |
 | Response 주요 필드 | 본문 없음(204). |
 | Status | 204 / 401 / 403 / 404 / 409(이미 삭제됨) / 500 |
 | 접근 제어 조건 | 본인 고민만. |
-| Side Effect | `is_deleted=true`. 추가 작성 advice / 배정 트리거 금지. |
+| Side Effect | `deleted_at = now()` 기록. 추가 작성 advice / 배정 트리거 금지. |
 | MVP 여부 | ✓ |
 
 ### 20. GET /api/v1/users/me/assigned-concerns
@@ -487,7 +489,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Endpoint | `/api/v1/users/me/assigned-concerns` |
 | Permission | Advisor (active_role=ADVISOR) |
 | Description | 내가 배정받은 고민 목록. |
-| Request 주요 필드 | Query: `status?` (assignment 상태), `page?`, `size?` |
+| Request 주요 필드 | Query: `status?` (concern 상태 — `SUBMITTED`/`ASSIGNED`/`ANSWERED`/`CLOSED`), `page?`, `size?` |
 | Response 주요 필드 | `items[]`: { `concern_id`, `concern_summary` (익명 처리 적용), `concern_type`, `assigned_at`, `assignment_id`, `advice_status?` (내가 작성한 advice 상태) }, `page_info` |
 | Status | 200 / 401 / 403 / 500 |
 | 접근 제어 조건 | `active_role=ADVISOR` 일 때만. ADVISOR 역할만 보유하고 active_role이 USER면 403. |
@@ -550,7 +552,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Request 주요 필드 | `advisor_user_id` (필수, APPROVED ADVISOR 역할 보유), `triage_decision` (enum: `suitable`/`needs_more_info`/`out_of_scope`), `match_rationale?`: { `matched_types[]?`, `lane_match?`, `note?` }, `priority?` (enum: `low`/`normal`/`high`, default `normal`) |
 | Response 주요 필드 | `assignment_id`, `concern_id`, `advisor_user_id`, `assigned_by`, `assigned_at`, `priority`, `concern_status` (전이 후 상태) |
 | Status | 201 / 400 / 401 / 403 / 404(concern 없음) / 409(중복 active 배정 또는 concern이 CLOSED) / 422 / 500 |
-| 접근 제어 조건 | ADMIN. concern이 `CLOSED`이거나 `is_deleted=true`면 409. |
+| 접근 제어 조건 | ADMIN. concern이 `CLOSED`이거나 소프트 삭제된 상태(`deleted_at IS NOT NULL`)면 409. |
 | Side Effect | Assignment 생성. concern.status가 `SUBMITTED`였다면 `ASSIGNED`로 전이. 알림 발송(`ASSIGNMENT_CREATED`). |
 | MVP 여부 | ✓ |
 
