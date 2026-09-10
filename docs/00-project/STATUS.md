@@ -69,7 +69,14 @@
 
 ## 4. Active SPEC
 
-**SPEC-001-concerns-api — 완료 (2026-09-10).** api.md #16~25 (M4-5 concerns 모듈) 10개 엔드포인트 전량 구현, AC-1~AC-10 전항 통과, 테스트 62개. 다음 Active SPEC은 아직 없음 — **SPEC-002(M4-6 advice+feedback, #26~38) 작성이 다음 단계**.
+**SPEC-002-advice-api** (`specs/SPEC-002-advice-api/`) — api.md #26~38 (M4-6 advice + feedback) 13개 엔드포인트. **Status: Draft — Owner 결정 4건 대기**(spec.md §7: 초안의 관리자 리뷰 대기열 노출 여부 / `submit` 토글의 version 증가 여부 / CLOSED concern 승인 시 전이 / #27 403-404 선택). 브랜치 `feat/spec-002-advice-api`.
+
+**다음 최소 작업 단위**: §7 결정 확정 후 TASK-001 — 조언 작성(#28) + 내가 쓴 조언 목록(#31).
+
+<details>
+<summary>SPEC-001-concerns-api — 완료 (2026-09-10, PR #2 머지)</summary>
+
+api.md #16~25 (M4-5 concerns) 10개 엔드포인트 전량 구현, AC-1~AC-10 전항 통과, 테스트 62개.
 
 * [x] TASK-001 — `POST /api/v1/users/me/concerns` (#16) + `GET /api/v1/users/me/concerns` (#17). 테스트 8종 작성(선-실패 확인) → 구현(`concerns/{serializers,services,views,urls}.py`) → `check`/`makemigrations --check`/`ruff`/`test` 전부 통과 → DRF Browsable API로 로그인→생성→목록 확인(스크린샷) → 커밋.
 * [x] TASK-002 — `GET /api/v1/users/me/concerns/{concern-id}` (#18, `approved_advices[]` 포함) + `DELETE .../{concern-id}` (#19, soft delete). 테스트 8종 추가(선-실패 확인) → 구현(`ConcernDetailSerializer`, `ConcernDetailView`, `get_own_concern`/`get_own_concern_including_deleted`/`soft_delete_concern`/`approved_advices_view_data` 서비스) → 검증 4종 통과 → 스크린샷으로 상세/삭제/재조회 404 확인 → 커밋.
@@ -77,6 +84,8 @@
 * [x] TASK-004 — admin 조회 `GET /api/v1/admin/concerns` (#22) + `GET .../concerns/{concern-id}` (#23). `include_deleted`/`status`/`keyword` 필터, `assignment_count`(활성 배정만), `is_deleted` 파생 필드. #23은 soft-deleted concern도 조회 가능(감사 경로) + assignments/advices 상태 무관 전량 노출(§6.2는 고민 작성자 보호용이지 admin 제한이 아님). 테스트 12종 추가(선-실패 11개 확인) → 검증 4종 통과(`assertNumQueries(5)`로 N+1 부재 고정) → 스크린샷 3장 확인 → 커밋.
 * [x] TASK-005 — 배정 생성 `POST .../concerns/{concern-id}/assignments` (#24) + 해제 `DELETE .../assignments/{assignment-id}` (#25). `assign_advisor`/`unassign_advisor` 서비스가 **한 트랜잭션**으로 Assignment row + 상태 전이(SUBMITTED→ASSIGNED / 마지막 해제 시 ASSIGNED→SUBMITTED) + `ASSIGNMENT_CREATED` 알림을 함께 처리(§6.4/§6.6). concern row에 `select_for_update()`로 동시 배정/해제 직렬화. 비-advisor 지정은 422, 중복 활성 배정·CLOSED/삭제 concern·이미 해제된 배정은 409. 테스트 18종 추가(선-실패 14개 확인) → 검증 4종 통과(전체 60/60) → 스크린샷 4장(배정 전/201/조언가 큐/해제 후 복귀) 확인 → 커밋.
 * [x] TASK-006 마무리 — #20 `status` 필터 구현(Owner 승인안: `concern.status` 기준), api.md 문구 정정 2건(#20 "assignment 상태"→"concern 상태", #16·#18·#19·#24의 `is_deleted` 상태 서술→`deleted_at`), AC-1~AC-10 전항 대조 후 미커버 2건 보강(AC-4 Assignment 보존 단언, #20 목록 `assertNumQueries`), 검증 4종 통과(**62/62**).
+
+</details>
 
 ## 5. 미결 Owner 결정
 
