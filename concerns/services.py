@@ -7,7 +7,7 @@ advisor-side assigned-concern queries (#20/#21).
 """
 
 from django.core.exceptions import PermissionDenied
-from django.db.models import Exists, OuterRef, Subquery
+from django.db.models import Count, Exists, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -65,26 +65,34 @@ def soft_delete_concern(concern: Concern) -> None:
     concern.save(update_fields=["deleted_at"])
 
 
-def approved_advices_view_data(concern: Concern) -> list[dict]:
-    """api.md #18 `approved_advices[]` — APPROVED-only exposure (CLAUDE.md
-    §6.2). `advisor_display_name` comes from each advisor's most recent
-    APPROVED advisor application (falls back to their account nickname for
-    the rare admin-granted-without-application path, ADR-003 §2). Resolved
-    in one extra query (not per-advice) to avoid N+1 (CLAUDE.md §8).
+def display_names_by_advisor(advisor_ids) -> dict:
+    """Bulk-resolve advisor display names: each advisor's most recent APPROVED
+    advisor application (model.md §3.5). One query for any number of advisors
+    — callers fall back to the account nickname for ids missing here (the rare
+    admin-granted-without-application path, ADR-003 §2).
     """
-    advices = list(
-        Advice.objects.filter(concern=concern, status=AdviceStatus.APPROVED)
-        .select_related("advisor")
-        .order_by("created_at")
-    )
-    advisor_ids = [advice.advisor_id for advice in advices]
-    display_name_by_advisor = dict(
+    return dict(
         AdvisorApplication.objects.filter(
             applicant_id__in=advisor_ids, status=AdvisorApplicationStatus.APPROVED
         )
         .order_by("applicant_id", "-submitted_at")
         .distinct("applicant_id")
         .values_list("applicant_id", "display_name")
+    )
+
+
+def approved_advices_view_data(concern: Concern) -> list[dict]:
+    """api.md #18 `approved_advices[]` — APPROVED-only exposure (CLAUDE.md
+    §6.2). `advisor_display_name` is resolved in one bulk query, not per
+    advice, to avoid N+1 (CLAUDE.md §8).
+    """
+    advices = list(
+        Advice.objects.filter(concern=concern, status=AdviceStatus.APPROVED)
+        .select_related("advisor")
+        .order_by("created_at")
+    )
+    display_name_by_advisor = display_names_by_advisor(
+        [advice.advisor_id for advice in advices]
     )
     return [
         {
@@ -185,4 +193,85 @@ def assigned_concern_detail_view_data(concern: Concern, assignment: Assignment, 
         "assigned_at": assignment.assigned_at,
         "assignment_id": str(assignment.id),
         "my_advice": my_advice_view_data(concern, advisor),
+    }
+
+
+def list_concerns_for_admin(include_deleted: bool = False):
+    """Queryset for #22 — every user's concerns, newest first, annotated with
+    `assignment_count`.
+
+    `include_deleted` opts into soft-deleted rows via the unfiltered manager
+    (CLAUDE.md §6.6: admin/audit access is the only path that sees them).
+    assignment_count counts *active* assignments only — the useful operator
+    signal is "how many advisors are working on this now", and deactivated
+    rows are still visible in full on the #23 detail.
+    """
+    base = Concern.objects.with_deleted() if include_deleted else Concern.objects.all()
+    return base.annotate(
+        assignment_count=Count("assignments", filter=Q(assignments__is_active=True))
+    ).order_by("-created_at")
+
+
+def get_concern_for_admin(concern_id) -> Concern:
+    """Fetch the target concern for #23 — includes soft-deleted rows, so a row
+    surfaced by #22's include_deleted=true is actually reachable here."""
+    return get_object_or_404(Concern.objects.with_deleted(), pk=concern_id)
+
+
+def admin_concern_detail_view_data(concern: Concern) -> dict:
+    """api.md #23 payload — the concern plus *every* assignment and advice
+    regardless of state. CLAUDE.md §6.2's APPROVED-only rule protects concern
+    owners (#18), not admins: review requires seeing PENDING/REJECTED too.
+
+    Query budget is fixed (assignments + advices + one bulk display-name
+    lookup), independent of row count (CLAUDE.md §8).
+    """
+    assignments = list(
+        Assignment.objects.filter(concern=concern)
+        .select_related("advisor")
+        .order_by("-assigned_at")
+    )
+    advices = list(
+        Advice.objects.filter(concern=concern).select_related("advisor").order_by("created_at")
+    )
+    display_name_by_advisor = display_names_by_advisor(
+        [assignment.advisor_id for assignment in assignments]
+    )
+    return {
+        "concern_id": str(concern.id),
+        "author_user_id": str(concern.author_id),
+        "concern_summary": concern.concern_summary,
+        "concern_type": concern.concern_type,
+        "concern_type_secondary": concern.concern_type_secondary,
+        "preferred_advisor_lane": concern.preferred_advisor_lane,
+        "decision_context": concern.decision_context,
+        "display_alias": concern.display_alias,
+        "is_anonymous": concern.is_anonymous,
+        "status": concern.status,
+        "is_deleted": concern.deleted_at is not None,
+        "created_at": concern.created_at,
+        "updated_at": concern.updated_at,
+        "assignments": [
+            {
+                "assignment_id": str(assignment.id),
+                "advisor_user_id": str(assignment.advisor_id),
+                "advisor_display_name": display_name_by_advisor.get(
+                    assignment.advisor_id, assignment.advisor.nickname
+                ),
+                "assigned_at": assignment.assigned_at,
+                "assigned_by": str(assignment.assigned_by_id),
+                "is_active": assignment.is_active,
+            }
+            for assignment in assignments
+        ],
+        "advices": [
+            {
+                "advice_id": str(advice.id),
+                "advisor_user_id": str(advice.advisor_id),
+                "status": advice.status,
+                "version": advice.version,
+                "created_at": advice.created_at,
+            }
+            for advice in advices
+        ],
     }

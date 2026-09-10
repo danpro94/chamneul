@@ -6,6 +6,57 @@
 
 ---
 
+## 2026-09-10 — SPEC-001/TASK-004: admin 고민 목록+상세 (api.md #22·#23) [위임]
+
+### 작업
+
+프롬프트 3 루프로 SPEC-001의 TASK-004만 구현:
+
+1. `concerns/tests.py`에 `AdminConcernTests` 12케이스 추가(권한 401/403, `include_deleted` 기본/명시, `status`·`keyword` 필터, `assignment_count`(비활성 제외), soft-deleted 상세 조회, assignments·advices 전량 노출, `assertNumQueries`로 N+1 부재) → 실행해 11개 실패 확인.
+2. 최소 구현: `concerns/services.py`에 `display_names_by_advisor`(TASK-002의 벌크 조회를 재사용 가능한 헬퍼로 추출) / `list_concerns_for_admin` / `get_concern_for_admin` / `admin_concern_detail_view_data` 추가. `AdminConcernListSerializer` 추가. `AdminConcernListView`·`AdminConcernDetailView` + URL 2개 추가.
+3. 4종 검증 실행 — 전체 concerns 42/42 통과.
+4. 시각 확인: demo 계정에 ADMIN 역할 부여 + 삭제된 고민 fixture 생성 후 Playwright로 기본 목록/`include_deleted=true`/상세 스크린샷 3장 전송.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension) / Playwright(1.48, 데모 전용 임시 설치)
+
+### 인간 결정 (Owner, 2026-09-10)
+
+| 결정 | 내용 |
+| --- | --- |
+| 모순 해결 | api.md #20의 `status?` 쿼리 파라미터를 **`concern.status` 필터로 재해석**(후보 B) 승인. 구현·api.md 문구 정정은 TASK-006에서 일괄 반영하도록 tasks.md에 명시 |
+| TASK-004 | 진행 승인 |
+
+### 판단 기록 (AI가 정한 것, 이견 시 저비용 수정 가능)
+
+* `assignment_count`는 **활성 배정만** 집계(비활성 이력 제외) — 운영자가 "지금 몇 명이 붙어 있나"를 보는 숫자가 더 유용하다고 판단. 비활성 이력은 #23 상세에서 `is_active=false`로 전량 확인 가능.
+* #23은 **soft-deleted concern도 200으로 조회**되게 구현 — #22의 `include_deleted=true`가 노출한 행이 상세에서 404가 되면 모순이므로.
+* `assertNumQueries` 기대값은 처음 6으로 잡았다가 실측 5로 정정(`force_authenticate`가 세션 조회를 건너뜀). AC("쿼리 수 고정")는 그대로이며 상수만 실측값으로 맞춘 것.
+
+### 생성된 산출물
+
+수정: `concerns/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`, `specs/SPEC-001-concerns-api/tasks.md`(TASK-006에 #20 필터 항목 추가).
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test concerns.tests.AdminConcernTests` → 구현 전 11 fail → 구현 후 **12/12 OK**
+* `manage.py test concerns` (전체) → **42/42 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed(E501 1건 즉시 수정)
+* 시각 확인: admin 목록(기본/include_deleted)/상세 스크린샷 3장 Owner에게 전송
+
+### 잔여 리스크
+
+1. **`keyword` 필터는 `concern_summary`만 대상** — `decision_context` 본문 검색은 미포함(api.md가 대상 범위를 명시하지 않음). 실사용 시 범위 확장 필요할 수 있음.
+2. **admin 목록에 본문(decision_context) 미노출** — 의도적(§8 목록 응답 최소화). 상세(#23)에서만 노출.
+3. TASK-005는 상태 전이 + 알림 부수효과가 함께 걸리는 구간이라 `@transaction.atomic` 적용이 필수 — M2 학습 부채 ⑤(atomic)와 직결되므로 구현 후 이해 확인 권장.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-005(#24 배정 생성 + #25 해제) 착수.
+
+---
+
 ## 2026-09-10 — SPEC-001/TASK-003: advisor 배정 목록+상세 (api.md #20·#21) [위임]
 
 ### 작업

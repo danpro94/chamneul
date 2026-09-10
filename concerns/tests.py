@@ -1,4 +1,4 @@
-"""Tests for concerns API (SPEC-001, api.md #16-#21).
+"""Tests for concerns API (SPEC-001, api.md #16-#23).
 
 Written before the code they exercise exists (specs/SPEC-001-concerns-api/
 tasks.md — TDD: each test class must fail first, then pass after
@@ -29,6 +29,7 @@ User = get_user_model()
 
 CONCERNS_URL = "/api/v1/users/me/concerns"
 ASSIGNED_CONCERNS_URL = "/api/v1/users/me/assigned-concerns"
+ADMIN_CONCERNS_URL = "/api/v1/admin/concerns"
 
 
 class ConcernCreateListTests(TestCase):
@@ -440,3 +441,213 @@ class AssignedConcernTests(TestCase):
         response = self.client.get(self.detail_url(self.assigned_concern.id))
 
         self.assertIsNone(response.data["my_advice"])
+
+
+class AdminConcernTests(TestCase):
+    """SPEC-001 TASK-004 (api.md #22 admin list, #23 admin detail)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.author = User.objects.create_user(
+            email="author5@example.com", nickname="author5", password="pw12345!"
+        )
+        self.advisor = User.objects.create_user(
+            email="advisor5@example.com", nickname="advisor5", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.advisor, role=Role.ADVISOR)
+        self.admin = User.objects.create_user(
+            email="admin5@example.com", nickname="admin5", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.admin, role=Role.ADMIN)
+
+        self.alive_concern = Concern.objects.create(
+            author=self.author,
+            concern_summary="살아있는 고민",
+            concern_type=ConcernType.BURNOUT,
+            status=ConcernStatus.ASSIGNED,
+        )
+        self.deleted_concern = Concern.objects.create(
+            author=self.author,
+            concern_summary="삭제된 고민",
+            concern_type=ConcernType.JOB_CHANGE,
+        )
+        self.deleted_concern.deleted_at = timezone.now()
+        self.deleted_concern.save(update_fields=["deleted_at"])
+
+    def detail_url(self, concern_id):
+        return f"{ADMIN_CONCERNS_URL}/{concern_id}"
+
+    # --- AC-7 : admin list (#22) ----------------------------------------
+
+    def test_list_requires_login(self):
+        response = self.client.get(ADMIN_CONCERNS_URL)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_requires_admin(self):
+        self.client.force_authenticate(self.author)
+        response = self.client.get(ADMIN_CONCERNS_URL)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_list_excludes_deleted_by_default(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_CONCERNS_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [item["concern_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(self.alive_concern.id)])
+
+    def test_list_include_deleted_shows_both_with_is_deleted_flag(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_CONCERNS_URL, {"include_deleted": "true"})
+
+        by_id = {item["concern_id"]: item for item in response.data["items"]}
+        self.assertEqual(len(by_id), 2)
+        self.assertFalse(by_id[str(self.alive_concern.id)]["is_deleted"])
+        self.assertTrue(by_id[str(self.deleted_concern.id)]["is_deleted"])
+
+    def test_list_status_filter(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_CONCERNS_URL, {"status": ConcernStatus.ASSIGNED})
+
+        ids = [item["concern_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(self.alive_concern.id)])
+
+    def test_list_keyword_filter(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_CONCERNS_URL, {"keyword": "살아있는"})
+
+        ids = [item["concern_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(self.alive_concern.id)])
+
+    def test_list_reports_active_assignment_count(self):
+        active = Assignment.objects.create(
+            concern=self.alive_concern,
+            advisor=self.advisor,
+            assigned_by=self.admin,
+            triage_decision=TriageDecision.SUITABLE,
+        )
+        # A deactivated assignment must not inflate the count.
+        Assignment.objects.create(
+            concern=self.alive_concern,
+            advisor=self.author,
+            assigned_by=self.admin,
+            triage_decision=TriageDecision.SUITABLE,
+            is_active=False,
+        )
+        self.assertTrue(active.is_active)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_CONCERNS_URL)
+
+        item = response.data["items"][0]
+        self.assertEqual(item["assignment_count"], 1)
+        self.assertEqual(item["author_user_id"], str(self.author.id))
+
+    # --- AC-8 : admin detail (#23) --------------------------------------
+
+    def test_detail_requires_admin(self):
+        self.client.force_authenticate(self.author)
+        response = self.client.get(self.detail_url(self.alive_concern.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_detail_nonexistent_returns_404(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(self.detail_url("00000000-0000-7000-8000-000000000000"))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_detail_includes_deleted_concern(self):
+        # Admin/audit access reaches soft-deleted rows (CLAUDE.md §6.6) —
+        # otherwise include_deleted=true in #22 would list unreachable rows.
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(self.detail_url(self.deleted_concern.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["is_deleted"])
+
+    def test_detail_shows_all_assignments_and_advices_regardless_of_state(self):
+        AdvisorApplication.objects.create(
+            applicant=self.advisor,
+            display_name="배정된조언가",
+            domain_category=DomainCategory.HR_ORG,
+            experience_band=ExperienceBand.BAND_5_7,
+            current_status=CurrentStatus.EMPLOYED,
+            intended_lane=IntendedLane.EXPERT,
+            career_narrative="경력 서술",
+            advisable_concern_types=[ConcernType.BURNOUT],
+            sample_advice_response="샘플 답변",
+            status=AdvisorApplicationStatus.APPROVED,
+        )
+        active_assignment = Assignment.objects.create(
+            concern=self.alive_concern,
+            advisor=self.advisor,
+            assigned_by=self.admin,
+            triage_decision=TriageDecision.SUITABLE,
+        )
+        inactive_assignment = Assignment.objects.create(
+            concern=self.alive_concern,
+            advisor=self.author,
+            assigned_by=self.admin,
+            triage_decision=TriageDecision.OUT_OF_SCOPE,
+            is_active=False,
+        )
+        pending_advice = Advice.objects.create(
+            concern=self.alive_concern,
+            advisor=self.advisor,
+            directional_guidance="대기중 조언",
+            status=AdviceStatus.PENDING,
+        )
+        approved_advice = Advice.objects.create(
+            concern=self.alive_concern,
+            advisor=self.author,
+            directional_guidance="승인된 조언",
+            status=AdviceStatus.APPROVED,
+        )
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(self.detail_url(self.alive_concern.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        assignment_ids = {a["assignment_id"] for a in response.data["assignments"]}
+        self.assertEqual(
+            assignment_ids, {str(active_assignment.id), str(inactive_assignment.id)}
+        )
+        # §6.2's APPROVED-only rule protects concern owners, not admins.
+        advice_ids = {a["advice_id"] for a in response.data["advices"]}
+        self.assertEqual(advice_ids, {str(pending_advice.id), str(approved_advice.id)})
+
+        advisor_row = next(
+            a
+            for a in response.data["assignments"]
+            if a["assignment_id"] == str(active_assignment.id)
+        )
+        self.assertEqual(advisor_row["advisor_display_name"], "배정된조언가")
+        self.assertTrue(advisor_row["is_active"])
+
+    def test_detail_query_count_is_bounded(self):
+        for index in range(5):
+            advisor = User.objects.create_user(
+                email=f"bulk{index}@example.com",
+                nickname=f"bulk{index}",
+                password="pw12345!",
+            )
+            Assignment.objects.create(
+                concern=self.alive_concern,
+                advisor=advisor,
+                assigned_by=self.admin,
+                triage_decision=TriageDecision.SUITABLE,
+            )
+            Advice.objects.create(
+                concern=self.alive_concern,
+                advisor=advisor,
+                directional_guidance=f"조언 {index}",
+                status=AdviceStatus.PENDING,
+            )
+
+        self.client.force_authenticate(self.admin)
+        # Fixed budget: IsAdmin check + concern + assignments + advices + one
+        # bulk display-name lookup = 5. With 5 assignments and 5 advices, an
+        # N+1 implementation would land near 15 — this pins the constant.
+        with self.assertNumQueries(5):
+            response = self.client.get(self.detail_url(self.alive_concern.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data["assignments"]), 5)

@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-10 (SPEC-001/TASK-003 커밋 기준, 이전 실측 2026-09-10 TASK-001·TASK-002 / 2026-09-09 `b2eaf90`)
+> 마지막 실측: 2026-09-10 (SPEC-001/TASK-004 커밋 기준, 이전 실측 2026-09-10 TASK-001~003 / 2026-09-09 `b2eaf90`)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | 4/8 모듈 진행 중(M4-5 concerns 6/10), **22/44 엔드포인트** |
+| M4 진행률 | 4/8 모듈 진행 중(M4-5 concerns 8/10), **24/44 엔드포인트** |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (22 / 44)
+## 2. 구현된 엔드포인트 (24 / 44)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls` 3개 include.
 
@@ -51,15 +51,17 @@
 | 19 | DELETE | `/api/v1/users/me/concerns/{concern-id}` | `ConcernDetailView.delete` (SPEC-001/TASK-002) |
 | 20 | GET | `/api/v1/users/me/assigned-concerns` | `AssignedConcernListView.get` (SPEC-001/TASK-003) |
 | 21 | GET | `/api/v1/users/me/assigned-concerns/{concern-id}` | `AssignedConcernDetailView.get` (SPEC-001/TASK-003) |
+| 22 | GET | `/api/v1/admin/concerns` | `AdminConcernListView.get` (SPEC-001/TASK-004) |
+| 23 | GET | `/api/v1/admin/concerns/{concern-id}` | `AdminConcernDetailView.get` (SPEC-001/TASK-004) |
 | 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
 
-## 3. 미구현 엔드포인트 (22 / 44)
+## 3. 미구현 엔드포인트 (20 / 44)
 
-`advice`·`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`는 #16~21까지 구현됨(실측: `git ls-files`, `config/urls.py`).
+`advice`·`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`는 #16~23까지 구현됨(실측: `git ls-files`, `config/urls.py`).
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-5 concerns (남은 4개) | #22~25 (전부 admin) | §4-22~25 |
+| M4-5 concerns (남은 2개) | #24·#25 (배정 생성/해제) | §4-24~25 |
 | M4-6 advice + feedback | #26~38 (13개) | §4-26~38 |
 | M4-7 notifications | #39~41 (3개) | §4-39~41 |
 | M4-8 admin roles | #42~43 (2개) | §4-42~43 |
@@ -71,7 +73,8 @@
 * [x] TASK-001 — `POST /api/v1/users/me/concerns` (#16) + `GET /api/v1/users/me/concerns` (#17). 테스트 8종 작성(선-실패 확인) → 구현(`concerns/{serializers,services,views,urls}.py`) → `check`/`makemigrations --check`/`ruff`/`test` 전부 통과 → DRF Browsable API로 로그인→생성→목록 확인(스크린샷) → 커밋.
 * [x] TASK-002 — `GET /api/v1/users/me/concerns/{concern-id}` (#18, `approved_advices[]` 포함) + `DELETE .../{concern-id}` (#19, soft delete). 테스트 8종 추가(선-실패 확인) → 구현(`ConcernDetailSerializer`, `ConcernDetailView`, `get_own_concern`/`get_own_concern_including_deleted`/`soft_delete_concern`/`approved_advices_view_data` 서비스) → 검증 4종 통과 → 스크린샷으로 상세/삭제/재조회 404 확인 → 커밋.
 * [x] TASK-003 — `GET /api/v1/users/me/assigned-concerns` (#20) + `GET .../assigned-concerns/{concern-id}` (#21). `IsActiveAdvisor` 권한 클래스(`common/permissions.py`) 신설: `active_role=ADVISOR`일 때만 통과 — 역할 보유만으로는 403. #21은 존재 자체를 숨기지 않음(배정 안 됨=403, 미존재=404 — #18과 다른 정책, api.md 문언 그대로). 테스트 14종 추가(선-실패 확인, 한 번에 전부 통과) → 검증 4종 통과 → 스크린샷 3장(목록/상세/404) 확인 → 커밋.
-* [ ] **다음 최소 작업 단위**: TASK-004 — admin 조회(#22 전체 목록, #23 상세).
+* [x] TASK-004 — admin 조회 `GET /api/v1/admin/concerns` (#22) + `GET .../concerns/{concern-id}` (#23). `include_deleted`/`status`/`keyword` 필터, `assignment_count`(활성 배정만), `is_deleted` 파생 필드. #23은 soft-deleted concern도 조회 가능(감사 경로) + assignments/advices 상태 무관 전량 노출(§6.2는 고민 작성자 보호용이지 admin 제한이 아님). 테스트 12종 추가(선-실패 11개 확인) → 검증 4종 통과(`assertNumQueries(5)`로 N+1 부재 고정) → 스크린샷 3장 확인 → 커밋.
+* [ ] **다음 최소 작업 단위**: TASK-005 — 배정 생성(#24) + 해제(#25). 상태 전이(SUBMITTED↔ASSIGNED)와 `ASSIGNMENT_CREATED` 알림 부수효과가 포함된 SPEC-001의 핵심 구간.
 
 ## 5. 미결 Owner 결정
 
@@ -79,7 +82,7 @@
 | --- | --- | --- |
 | D-4 | Concern `ANSWERED → CLOSED` 사용자 API 도입 여부 | 미결 (권고: Phase 2는 Admin으로만 종료 처리, 신규 API 없음) |
 | D-6 | `domain_category`(advisor) 11종 확정 여부 | 확정됨(2026-07-08 D-6) — model.md §11에서 재확인 필요 |
-| 신규 (2026-09-10 TASK-003) | api.md #20의 query param `status?`("assignment 상태")가 `Assignment` 모델의 실제 필드와 불일치 — 모델에는 상태 enum이 없고 `is_active`(bool)만 존재 | **미구현.** TASK-003 테스트 범위에 없어 필터 자체를 구현하지 않음(파라미터는 받되 무시). 후보: (a) `is_active` bool로 매핑 (b) `concern.status`로 재해석 (c) api.md 문구 정정. Owner 결정 필요 |
+| 신규 (2026-09-10 TASK-003) | api.md #20의 query param `status?`("assignment 상태")가 `Assignment` 모델의 실제 필드와 불일치 — 모델에는 상태 enum이 없고 `is_active`(bool)만 존재 | **해결됨 (Owner 승인 2026-09-10): 후보 B 채택** — `status`는 `concern.status`(SUBMITTED/ASSIGNED/ANSWERED/CLOSED) 필터로 재해석한다. `is_active`는 이미 목록의 전제 조건(활성 배정만 노출)이라 필터 대상이 아니다. **구현·api.md 문구 정정("assignment 상태"→"concern 상태")은 TASK-006에서 일괄 반영.** |
 | ADR-006 | AI-Native/Spec-Driven 스켈레톤 전환 | **Accepted (2026-09-10)** — CLAUDE.md §2/§3/§5/§9~§13/§16/§17 개정 적용 완료 |
 | 모순 #6 (2026-09-09 부트스트랩) | api.md #16·#19·#22가 여전히 `is_deleted` 표기, 모델은 `deleted_at` | 해석 승인됨(2026-09-09): 파생 응답 필드로 간주. api.md 원문 정정은 SPEC-001 구현 시 동반 |
 | 모순 #7 (2026-09-09 부트스트랩) | #16~19(사용자 concern CRUD)에 `active_role` 게이팅 여부 불명확 | 해석 승인됨(2026-09-09): 게이트 없음(자기 고민은 역할 무관) |

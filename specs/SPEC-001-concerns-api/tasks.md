@@ -56,6 +56,7 @@
 
 * [ ] SPEC-001 전체 AC(acceptance.md) 재실행 — 전항 통과 확인
 * [ ] `docs/api.md` #16·#19·#22의 `is_deleted` 표기를 실제 구현(파생 필드)과 대조해 문구 정정(필요 시)
+* [ ] **#20 `status` 필터 구현 + api.md 문구 정정** — Owner 승인(2026-09-10, STATUS.md §5): `status`는 `concern.status` 필터로 재해석하고, api.md #20의 "(assignment 상태)"를 "(concern 상태)"로 고친다
 * [ ] STATUS.md §2/§3 갱신 (concerns 10개 항목을 "구현됨"으로 이동)
 * [ ] README_AIUSAGE.md에 SPEC-001 항목 1건 추가
 * [ ] Owner 확인 후 SPEC-002(M4-6 advice+feedback) 착수 여부 결정

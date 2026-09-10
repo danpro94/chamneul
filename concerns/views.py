@@ -11,16 +11,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.pagination import StandardPagination
-from common.permissions import IsActiveAdvisor
+from common.permissions import IsActiveAdvisor, IsAdmin
 
 from . import services
 from .serializers import (
+    AdminConcernListSerializer,
     AssignedConcernListSerializer,
     ConcernCreateResultSerializer,
     ConcernCreateSerializer,
     ConcernDetailSerializer,
     ConcernListSerializer,
 )
+
+# api.md §1.6 query flags are strings; treat the usual truthy spellings as true.
+_TRUE_VALUES = {"true", "1", "yes", "on"}
 
 
 class ConcernListCreateView(APIView):
@@ -105,3 +109,40 @@ class AssignedConcernDetailView(APIView):
         concern, assignment = services.get_assigned_concern(request.user, concern_id)
         data = services.assigned_concern_detail_view_data(concern, assignment, request.user)
         return Response(data)
+
+
+class AdminConcernListView(APIView):
+    """GET (#22) — /api/v1/admin/concerns. Every user's concerns, ADMIN only."""
+
+    permission_classes = [IsAdmin]
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        include_deleted = request.query_params.get("include_deleted", "").lower() in _TRUE_VALUES
+        queryset = services.list_concerns_for_admin(include_deleted=include_deleted)
+
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        keyword = request.query_params.get("keyword")
+        if keyword:
+            queryset = queryset.filter(concern_summary__icontains=keyword)
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = AdminConcernListSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class AdminConcernDetailView(APIView):
+    """GET (#23) — /api/v1/admin/concerns/{concern-id}.
+
+    Shows every assignment and advice regardless of state, and reaches
+    soft-deleted concerns (admin/audit path, CLAUDE.md §6.6).
+    """
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request, concern_id):
+        concern = services.get_concern_for_admin(concern_id)
+        return Response(services.admin_concern_detail_view_data(concern))

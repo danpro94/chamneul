@@ -117,3 +117,36 @@ class AssignedConcernListSerializer(serializers.Serializer):
     assigned_at = serializers.DateTimeField(read_only=True)
     assignment_id = serializers.UUIDField(source="id", read_only=True)
     advice_status = serializers.CharField(read_only=True, allow_null=True)
+
+
+class AdminConcernListSerializer(serializers.ModelSerializer):
+    """GET /api/v1/admin/concerns (#22) list item (api.md #22 response fields).
+
+    Unlike the owner-facing list (#17) this exposes `author_user_id` and
+    `is_deleted` — admins need to see whose concern it is and whether it was
+    withdrawn. `assignment_count` is a queryset annotation
+    (services.list_concerns_for_admin), `is_deleted` derives from deleted_at
+    (CLAUDE.md §6.6 — there is no is_deleted column).
+    """
+
+    concern_id = serializers.UUIDField(source="id", read_only=True)
+    author_user_id = serializers.UUIDField(source="author_id", read_only=True)
+    assignment_count = serializers.IntegerField(read_only=True)
+    is_deleted = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Concern
+        fields = (
+            "concern_id",
+            "author_user_id",
+            "concern_summary",
+            "concern_type",
+            "status",
+            "is_deleted",
+            "created_at",
+            "assignment_count",
+        )
+        read_only_fields = fields
+
+    def get_is_deleted(self, obj):
+        return obj.deleted_at is not None

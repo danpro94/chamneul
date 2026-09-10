@@ -26,4 +26,14 @@ urlpatterns = [
         views.AssignedConcernDetailView.as_view(),
         name="users-me-assigned-concern-detail",
     ),
+    path(
+        "admin/concerns",
+        views.AdminConcernListView.as_view(),
+        name="admin-concerns",
+    ),
+    path(
+        "admin/concerns/<uuid:concern_id>",
+        views.AdminConcernDetailView.as_view(),
+        name="admin-concern-detail",
+    ),
 ]
