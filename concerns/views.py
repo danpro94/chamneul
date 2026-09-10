@@ -1,8 +1,8 @@
-"""Views for concerns API (SPEC-001 TASK-001: api.md #16 create + #17 list).
+"""Views for concerns API (SPEC-001: api.md #16-#19).
 
-#16 and #17 share one path (POST/GET on /api/v1/users/me/concerns), so they
-are one APIView rather than two — the same shape as accounts.UserMeView
-(GET+PATCH on one path).
+#16/#17 share one path (POST/GET on .../concerns) and #18/#19 share another
+(GET/DELETE on .../concerns/{concern-id}) — each pair is one APIView, the
+same shape as accounts.UserMeView (GET+PATCH on one path).
 """
 
 from rest_framework.permissions import IsAuthenticated
@@ -15,6 +15,7 @@ from . import services
 from .serializers import (
     ConcernCreateResultSerializer,
     ConcernCreateSerializer,
+    ConcernDetailSerializer,
     ConcernListSerializer,
 )
 
@@ -45,3 +46,23 @@ class ConcernListCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         concern = services.create_concern(request.user, serializer.validated_data)
         return Response(ConcernCreateResultSerializer(concern).data, status=201)
+
+
+class ConcernDetailView(APIView):
+    """GET (#18) / DELETE (#19) — /api/v1/users/me/concerns/{concern-id}.
+
+    Object-level access control (CLAUDE.md §10): both actions look the
+    concern up scoped to `author=request.user`, so another user's concern is
+    404, never 403 (its existence is not revealed).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, concern_id):
+        concern = services.get_own_concern(request.user, concern_id)
+        return Response(ConcernDetailSerializer(concern).data)
+
+    def delete(self, request, concern_id):
+        concern = services.get_own_concern_including_deleted(request.user, concern_id)
+        services.soft_delete_concern(concern)
+        return Response(status=204)

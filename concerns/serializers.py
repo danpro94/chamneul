@@ -1,12 +1,14 @@
-"""Serializers for concerns API (SPEC-001, api.md #16-#17).
+"""Serializers for concerns API (SPEC-001, api.md #16-#18).
 
-List/create are kept separate (CLAUDE.md §8-§9): the create response is
-minimal (concern_id/status/message) and the list response excludes large text
-fields (decision_context) and internal-only fields (display_alias).
+List/create/detail are kept separate (CLAUDE.md §8-§9): the create response is
+minimal (concern_id/status/message), the list response excludes large text
+fields (decision_context) and internal-only fields (display_alias), and only
+the detail response carries the nested approved_advices[].
 """
 
 from rest_framework import serializers
 
+from . import services
 from .models import Concern
 
 
@@ -68,3 +70,32 @@ class ConcernListSerializer(serializers.ModelSerializer):
             "created_at",
         )
         read_only_fields = fields
+
+
+class ConcernDetailSerializer(serializers.ModelSerializer):
+    """GET /api/v1/users/me/concerns/{concern-id} (#18) — full own-resource
+    detail (api.md #18 response fields). `approved_advices` is built by
+    services.approved_advices_view_data (CLAUDE.md §6.2: APPROVED-only).
+    """
+
+    concern_id = serializers.UUIDField(source="id", read_only=True)
+    approved_advices = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Concern
+        fields = (
+            "concern_id",
+            "concern_summary",
+            "concern_type",
+            "concern_type_secondary",
+            "preferred_advisor_lane",
+            "decision_context",
+            "is_anonymous",
+            "status",
+            "created_at",
+            "approved_advices",
+        )
+        read_only_fields = fields
+
+    def get_approved_advices(self, obj):
+        return services.approved_advices_view_data(obj)

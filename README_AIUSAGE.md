@@ -6,6 +6,47 @@
 
 ---
 
+## 2026-09-10 — SPEC-001/TASK-002: concern 상세+소프트 삭제 (api.md #18·#19) [위임]
+
+### 작업
+
+프롬프트 3 루프로 SPEC-001의 TASK-002만 구현:
+
+1. `concerns/tests.py`에 `ConcernDetailDeleteTests` 8케이스 추가(상세 APPROVED-only 노출, soft-delete/타인 자원 404, 삭제 204+자식 row 보존, 재삭제 409, 비로그인 401) → 실행해 5개 실패(라우트 없음) 확인.
+2. 최소 구현: `concerns/services.py`에 `get_own_concern`(soft-deleted 제외 404) / `get_own_concern_including_deleted`(삭제 판정용) / `soft_delete_concern`(409 가드) / `approved_advices_view_data`(APPROVED만, N+1 없이 advisor_display_name 벌크 조회 — advisor의 최신 APPROVED `AdvisorApplication.display_name`, 없으면 `nickname` 폴백) 추가. `concerns/serializers.py`에 `ConcernDetailSerializer` 추가. `concerns/views.py`에 `ConcernDetailView`(GET/DELETE) 추가. `concerns/urls.py`에 `<uuid:concern_id>` 경로 추가.
+3. 4종 검증 실행 — 전부 통과(테스트 16/16).
+4. Owner 요청에 따른 시각 확인 지속: 앱 재빌드 후 Playwright로 (a) 상세 조회 화면(approved_advices 포함) (b) 삭제 버튼→확인 모달→204 (c) 재조회 시 404(우리 커스텀 에러 포맷 `{error:{code,message}}` 노출까지 확인) 스크린샷 3장 전송.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+* Playwright(1.48, npx 임시 설치 — TASK-001과 동일하게 데모 전용, 저장소 의존성 아님)
+
+### 인간 결정 (Owner, 2026-09-10)
+
+TASK-001에서 승인된 방식(테스트 + Mock-up 시각 확인)을 동일하게 적용 — 이번 턴은 TASK-002 진행 승인만.
+
+### 생성된 산출물
+
+수정: `concerns/{services,serializers,views,urls,tests}.py`(각 확장).
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test concerns` → 구현 전 5 fail(3케이스는 라우트 부재로 우연히 404 일치) → 1차 구현 후 15/16(advice_id가 UUID 객체로 직렬화되어 문자열 비교 실패) → `str()` 캐스팅 수정 후 **16/16 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: 상세/삭제/재조회 스크린샷 3장 Owner에게 전송
+
+### 잔여 리스크
+
+1. **`advisor_display_name` 폴백 로직 미검증 상태(코드 리뷰 대상)**: 한 advisor가 여러 APPROVED 신청 이력을 가질 수 있는 실제 케이스는 Phase 2 도메인 규칙상 발생하지 않아야 하지만(승인 후 재신청 경로 없음), 서비스 함수는 `-submitted_at` 최신 것을 택하도록만 방어했다.
+2. **TASK-003(#20·#21)부터 `active_role=ADVISOR` 게이트 등장** — accounts 모듈의 `active_role` 검사 패턴을 그대로 재사용할 예정.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-003(#20 배정 목록 + #21 배정 상세) 착수.
+
+---
+
 ## 2026-09-10 — SPEC-001/TASK-001: concern 생성+목록 (api.md #16·#17) [위임]
 
 ### 작업
