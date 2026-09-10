@@ -81,10 +81,9 @@ class AssignedConcernListView(APIView):
     """GET (#20) — /api/v1/users/me/assigned-concerns.
 
     Requires active_role=ADVISOR, not just holding the role (CLAUDE.md §2
-    Roles — see IsActiveAdvisor). The `status` query param api.md documents
-    here ("assignment 상태") has no matching field on Assignment (only
-    is_active, not a status enum) — left unimplemented pending an Owner
-    decision (STATUS.md §5); it is accepted but silently ignored for now.
+    Roles — see IsActiveAdvisor). `status` filters by the *concern's* status
+    (Owner decision 2026-09-10, STATUS.md §5): Assignment has no status enum,
+    and its is_active flag is already the list's precondition.
     """
 
     permission_classes = [IsAuthenticated, IsActiveAdvisor]
@@ -92,6 +91,10 @@ class AssignedConcernListView(APIView):
 
     def get(self, request):
         queryset = services.list_assigned_concerns(request.user)
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(concern__status=status_filter)
+
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(queryset, request, view=self)
         serializer = AssignedConcernListSerializer(page, many=True)

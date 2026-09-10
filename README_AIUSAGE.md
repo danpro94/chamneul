@@ -6,6 +6,57 @@
 
 ---
 
+## 2026-09-10 — SPEC-001/TASK-006: 마무리 — SPEC-001 종료 [위임]
+
+### 작업
+
+1. **#20 `status` 필터 구현** — Owner 승인안(concern.status 기준)대로 실패 테스트 작성 → 구현 → 통과.
+2. **api.md 문구 정정 2건**: (a) #20의 "(assignment 상태)"를 "(concern 상태 — SUBMITTED/ASSIGNED/ANSWERED/CLOSED)"로 교체. (b) #16·#18·#19·#24의 상태 서술에서 `is_deleted=true/false`를 실제 저장 컬럼 `deleted_at`으로 교체(#22의 **응답 필드** `is_deleted`는 C-1 규약대로 유지). 문서 상단에 2026-09-10 개정 이력 추가(기존 관례 준수).
+3. **AC 전항 재검증** — acceptance.md의 AC-1~AC-10을 테스트 62개와 1:1 대조. **미커버 2건을 발견해 보강**(아래).
+4. SPEC 문서 종료 처리: `tasks.md` 전 항목 체크, `acceptance.md`에 종료 판정 절 추가(실행 출력 포함), STATUS.md의 미결 항목 2건을 "종결됨"으로 전환.
+
+### AC 대조에서 발견한 미커버 2건 (이번에 보강)
+
+| # | 미커버였던 AC | 조치 |
+| --- | --- | --- |
+| 1 | AC-4 "연결된 Advice/**Assignment** 보존" — Advice만 검증하고 있었음 | 기존 테스트에 Assignment 보존 단언 추가 |
+| 2 | TEST_CRITERIA §3 "**목록** API N+1 없음(assertNumQueries)" — 상세(#23)에만 있었음 | `test_list_query_count_is_bounded` 추가 — #20에 배정 6건이 있어도 쿼리 **2개 고정** 실증 |
+
+두 번째 항목이 특히 의미가 있다: 목록 API의 N+1은 "구현할 때 신경 썼다"는 주장만 있었고 **판정 장치가 없었다**. 이제 쿼리 수가 상수로 고정돼 있어, 이후 누군가 `select_related`/`Subquery`를 걷어내면 테스트가 즉시 깨진다.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-10)
+
+| 결정 | 내용 |
+| --- | --- |
+| 진행 순서 | M4-6 착수보다 **TASK-006 마무리 → PR → 그다음 M4-6** 순서 채택(브랜치에 미머지 커밋이 쌓인 상태에서 13개짜리 모듈을 얹지 않는다) |
+
+### 생성된 산출물
+
+수정: `concerns/{views,tests}.py`, `docs/api.md`, `docs/00-project/STATUS.md`, `specs/SPEC-001-concerns-api/{tasks,acceptance}.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test` → **62/62 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* AC-1~AC-10 전항 통과 (acceptance.md 종료 판정 절에 실행 출력 첨부)
+
+### 잔여 리스크
+
+1. **SPEC-001은 종료됐지만 M4 전체 문서 부채는 남음** — M4-1~M4-4 AIUSAGE 소급 기록, 리뷰 노트 2건, model.md drift 6건(STATUS.md §7).
+2. **코드 리뷰 미수행** — 서브에이전트(`security-reviewer`, `api-architect`) 리뷰는 PR 단계에서 수행 예정.
+3. **M4-6은 SPEC-002를 먼저 작성한 뒤 착수 권장** — advice는 §6.2 노출 규칙 + 버전 관리 + AdviceHistory 스냅샷이 얽힌 이 서비스의 핵심 도메인.
+
+### 다음 단계 권장
+
+1. PR 생성 → 리뷰 → main 머지.
+2. SPEC-002 작성 후 M4-6 착수.
+
+---
+
 ## 2026-09-10 — SPEC-001/TASK-005: 배정 생성+해제 (api.md #24·#25) — M4-5 완료 [위임]
 
 ### 작업

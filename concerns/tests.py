@@ -251,6 +251,12 @@ class ConcernDetailDeleteTests(TestCase):
             directional_guidance="보존되어야 하는 조언",
             status=AdviceStatus.APPROVED,
         )
+        Assignment.objects.create(
+            concern=self.concern,
+            advisor=self.advisor,
+            assigned_by=self.other_user,
+            triage_decision=TriageDecision.SUITABLE,
+        )
 
         self.client.force_authenticate(self.author)
         response = self.client.delete(self.detail_url(self.concern.id))
@@ -258,7 +264,10 @@ class ConcernDetailDeleteTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.concern.refresh_from_db()
         self.assertIsNotNone(self.concern.deleted_at)
+        # Soft delete keeps the audit trail intact (CLAUDE.md §6.6): both the
+        # advice and the assignment survive, untouched.
         self.assertEqual(Advice.objects.filter(concern=self.concern).count(), 1)
+        self.assertEqual(Assignment.objects.filter(concern=self.concern).count(), 1)
 
         # Now invisible through the owner's own GET — soft delete, not admin.
         get_response = self.client.get(self.detail_url(self.concern.id))
@@ -352,6 +361,64 @@ class AssignedConcernTests(TestCase):
         ids = [item["concern_id"] for item in response.data["items"]]
         self.assertEqual(ids, [str(self.assigned_concern.id)])
         self.assertIsNone(response.data["items"][0]["advice_status"])
+
+    def test_list_status_filters_by_concern_status(self):
+        # Owner decision 2026-09-10 (STATUS.md §5): api.md #20's `status`
+        # query param means the *concern's* status. Assignment has no status
+        # enum — only is_active, which is already the list's precondition.
+        answered = Concern.objects.create(
+            author=self.requester,
+            concern_summary="답변까지 끝난 고민",
+            concern_type=ConcernType.BURNOUT,
+            status=ConcernStatus.ANSWERED,
+        )
+        Assignment.objects.create(
+            concern=answered,
+            advisor=self.advisor,
+            assigned_by=self.assigner,
+            triage_decision=TriageDecision.SUITABLE,
+        )
+        self.assigned_concern.status = ConcernStatus.ASSIGNED
+        self.assigned_concern.save(update_fields=["status"])
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(
+            ASSIGNED_CONCERNS_URL, {"status": ConcernStatus.ANSWERED}
+        )
+
+        ids = [item["concern_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(answered.id)])
+
+    def test_list_query_count_is_bounded(self):
+        # #20 joins each assignment to its concern and correlates a subquery
+        # for the advisor's own advice status — the shape most at risk of N+1
+        # in this module (TEST_CRITERIA §3).
+        for index in range(5):
+            concern = Concern.objects.create(
+                author=self.requester,
+                concern_summary=f"대량 고민 {index}",
+                concern_type=ConcernType.BURNOUT,
+            )
+            Assignment.objects.create(
+                concern=concern,
+                advisor=self.advisor,
+                assigned_by=self.assigner,
+                triage_decision=TriageDecision.SUITABLE,
+            )
+            Advice.objects.create(
+                concern=concern,
+                advisor=self.advisor,
+                directional_guidance=f"조언 {index}",
+                status=AdviceStatus.PENDING,
+            )
+
+        self.client.force_authenticate(self.advisor)
+        # Fixed budget: COUNT for pagination + the page itself = 2, regardless
+        # of how many assignments come back.
+        with self.assertNumQueries(2):
+            response = self.client.get(ASSIGNED_CONCERNS_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["page_info"]["total"], 6)
 
     def test_list_reflects_own_advice_status(self):
         Advice.objects.create(

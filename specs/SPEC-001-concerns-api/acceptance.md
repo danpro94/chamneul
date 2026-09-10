@@ -90,3 +90,26 @@ TEST_CRITERIA.md §2(핵심 3축)·§3(공통 체크리스트)을 이 SPEC에 �
 ## 종료 조건
 
 위 10개 그룹 전항 통과 + TEST_CRITERIA.md §3 공통 체크리스트(모든 엔드포인트) + `manage.py check`/`makemigrations --check`/`ruff check`/`manage.py test` 4종 무오류 실행 출력 첨부 → SPEC-001 완료, STATUS.md 갱신.
+
+---
+
+## 종료 판정 (TASK-006, 2026-09-10)
+
+**결과: AC-1 ~ AC-10 전항 통과.** `concerns/tests.py` 62개 테스트가 위 항목을 커버하며, 4종 검증 전부 무오류.
+
+TASK-006에서 AC를 테스트 목록과 1:1 대조하다 발견한 미커버 2건은 즉시 보강했다:
+
+| # | 미커버였던 AC | 조치 |
+| --- | --- | --- |
+| 1 | AC-4 "연결된 Advice/**Assignment** row가 삭제 전후 개수 동일" — Advice만 검증하고 있었음 | `test_delete_success_marks_deleted_at_and_preserves_children`에 Assignment 보존 단언 추가 |
+| 2 | TEST_CRITERIA §3 "목록 API는 N+1 없음(assertNumQueries)" — 상세(#23)에만 있고 목록에는 없었음 | `test_list_query_count_is_bounded` 추가 — #20에 배정 6건이 있어도 쿼리 2개로 고정됨을 실증 |
+
+실행 출력(2026-09-10):
+
+```
+Ran 62 tests in 17.851s
+OK
+System check identified no issues (0 silenced).
+No changes detected
+All checks passed!
+```
