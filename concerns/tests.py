@@ -1,4 +1,4 @@
-"""Tests for concerns API (SPEC-001, api.md #16-#23).
+"""Tests for concerns API (SPEC-001, api.md #16-#25).
 
 Written before the code they exercise exists (specs/SPEC-001-concerns-api/
 tasks.md — TDD: each test class must fail first, then pass after
@@ -22,6 +22,7 @@ from advisors.models import (
     IntendedLane,
 )
 from common.taxonomy import ConcernType
+from notifications.models import Notification, NotificationType
 
 from .models import Assignment, Concern, ConcernStatus, TriageDecision
 
@@ -651,3 +652,277 @@ class AdminConcernTests(TestCase):
             response = self.client.get(self.detail_url(self.alive_concern.id))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["assignments"]), 5)
+
+
+class AssignmentTests(TestCase):
+    """SPEC-001 TASK-005 (api.md #24 assign, #25 unassign).
+
+    The state machine (CLAUDE.md §6.6: SUBMITTED <-> ASSIGNED) and the
+    ASSIGNMENT_CREATED notification (§6.4) must move together with the
+    Assignment row — that atomicity is what these tests pin down.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.author = User.objects.create_user(
+            email="author6@example.com", nickname="author6", password="pw12345!"
+        )
+        self.admin = User.objects.create_user(
+            email="admin6@example.com", nickname="admin6", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.admin, role=Role.ADMIN)
+        self.advisor = User.objects.create_user(
+            email="advisor6@example.com", nickname="advisor6", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.advisor, role=Role.ADVISOR)
+        self.other_advisor = User.objects.create_user(
+            email="advisor7@example.com", nickname="advisor7", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.other_advisor, role=Role.ADVISOR)
+        self.plain_user = User.objects.create_user(
+            email="plain@example.com", nickname="plain", password="pw12345!"
+        )
+
+        self.concern = Concern.objects.create(
+            author=self.author,
+            concern_summary="배정 대상 고민",
+            concern_type=ConcernType.BURNOUT,
+        )
+
+    def assignments_url(self, concern_id):
+        return f"{ADMIN_CONCERNS_URL}/{concern_id}/assignments"
+
+    def assignment_url(self, concern_id, assignment_id):
+        return f"{ADMIN_CONCERNS_URL}/{concern_id}/assignments/{assignment_id}"
+
+    def assign_payload(self, advisor):
+        return {
+            "advisor_user_id": str(advisor.id),
+            "triage_decision": TriageDecision.SUITABLE,
+        }
+
+    def create_assignment(self, advisor, **kwargs):
+        return Assignment.objects.create(
+            concern=self.concern,
+            advisor=advisor,
+            assigned_by=self.admin,
+            triage_decision=TriageDecision.SUITABLE,
+            **kwargs,
+        )
+
+    # --- AC-9 : assign (#24) ---------------------------------------------
+
+    def test_assign_requires_admin(self):
+        self.client.force_authenticate(self.plain_user)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_assign_requires_login(self):
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_assign_transitions_submitted_to_assigned_and_notifies(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["concern_status"], ConcernStatus.ASSIGNED)
+        self.assertEqual(response.data["advisor_user_id"], str(self.advisor.id))
+        self.assertEqual(response.data["assigned_by"], str(self.admin.id))
+
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ASSIGNED)
+
+        notification = Notification.objects.get(recipient=self.advisor)
+        self.assertEqual(notification.type, NotificationType.ASSIGNMENT_CREATED)
+        self.assertEqual(notification.payload["concern_id"], str(self.concern.id))
+
+    def test_assign_second_advisor_keeps_status_assigned(self):
+        self.create_assignment(self.advisor)
+        self.concern.status = ConcernStatus.ASSIGNED
+        self.concern.save(update_fields=["status"])
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.other_advisor),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ASSIGNED)
+        self.assertEqual(
+            Assignment.objects.filter(concern=self.concern, is_active=True).count(), 2
+        )
+
+    def test_assign_duplicate_active_assignment_returns_409(self):
+        self.create_assignment(self.advisor)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_assign_reactivating_after_unassign_is_allowed(self):
+        # A deactivated row must not block a fresh assignment (partial unique).
+        self.create_assignment(self.advisor, is_active=False)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_assign_to_closed_concern_returns_409(self):
+        self.concern.status = ConcernStatus.CLOSED
+        self.concern.save(update_fields=["status"])
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_assign_to_deleted_concern_returns_409(self):
+        self.concern.deleted_at = timezone.now()
+        self.concern.save(update_fields=["deleted_at"])
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_assign_to_non_advisor_returns_422(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.plain_user),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    def test_assign_to_missing_concern_returns_404(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.assignments_url("00000000-0000-7000-8000-000000000000"),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_assign_failure_leaves_no_partial_state(self):
+        # 409 path: no Assignment row, no notification, status untouched.
+        self.concern.status = ConcernStatus.CLOSED
+        self.concern.save(update_fields=["status"])
+
+        self.client.force_authenticate(self.admin)
+        self.client.post(
+            self.assignments_url(self.concern.id),
+            self.assign_payload(self.advisor),
+            format="json",
+        )
+
+        self.assertFalse(Assignment.objects.filter(concern=self.concern).exists())
+        self.assertFalse(Notification.objects.exists())
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.CLOSED)
+
+    # --- AC-10 : unassign (#25) ------------------------------------------
+
+    def test_unassign_requires_admin(self):
+        assignment = self.create_assignment(self.advisor)
+
+        self.client.force_authenticate(self.plain_user)
+        response = self.client.delete(self.assignment_url(self.concern.id, assignment.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_unassign_last_active_reverts_to_submitted(self):
+        assignment = self.create_assignment(self.advisor)
+        self.concern.status = ConcernStatus.ASSIGNED
+        self.concern.save(update_fields=["status"])
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.delete(self.assignment_url(self.concern.id, assignment.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        assignment.refresh_from_db()
+        self.assertFalse(assignment.is_active)
+        self.assertIsNotNone(assignment.deactivated_at)
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.SUBMITTED)
+
+    def test_unassign_keeps_assigned_while_another_active_remains(self):
+        first = self.create_assignment(self.advisor)
+        self.create_assignment(self.other_advisor)
+        self.concern.status = ConcernStatus.ASSIGNED
+        self.concern.save(update_fields=["status"])
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.delete(self.assignment_url(self.concern.id, first.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ASSIGNED)
+
+    def test_unassign_does_not_revert_answered_concern(self):
+        # Only ASSIGNED reverts (CLAUDE.md §6.6). An ANSWERED concern has an
+        # approved advice — dropping it back to SUBMITTED would be a lie.
+        assignment = self.create_assignment(self.advisor)
+        self.concern.status = ConcernStatus.ANSWERED
+        self.concern.save(update_fields=["status"])
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.delete(self.assignment_url(self.concern.id, assignment.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ANSWERED)
+
+    def test_unassign_already_inactive_returns_409(self):
+        assignment = self.create_assignment(self.advisor, is_active=False)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.delete(self.assignment_url(self.concern.id, assignment.id))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_unassign_missing_assignment_returns_404(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.delete(
+            self.assignment_url(self.concern.id, "00000000-0000-7000-8000-000000000000")
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unassign_assignment_of_another_concern_returns_404(self):
+        other_concern = Concern.objects.create(
+            author=self.author,
+            concern_summary="다른 고민",
+            concern_type=ConcernType.BURNOUT,
+        )
+        assignment = self.create_assignment(self.advisor)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.delete(self.assignment_url(other_concern.id, assignment.id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

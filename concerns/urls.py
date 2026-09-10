@@ -36,4 +36,14 @@ urlpatterns = [
         views.AdminConcernDetailView.as_view(),
         name="admin-concern-detail",
     ),
+    path(
+        "admin/concerns/<uuid:concern_id>/assignments",
+        views.AdminAssignmentCreateView.as_view(),
+        name="admin-concern-assignments",
+    ),
+    path(
+        "admin/concerns/<uuid:concern_id>/assignments/<uuid:assignment_id>",
+        views.AdminAssignmentDetailView.as_view(),
+        name="admin-concern-assignment-detail",
+    ),
 ]

@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-10 (SPEC-001/TASK-004 커밋 기준, 이전 실측 2026-09-10 TASK-001~003 / 2026-09-09 `b2eaf90`)
+> 마지막 실측: 2026-09-10 (SPEC-001/TASK-005 커밋 기준, 이전 실측 2026-09-10 TASK-001~004 / 2026-09-09 `b2eaf90`)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | 4/8 모듈 진행 중(M4-5 concerns 8/10), **24/44 엔드포인트** |
+| M4 진행률 | **M4-5 concerns 10/10 완료**(5/8 모듈), **26/44 엔드포인트** |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (24 / 44)
+## 2. 구현된 엔드포인트 (26 / 44)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls` 3개 include.
 
@@ -53,15 +53,16 @@
 | 21 | GET | `/api/v1/users/me/assigned-concerns/{concern-id}` | `AssignedConcernDetailView.get` (SPEC-001/TASK-003) |
 | 22 | GET | `/api/v1/admin/concerns` | `AdminConcernListView.get` (SPEC-001/TASK-004) |
 | 23 | GET | `/api/v1/admin/concerns/{concern-id}` | `AdminConcernDetailView.get` (SPEC-001/TASK-004) |
+| 24 | POST | `/api/v1/admin/concerns/{concern-id}/assignments` | `AdminAssignmentCreateView.post` (SPEC-001/TASK-005) |
+| 25 | DELETE | `/api/v1/admin/concerns/{concern-id}/assignments/{assignment-id}` | `AdminAssignmentDetailView.delete` (SPEC-001/TASK-005) |
 | 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
 
-## 3. 미구현 엔드포인트 (20 / 44)
+## 3. 미구현 엔드포인트 (18 / 44)
 
-`advice`·`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`는 #16~23까지 구현됨(실측: `git ls-files`, `config/urls.py`).
+`advice`·`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`(#16~25)는 **전량 구현 완료**(실측: `git ls-files`, `config/urls.py`).
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-5 concerns (남은 2개) | #24·#25 (배정 생성/해제) | §4-24~25 |
 | M4-6 advice + feedback | #26~38 (13개) | §4-26~38 |
 | M4-7 notifications | #39~41 (3개) | §4-39~41 |
 | M4-8 admin roles | #42~43 (2개) | §4-42~43 |
@@ -74,7 +75,8 @@
 * [x] TASK-002 — `GET /api/v1/users/me/concerns/{concern-id}` (#18, `approved_advices[]` 포함) + `DELETE .../{concern-id}` (#19, soft delete). 테스트 8종 추가(선-실패 확인) → 구현(`ConcernDetailSerializer`, `ConcernDetailView`, `get_own_concern`/`get_own_concern_including_deleted`/`soft_delete_concern`/`approved_advices_view_data` 서비스) → 검증 4종 통과 → 스크린샷으로 상세/삭제/재조회 404 확인 → 커밋.
 * [x] TASK-003 — `GET /api/v1/users/me/assigned-concerns` (#20) + `GET .../assigned-concerns/{concern-id}` (#21). `IsActiveAdvisor` 권한 클래스(`common/permissions.py`) 신설: `active_role=ADVISOR`일 때만 통과 — 역할 보유만으로는 403. #21은 존재 자체를 숨기지 않음(배정 안 됨=403, 미존재=404 — #18과 다른 정책, api.md 문언 그대로). 테스트 14종 추가(선-실패 확인, 한 번에 전부 통과) → 검증 4종 통과 → 스크린샷 3장(목록/상세/404) 확인 → 커밋.
 * [x] TASK-004 — admin 조회 `GET /api/v1/admin/concerns` (#22) + `GET .../concerns/{concern-id}` (#23). `include_deleted`/`status`/`keyword` 필터, `assignment_count`(활성 배정만), `is_deleted` 파생 필드. #23은 soft-deleted concern도 조회 가능(감사 경로) + assignments/advices 상태 무관 전량 노출(§6.2는 고민 작성자 보호용이지 admin 제한이 아님). 테스트 12종 추가(선-실패 11개 확인) → 검증 4종 통과(`assertNumQueries(5)`로 N+1 부재 고정) → 스크린샷 3장 확인 → 커밋.
-* [ ] **다음 최소 작업 단위**: TASK-005 — 배정 생성(#24) + 해제(#25). 상태 전이(SUBMITTED↔ASSIGNED)와 `ASSIGNMENT_CREATED` 알림 부수효과가 포함된 SPEC-001의 핵심 구간.
+* [x] TASK-005 — 배정 생성 `POST .../concerns/{concern-id}/assignments` (#24) + 해제 `DELETE .../assignments/{assignment-id}` (#25). `assign_advisor`/`unassign_advisor` 서비스가 **한 트랜잭션**으로 Assignment row + 상태 전이(SUBMITTED→ASSIGNED / 마지막 해제 시 ASSIGNED→SUBMITTED) + `ASSIGNMENT_CREATED` 알림을 함께 처리(§6.4/§6.6). concern row에 `select_for_update()`로 동시 배정/해제 직렬화. 비-advisor 지정은 422, 중복 활성 배정·CLOSED/삭제 concern·이미 해제된 배정은 409. 테스트 18종 추가(선-실패 14개 확인) → 검증 4종 통과(전체 60/60) → 스크린샷 4장(배정 전/201/조언가 큐/해제 후 복귀) 확인 → 커밋.
+* [ ] **남은 것**: TASK-006 마무리 — 전체 AC 재실행, api.md 문구 정정 2건(`is_deleted` 표기, #20 `status` 필터), #20 `status` 필터 구현, SPEC-001 종료 판정.
 
 ## 5. 미결 Owner 결정
 

@@ -6,6 +6,57 @@
 
 ---
 
+## 2026-09-10 — SPEC-001/TASK-005: 배정 생성+해제 (api.md #24·#25) — M4-5 완료 [위임]
+
+### 작업
+
+프롬프트 3 루프로 SPEC-001의 TASK-005 구현. SPEC-001에서 상태 전이·부수효과가 함께 걸리는 유일한 구간:
+
+1. `concerns/tests.py`에 `AssignmentTests` 18케이스 추가(권한 401/403, SUBMITTED→ASSIGNED 전이+알림, 2번째 advisor 배정 시 상태 유지, 중복 활성 배정 409, 해제 후 재배정 허용(부분 유니크), CLOSED/삭제 concern 409, 비-advisor 422, 실패 시 부분 상태 없음, 마지막 해제 시 SUBMITTED 복귀, 잔여 배정 있으면 유지, ANSWERED는 되돌리지 않음, 이미 해제 409, 타 concern의 assignment 404) → 실행해 14개 실패 확인.
+2. 최소 구현: `concerns/services.py`에 `assign_advisor`/`unassign_advisor` 추가 — 둘 다 `with transaction.atomic()` 안에서 concern row를 `select_for_update()`로 잠그고(동시 배정/해제 직렬화) Assignment 생성·상태 전이·알림 생성을 함께 수행. `AssignmentCreateSerializer`/`AssignmentCreateResultSerializer`, `AdminAssignmentCreateView`/`AdminAssignmentDetailView`, URL 2개 추가.
+3. 4종 검증 — **전체 60/60** 통과.
+4. 시각 확인: Playwright로 배정 전(SUBMITTED) → 배정 201(`concern_status: ASSIGNED`) → **조언가 계정으로 로그인해 본인 큐(#20)에 실제로 뜨는 것 확인** → 해제 후 SUBMITTED 복귀(배정 행은 `is_active=false` 보존) 스크린샷 4장 전송. 컨테이너 shell로 `Notification` row(type=ASSIGNMENT_CREATED, recipient=조언가, target_url, payload) 실측.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension) / Playwright(1.48, 데모 전용 임시 설치)
+
+### 인간 결정 (Owner, 2026-09-10)
+
+| 결정 | 내용 |
+| --- | --- |
+| 학습 세션 | **종료** — 이해 확인 질문·퀴즈 없이 구현만 진행 |
+| TASK-005 | 진행 승인 |
+
+### 판단 기록 (AI가 정한 것)
+
+* **비-advisor 지정은 422**(400/404 아님) — 형식은 맞으나 값이 부적합한 경우(api.md §1.8). 대상 사용자가 없는 경우와 advisor가 아닌 경우를 **같은 응답**으로 통일해, admin 도구가 사용자 존재 여부를 알아내는 수단이 되지 않게 했다.
+* **`select_for_update()` 도입** — 배정/해제는 `concern.status`에 대한 read-modify-write라, 두 관리자가 동시에 마지막 배정을 해제하면 상태가 되돌아가지 않는 경합이 가능하다. CLAUDE.md §4가 허용한 범위 내에서 concern row를 잠가 직렬화.
+* **ANSWERED 고민은 배정 전부 해제해도 SUBMITTED로 되돌리지 않음** — §6.6의 되돌림 규칙은 ASSIGNED에만 적용된다. 승인된 조언이 이미 붙은 고민을 "미배정"으로 표시하면 사실과 어긋난다.
+
+### 생성된 산출물
+
+수정: `concerns/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test concerns.tests.AssignmentTests` → 구현 전 14 fail → 구현 후 **18/18 OK**
+* `manage.py test` (전체) → **60/60 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 실환경 실측: 상태 SUBMITTED→ASSIGNED→SUBMITTED 왕복, `Notification` row 1건 생성(ASSIGNMENT_CREATED, 수신자=배정된 조언가), 조언가 큐(#20)에 반영 — 스크린샷 4장 Owner 전송
+
+### 잔여 리스크
+
+1. **동시성은 코드로만 방어, 부하 테스트 미수행** — `select_for_update()`의 실제 경합 동작은 Phase 2 스코프 밖(테스트는 단일 스레드).
+2. **알림 `target_url`이 API 경로 형태** — C-10 결정상 "프론트 라우트 키"가 되어야 하나 프론트가 없어 잠정적으로 API 경로를 넣었다(기존 advisors 승인 알림과 동일 관행). 프론트 착수 시 일괄 정정 필요.
+3. **M4-5 완료 = SPEC-001의 코드 부분 완료**. 남은 TASK-006(문서 정정 2건 + #20 status 필터 구현 + 전체 AC 재실행)은 미착수.
+
+### 다음 단계 권장
+
+1. TASK-006(SPEC-001 마무리) 또는 곧바로 M4-6(advice+feedback, #26~38) 착수 — Owner 선택.
+
+---
+
 ## 2026-09-10 — SPEC-001/TASK-004: admin 고민 목록+상세 (api.md #22·#23) [위임]
 
 ### 작업

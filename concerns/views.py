@@ -17,6 +17,8 @@ from . import services
 from .serializers import (
     AdminConcernListSerializer,
     AssignedConcernListSerializer,
+    AssignmentCreateResultSerializer,
+    AssignmentCreateSerializer,
     ConcernCreateResultSerializer,
     ConcernCreateSerializer,
     ConcernDetailSerializer,
@@ -146,3 +148,35 @@ class AdminConcernDetailView(APIView):
     def get(self, request, concern_id):
         concern = services.get_concern_for_admin(concern_id)
         return Response(services.admin_concern_detail_view_data(concern))
+
+
+class AdminAssignmentCreateView(APIView):
+    """POST (#24) — /api/v1/admin/concerns/{concern-id}/assignments.
+
+    1 concern <-> N advisors (api.md Q9). The state transition and the
+    advisor notification are side effects of services.assign_advisor, which
+    runs them in one transaction.
+    """
+
+    permission_classes = [IsAdmin]
+
+    def post(self, request, concern_id):
+        serializer = AssignmentCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        assignment, concern = services.assign_advisor(
+            concern_id, request.user, serializer.validated_data
+        )
+        result = AssignmentCreateResultSerializer(
+            assignment, context={"concern_status": concern.status}
+        )
+        return Response(result.data, status=201)
+
+
+class AdminAssignmentDetailView(APIView):
+    """DELETE (#25) — .../concerns/{concern-id}/assignments/{assignment-id}."""
+
+    permission_classes = [IsAdmin]
+
+    def delete(self, request, concern_id, assignment_id):
+        services.unassign_advisor(concern_id, assignment_id)
+        return Response(status=204)

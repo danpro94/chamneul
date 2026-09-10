@@ -12,7 +12,7 @@ mapping.
 from rest_framework import serializers
 
 from . import services
-from .models import Concern
+from .models import AssignmentPriority, Concern, TriageDecision
 
 
 class ConcernCreateSerializer(serializers.ModelSerializer):
@@ -150,3 +150,35 @@ class AdminConcernListSerializer(serializers.ModelSerializer):
 
     def get_is_deleted(self, obj):
         return obj.deleted_at is not None
+
+
+class AssignmentCreateSerializer(serializers.Serializer):
+    """POST /api/v1/admin/concerns/{concern-id}/assignments (#24) request.
+
+    Shape only. Whether `advisor_user_id` actually holds the ADVISOR role is a
+    semantic check (422) owned by services.assign_advisor, not a shape error
+    (400) — same split as the advisor-application review serializer.
+    """
+
+    advisor_user_id = serializers.UUIDField()
+    triage_decision = serializers.ChoiceField(choices=TriageDecision.choices)
+    match_rationale = serializers.JSONField(required=False)
+    priority = serializers.ChoiceField(
+        choices=AssignmentPriority.choices, default=AssignmentPriority.NORMAL
+    )
+
+
+class AssignmentCreateResultSerializer(serializers.Serializer):
+    """#24 response (api.md #24), including the concern status *after* the
+    transition so the caller does not have to re-read the concern."""
+
+    assignment_id = serializers.UUIDField(source="id", read_only=True)
+    concern_id = serializers.UUIDField(read_only=True)
+    advisor_user_id = serializers.UUIDField(source="advisor_id", read_only=True)
+    assigned_by = serializers.UUIDField(source="assigned_by_id", read_only=True)
+    assigned_at = serializers.DateTimeField(read_only=True)
+    priority = serializers.CharField(read_only=True)
+    concern_status = serializers.SerializerMethodField()
+
+    def get_concern_status(self, obj):
+        return self.context["concern_status"]

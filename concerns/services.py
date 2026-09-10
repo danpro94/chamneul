@@ -7,15 +7,16 @@ advisor-side assigned-concern queries (#20/#21).
 """
 
 from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from advice.models import Advice, AdviceStatus
 from advisors.models import AdvisorApplication, AdvisorApplicationStatus
-from common.exceptions import Conflict
+from common.exceptions import Conflict, UnprocessableEntity
 
-from .models import Assignment, Concern
+from .models import Assignment, Concern, ConcernStatus
 
 
 def create_concern(author, validated_data) -> Concern:
@@ -275,3 +276,98 @@ def admin_concern_detail_view_data(concern: Concern) -> dict:
             for advice in advices
         ],
     }
+
+
+def assign_advisor(concern_id, actor, validated_data) -> tuple[Assignment, Concern]:
+    """#24 — attach an advisor to a concern, atomically (api.md #24).
+
+    One transaction covers all three effects, so a failure can never leave an
+    assignment without its state transition or its notification (CLAUDE.md
+    §6.4/§6.6):
+      1. Assignment row
+      2. concern.status SUBMITTED -> ASSIGNED (only from SUBMITTED)
+      3. ASSIGNMENT_CREATED notification to the advisor
+
+    409 for a CLOSED/soft-deleted concern or a duplicate active assignment;
+    422 when advisor_user_id is well-formed but not an ADVISOR.
+    """
+    # Deferred imports: accounts/notifications reference this app's models via
+    # settings.AUTH_USER_MODEL strings; importing them at module load would
+    # create a cycle (same pattern as advisors/services.py).
+    from accounts.models import Role, UserRole
+    from notifications.models import Notification, NotificationType
+
+    advisor_user_id = validated_data["advisor_user_id"]
+    if not UserRole.objects.filter(user_id=advisor_user_id, role=Role.ADVISOR).exists():
+        # Well-formed id, unusable value -> 422 (api.md §1.8). Deliberately the
+        # same answer whether the user is missing or simply not an advisor:
+        # an admin tool must not double as a user-existence oracle.
+        raise UnprocessableEntity("조언가 역할을 보유한 사용자가 아닙니다.")
+
+    with transaction.atomic():
+        # Lock the concern row: assign/unassign are read-modify-write on
+        # concern.status, so concurrent admins must serialize here.
+        concern = get_object_or_404(
+            Concern.objects.with_deleted().select_for_update(), pk=concern_id
+        )
+        if concern.deleted_at is not None:
+            raise Conflict("삭제된 고민에는 배정할 수 없습니다.")
+        if concern.status == ConcernStatus.CLOSED:
+            raise Conflict("종료된 고민에는 배정할 수 없습니다.")
+
+        try:
+            assignment = Assignment.objects.create(
+                concern=concern,
+                advisor_id=advisor_user_id,
+                assigned_by=actor,
+                triage_decision=validated_data["triage_decision"],
+                match_rationale=validated_data.get("match_rationale") or {},
+                priority=validated_data["priority"],
+            )
+        except IntegrityError as exc:
+            # The only unique constraint here is the active (concern, advisor)
+            # partial index (model.md §3.7).
+            raise Conflict("이미 배정된 조언가입니다.") from exc
+
+        if concern.status == ConcernStatus.SUBMITTED:
+            concern.status = ConcernStatus.ASSIGNED
+            concern.save(update_fields=["status"])
+
+        Notification.objects.create(
+            recipient_id=advisor_user_id,
+            type=NotificationType.ASSIGNMENT_CREATED,
+            title="새로운 고민이 배정되었습니다",
+            message=concern.concern_summary,
+            target_url=f"/api/v1/users/me/assigned-concerns/{concern.id}",
+            actor_user=actor,
+            payload={"concern_id": str(concern.id), "assignment_id": str(assignment.id)},
+        )
+    return assignment, concern
+
+
+def unassign_advisor(concern_id, assignment_id) -> None:
+    """#25 — deactivate an assignment, atomically (api.md #25).
+
+    The row is never deleted: assignment history is itself audit (model.md
+    §3.7). When the last active assignment goes, an ASSIGNED concern falls
+    back to SUBMITTED (CLAUDE.md §6.6) — but an ANSWERED concern does not,
+    because an approved advice already exists on it.
+    """
+    with transaction.atomic():
+        concern = get_object_or_404(
+            Concern.objects.with_deleted().select_for_update(), pk=concern_id
+        )
+        # Scoped to this concern: an assignment id from another concern is 404,
+        # not a cross-concern write.
+        assignment = get_object_or_404(Assignment, pk=assignment_id, concern=concern)
+        if not assignment.is_active:
+            raise Conflict("이미 해제된 배정입니다.")
+
+        assignment.is_active = False
+        assignment.deactivated_at = timezone.now()
+        assignment.save(update_fields=["is_active", "deactivated_at"])
+
+        still_assigned = Assignment.objects.filter(concern=concern, is_active=True).exists()
+        if not still_assigned and concern.status == ConcernStatus.ASSIGNED:
+            concern.status = ConcernStatus.SUBMITTED
+            concern.save(update_fields=["status"])
