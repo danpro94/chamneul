@@ -35,10 +35,15 @@ ADVICES_WRITTEN_URL = "/api/v1/users/me/advices-written"
 ADMIN_ADVICES_URL = "/api/v1/admin/advices"
 RECEIVED_ADVICES_URL = "/api/v1/users/me/advices"
 MY_FEEDBACKS_URL = "/api/v1/users/me/feedbacks"
+ADMIN_FEEDBACKS_URL = "/api/v1/admin/feedbacks"
 
 
 def feedbacks_url(advice_id):
     return f"/api/v1/advices/{advice_id}/feedbacks"
+
+
+def admin_feedback_url(feedback_id):
+    return f"/api/v1/admin/feedbacks/{feedback_id}"
 
 
 def advice_detail_url(advice_id):
@@ -1131,3 +1136,211 @@ class MyFeedbackListTests(AdviceTestBase):
         with self.assertNumQueries(2):
             response = self.client.get(MY_FEEDBACKS_URL)
         self.assertEqual(response.data["page_info"]["total"], 5)
+
+
+class AdminFeedbackTestBase(AdviceTestBase):
+    """Shared fixture for #36~#38: an APPROVED advice with a feedback on it."""
+
+    def setUp(self):
+        super().setUp()
+        self.approved_advice = self.make_advice(status=AdviceStatus.APPROVED)
+        self.feedback = Feedback.objects.create(
+            advice=self.approved_advice,
+            author=self.requester,
+            score=4,
+            content="도움이 됐습니다.",
+        )
+
+    def make_feedback(self, score=3, feedback_status=FeedbackStatus.SUBMITTED):
+        """A second feedback on a fresh concern/advice pair."""
+        concern = Concern.objects.create(
+            author=self.requester,
+            concern_summary=f"추가 고민 {score}",
+            concern_type=ConcernType.BURNOUT,
+        )
+        advice = self.make_advice(
+            concern=concern, advisor=self.other_advisor, status=AdviceStatus.APPROVED
+        )
+        return Feedback.objects.create(
+            advice=advice, author=self.requester, score=score, status=feedback_status
+        )
+
+
+class AdminFeedbackListTests(AdminFeedbackTestBase):
+    """SPEC-002 TASK-006 — api.md #36."""
+
+    def test_list_requires_login(self):
+        response = self.client.get(ADMIN_FEEDBACKS_URL)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_requires_admin(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(ADMIN_FEEDBACKS_URL)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_list_exposes_both_parties(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_FEEDBACKS_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        item = response.data["items"][0]
+        self.assertEqual(item["feedback_id"], str(self.feedback.id))
+        self.assertEqual(item["advice_id"], str(self.approved_advice.id))
+        self.assertEqual(item["author_user_id"], str(self.requester.id))
+        self.assertEqual(item["advisor_user_id"], str(self.advisor.id))
+        # The list stays light: no body text (CLAUDE.md §8).
+        self.assertNotIn("content", item)
+
+    def test_list_status_filter(self):
+        reviewed = self.make_feedback(score=5, feedback_status=FeedbackStatus.REVIEWED)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(
+            ADMIN_FEEDBACKS_URL, {"status": FeedbackStatus.REVIEWED}
+        )
+
+        ids = [item["feedback_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(reviewed.id)])
+
+    def test_list_score_range_filter(self):
+        low = self.make_feedback(score=1)
+        self.make_feedback(score=5)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(
+            ADMIN_FEEDBACKS_URL, {"score_min": 1, "score_max": 2}
+        )
+
+        ids = [item["feedback_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(low.id)])
+
+    def test_list_rejects_invalid_score_filter(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_FEEDBACKS_URL, {"score_min": 9})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_query_count_is_bounded(self):
+        for score in range(1, 6):
+            self.make_feedback(score=score)
+
+        self.client.force_authenticate(self.admin)
+        # Measured, not guessed: IsAdmin's UserRole check + COUNT + the page.
+        # advisor_user_id/author come from select_related joins, so the count
+        # stays flat as rows grow (TEST_CRITERIA §3).
+        with self.assertNumQueries(3):
+            response = self.client.get(ADMIN_FEEDBACKS_URL)
+        self.assertEqual(response.data["page_info"]["total"], 6)
+
+
+class AdminFeedbackDetailTests(AdminFeedbackTestBase):
+    """SPEC-002 TASK-006 — api.md #37."""
+
+    def test_detail_requires_admin(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(admin_feedback_url(self.feedback.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_detail_nonexistent_returns_404(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(
+            admin_feedback_url("00000000-0000-7000-8000-000000000000")
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_detail_exposes_admin_only_fields(self):
+        self.feedback.memo = "운영 메모"
+        self.feedback.save(update_fields=["memo"])
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(admin_feedback_url(self.feedback.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["author_nickname"], self.requester.nickname)
+        self.assertEqual(response.data["content"], "도움이 됐습니다.")
+        self.assertEqual(response.data["memo"], "운영 메모")
+        self.assertIn("reviewed_at", response.data)
+        self.assertIn("reviewed_by", response.data)
+
+
+class AdminFeedbackTransitionTests(AdminFeedbackTestBase):
+    """SPEC-002 TASK-006 — api.md #38. §6.3's one-way status flow."""
+
+    def patch_status(self, feedback, new_status, **extra):
+        payload = {"status": new_status}
+        payload.update(extra)
+        return self.client.patch(
+            admin_feedback_url(feedback.id), payload, format="json"
+        )
+
+    def test_transition_requires_admin(self):
+        self.client.force_authenticate(self.requester)
+        response = self.patch_status(self.feedback, FeedbackStatus.REVIEWED)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_submitted_to_reviewed_records_reviewer(self):
+        self.client.force_authenticate(self.admin)
+        response = self.patch_status(self.feedback, FeedbackStatus.REVIEWED)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], FeedbackStatus.REVIEWED)
+        self.assertEqual(response.data["reviewed_by"], str(self.admin.id))
+
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.status, FeedbackStatus.REVIEWED)
+        self.assertIsNotNone(self.feedback.reviewed_at)
+        self.assertEqual(self.feedback.reviewed_by, self.admin)
+
+    def test_reviewed_to_archived(self):
+        reviewed = self.make_feedback(feedback_status=FeedbackStatus.REVIEWED)
+
+        self.client.force_authenticate(self.admin)
+        response = self.patch_status(reviewed, FeedbackStatus.ARCHIVED)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        reviewed.refresh_from_db()
+        self.assertEqual(reviewed.status, FeedbackStatus.ARCHIVED)
+
+    def test_skipping_reviewed_returns_409(self):
+        self.client.force_authenticate(self.admin)
+        response = self.patch_status(self.feedback, FeedbackStatus.ARCHIVED)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_reverse_transition_returns_409(self):
+        archived = self.make_feedback(feedback_status=FeedbackStatus.ARCHIVED)
+
+        self.client.force_authenticate(self.admin)
+        response = self.patch_status(archived, FeedbackStatus.REVIEWED)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_same_status_returns_409(self):
+        self.client.force_authenticate(self.admin)
+        response = self.patch_status(self.feedback, FeedbackStatus.SUBMITTED)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_memo_is_stored_alongside_transition(self):
+        self.client.force_authenticate(self.admin)
+        response = self.patch_status(
+            self.feedback, FeedbackStatus.REVIEWED, memo="확인 완료"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.feedback.refresh_from_db()
+        self.assertEqual(self.feedback.memo, "확인 완료")
+
+    def test_invalid_status_returns_400(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            admin_feedback_url(self.feedback.id),
+            {"status": "NOT_A_STATUS"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_nonexistent_returns_404(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            admin_feedback_url("00000000-0000-7000-8000-000000000000"),
+            {"status": FeedbackStatus.REVIEWED},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -16,6 +16,11 @@ from concerns.services import display_names_by_advisor
 from . import services
 from .serializers import (
     AdminAdviceListSerializer,
+    AdminFeedbackDetailSerializer,
+    AdminFeedbackListSerializer,
+    AdminFeedbackQuerySerializer,
+    AdminFeedbackTransitionResultSerializer,
+    AdminFeedbackTransitionSerializer,
     AdviceCreateResultSerializer,
     AdviceCreateSerializer,
     AdviceDetailSerializer,
@@ -228,3 +233,46 @@ class MyFeedbackListView(APIView):
         page = paginator.paginate_queryset(queryset, request, view=self)
         serializer = MyFeedbackListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class AdminFeedbackListView(APIView):
+    """GET (#36) — /api/v1/admin/feedbacks."""
+
+    permission_classes = [IsAdmin]
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        query = AdminFeedbackQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+
+        queryset = services.list_feedbacks_for_admin(query.validated_data)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = AdminFeedbackListSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class AdminFeedbackDetailView(APIView):
+    """GET (#37) / PATCH (#38) — /api/v1/admin/feedbacks/{feedback-id}.
+
+    The detail is the only place `memo` and `author_nickname` surface, and
+    the PATCH is the only writer of the SUBMITTED -> REVIEWED -> ARCHIVED
+    flow (CLAUDE.md §6.3). No notification on either (api.md #38).
+    """
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request, feedback_id):
+        feedback = services.get_feedback_for_admin(feedback_id)
+        return Response(AdminFeedbackDetailSerializer(feedback).data)
+
+    def patch(self, request, feedback_id):
+        serializer = AdminFeedbackTransitionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        feedback = services.transition_feedback(
+            feedback_id,
+            request.user,
+            new_status=serializer.validated_data["status"],
+            memo=serializer.validated_data.get("memo"),
+        )
+        return Response(AdminFeedbackTransitionResultSerializer(feedback).data)

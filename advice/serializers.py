@@ -9,7 +9,7 @@ from rest_framework import serializers
 
 from concerns.services import display_names_by_advisor
 
-from .models import Advice, AdviceStatus, Feedback
+from .models import Advice, AdviceStatus, Feedback, FeedbackStatus
 
 
 class _AdvisorDisplayNameMixin:
@@ -296,4 +296,96 @@ class MyFeedbackListSerializer(serializers.ModelSerializer):
             "status",
             "created_at",
         )
+        read_only_fields = fields
+
+
+class AdminFeedbackQuerySerializer(serializers.Serializer):
+    """#36 query params. `score_min`/`score_max` are bounded to the model's
+    1..5 range, so a nonsense filter is 400 rather than an empty page."""
+
+    status = serializers.ChoiceField(choices=FeedbackStatus.choices, required=False)
+    score_min = serializers.IntegerField(min_value=1, max_value=5, required=False)
+    score_max = serializers.IntegerField(min_value=1, max_value=5, required=False)
+
+
+class AdminFeedbackListSerializer(serializers.ModelSerializer):
+    """GET /api/v1/admin/feedbacks (#36) list item (api.md #36 fields).
+
+    Carries both parties' ids — `author_user_id` (who wrote the feedback) and
+    `advisor_user_id` (whose advice it is about) — but no body text; the
+    content belongs to the #37 detail (CLAUDE.md §8).
+    """
+
+    feedback_id = serializers.UUIDField(source="id", read_only=True)
+    advice_id = serializers.UUIDField(read_only=True)
+    advisor_user_id = serializers.UUIDField(source="advice.advisor_id", read_only=True)
+    author_user_id = serializers.UUIDField(source="author_id", read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = (
+            "feedback_id",
+            "advice_id",
+            "advisor_user_id",
+            "author_user_id",
+            "score",
+            "status",
+            "created_at",
+        )
+        read_only_fields = fields
+
+
+class AdminFeedbackDetailSerializer(serializers.ModelSerializer):
+    """GET /api/v1/admin/feedbacks/{feedback-id} (#37).
+
+    The only place `memo` and `author_nickname` are exposed — both are
+    admin-only (model.md §3.10). The feedback's author sees neither on #35.
+    """
+
+    feedback_id = serializers.UUIDField(source="id", read_only=True)
+    advice_id = serializers.UUIDField(read_only=True)
+    advisor_user_id = serializers.UUIDField(source="advice.advisor_id", read_only=True)
+    author_user_id = serializers.UUIDField(source="author_id", read_only=True)
+    author_nickname = serializers.CharField(source="author.nickname", read_only=True)
+    reviewed_by = serializers.UUIDField(source="reviewed_by_id", read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = (
+            "feedback_id",
+            "advice_id",
+            "advisor_user_id",
+            "author_user_id",
+            "author_nickname",
+            "score",
+            "content",
+            "status",
+            "reviewed_at",
+            "reviewed_by",
+            "memo",
+            "created_at",
+        )
+        read_only_fields = fields
+
+
+class AdminFeedbackTransitionSerializer(serializers.Serializer):
+    """PATCH /api/v1/admin/feedbacks/{feedback-id} (#38) request.
+
+    Whether the requested transition is legal is a state question (409) owned
+    by services.transition_feedback — this only validates the shape (400).
+    """
+
+    status = serializers.ChoiceField(choices=FeedbackStatus.choices)
+    memo = serializers.CharField(required=False, allow_blank=True)
+
+
+class AdminFeedbackTransitionResultSerializer(serializers.ModelSerializer):
+    """#38 response — api.md #38 field set."""
+
+    feedback_id = serializers.UUIDField(source="id", read_only=True)
+    reviewed_by = serializers.UUIDField(source="reviewed_by_id", read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = ("feedback_id", "status", "reviewed_at", "reviewed_by")
         read_only_fields = fields

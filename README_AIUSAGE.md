@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-09-12 — SPEC-002/TASK-006: admin 피드백 3종 (api.md #36·#37·#38) — M4-6 구현 완료 [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdminFeedbackListTests`·`AdminFeedbackDetailTests`·`AdminFeedbackTransitionTests` 18케이스를 먼저 작성(권한 401/403, `status`/`score_min`/`score_max` 필터, 잘못된 점수 필터 400, 관리자 전용 필드(`memo`·`author_nickname`) 노출, SUBMITTED→REVIEWED→ARCHIVED 정상 전이, 역방향·건너뛰기·동일 상태 409, memo 저장, 잘못된 status 400, 404) → 실행해 16개 실패 확인.
+2. 최소 구현: `advice/services.py`에 `_ALLOWED_FEEDBACK_TRANSITIONS` 표 + `list_feedbacks_for_admin()`/`get_feedback_for_admin()`/`transition_feedback()`. 시리얼라이저 5종, 뷰 2종(#37·#38은 같은 경로라 한 클래스), URL 2개.
+3. 쿼리 수는 이번에도 **먼저 실측**(3쿼리: IsAdmin 확인 + COUNT + 페이지, `select_related` 조인 덕에 행 수와 무관) 후 고정 → 한 번에 통과. 2회 연속 성공.
+4. 4종 검증 — 전체 **162/162** 통과.
+5. 시각 확인: 피드백 목록 → 건너뛰기 전이 409 → 정상 전이 후 상세에 `memo`·`reviewed_by`·`reviewed_at` 기록 확인, 스크린샷 3장.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-12)
+
+TASK-006 진행 승인.
+
+### 판단 기록 (AI가 정한 것, 이견 시 저렴하게 수정 가능)
+
+* **`reviewed_by`/`reviewed_at`은 REVIEWED로 들어갈 때만 기록**하고, ARCHIVED로 넘어갈 때는 건드리지 않는다. 필드 이름이 "review" 사건을 가리키므로, 나중에 다른 관리자가 보관 처리했다고 해서 "누가 실제로 검토했는가"를 덮어쓰면 감사 정보가 사라진다. (api.md #38은 이 지점을 명시하지 않음)
+* **동일 상태로의 전이도 409**로 막았다 — 전이표에 self-edge를 두지 않는 방식(advisors 앱의 신청 전이표와 동일한 형태).
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* 해당 3클래스 → 구현 전 16 fail → 구현 후 **19/19 OK**(쿼리 고정 테스트 포함)
+* `manage.py test` (전체) → **162/162 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: 스크린샷 3장 Owner 전송
+
+### 잔여 리스크
+
+1. **M4-6 코드는 끝났지만 SPEC-002는 미완** — TASK-007(AC-1~AC-11 전항 재검증, 특히 §6.2 노출 6지점 전수 점검 + api.md 문구 정정 4건)이 남아 있다. SPEC-001 때 이 마무리 단계에서 미커버 AC 2건이 나왔으므로 생략하지 않는다.
+2. **피드백에 알림이 없다**(api.md #38 "알림 없음") — 조언가는 자기 조언이 어떤 평가를 받았는지 API로 알 수 없다. 의도된 Phase 2 범위지만, 실사용 시 조언가 경험의 빈 구멍이 될 수 있어 기록해 둔다.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-007(SPEC-002 마무리 + PR) 착수.
+
+---
+
 ## 2026-09-12 — SPEC-002/TASK-005: 받은 조언함 + 피드백 (api.md #26·#34·#35) [위임]
 
 ### 작업

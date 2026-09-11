@@ -14,7 +14,7 @@ from django.utils import timezone
 from common.exceptions import Conflict, PreconditionFailed, UnprocessableEntity
 from concerns.models import Assignment, Concern, ConcernStatus
 
-from .models import Advice, AdviceHistory, AdviceStatus, Feedback
+from .models import Advice, AdviceHistory, AdviceStatus, Feedback, FeedbackStatus
 
 # Decisions #33 accepts (api.md #33 request field `decision`).
 DECISION_APPROVED = "approved"
@@ -303,3 +303,71 @@ def create_feedback(advice_id, author, validated_data) -> Feedback:
 def list_feedbacks_written_by(author):
     """Queryset for #35 — the caller's own feedbacks, newest first."""
     return Feedback.objects.filter(author=author).order_by("-created_at")
+
+
+# Feedback's one-way status flow (CLAUDE.md §6.3, api.md #38). Terminal
+# states have no outgoing edge, so re-entering or reversing is 409 — the same
+# table shape advisors.services uses for applications.
+_ALLOWED_FEEDBACK_TRANSITIONS = {
+    FeedbackStatus.SUBMITTED: {FeedbackStatus.REVIEWED},
+    FeedbackStatus.REVIEWED: {FeedbackStatus.ARCHIVED},
+    FeedbackStatus.ARCHIVED: set(),
+}
+
+
+def list_feedbacks_for_admin(filters):
+    """Queryset for #36 — every feedback, newest first.
+
+    select_related pulls the advice (for advisor_user_id) and the author in
+    one join, so the list stays flat regardless of page size (CLAUDE.md §8).
+    """
+    queryset = (
+        Feedback.objects.select_related("advice", "author").order_by("-created_at")
+    )
+    if "status" in filters:
+        queryset = queryset.filter(status=filters["status"])
+    if "score_min" in filters:
+        queryset = queryset.filter(score__gte=filters["score_min"])
+    if "score_max" in filters:
+        queryset = queryset.filter(score__lte=filters["score_max"])
+    return queryset
+
+
+def get_feedback_for_admin(feedback_id) -> Feedback:
+    """#37 — admin detail lookup. No ownership branch: ADMIN sees every
+    feedback, including `memo`, which is admin-only (model.md §3.10)."""
+    return get_object_or_404(
+        Feedback.objects.select_related("advice", "author", "reviewed_by"),
+        pk=feedback_id,
+    )
+
+
+def transition_feedback(feedback_id, actor, new_status, memo=None) -> Feedback:
+    """#38 — move a feedback along SUBMITTED -> REVIEWED -> ARCHIVED.
+
+    One step at a time and never backwards (CLAUDE.md §6.3); anything else,
+    including re-entering the current state, is 409.
+
+    `reviewed_by`/`reviewed_at` are stamped only on the transition *into*
+    REVIEWED, not on archiving: the fields name the review event, and
+    overwriting them when someone later files the feedback away would lose
+    who actually reviewed it. No notification — api.md #38 says so
+    explicitly.
+    """
+    feedback = get_object_or_404(Feedback, pk=feedback_id)
+    if new_status not in _ALLOWED_FEEDBACK_TRANSITIONS.get(feedback.status, set()):
+        raise Conflict(
+            f"{feedback.status} 상태에서 {new_status}로 전이할 수 없습니다."
+        )
+
+    updated_fields = ["status"]
+    feedback.status = new_status
+    if new_status == FeedbackStatus.REVIEWED:
+        feedback.reviewed_by = actor
+        feedback.reviewed_at = timezone.now()
+        updated_fields += ["reviewed_by", "reviewed_at"]
+    if memo is not None:
+        feedback.memo = memo
+        updated_fields.append("memo")
+    feedback.save(update_fields=updated_fields)
+    return feedback

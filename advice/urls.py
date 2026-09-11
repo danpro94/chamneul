@@ -44,4 +44,14 @@ urlpatterns = [
         views.MyFeedbackListView.as_view(),
         name="users-me-feedbacks",
     ),
+    path(
+        "admin/feedbacks",
+        views.AdminFeedbackListView.as_view(),
+        name="admin-feedbacks",
+    ),
+    path(
+        "admin/feedbacks/<uuid:feedback_id>",
+        views.AdminFeedbackDetailView.as_view(),
+        name="admin-feedback-detail",
+    ),
 ]
