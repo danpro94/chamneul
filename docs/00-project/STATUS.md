@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-10 (SPEC-001/TASK-006 커밋 기준 — SPEC-001 종료. 이전 실측 2026-09-10 TASK-001~005 / 2026-09-09 `b2eaf90`)
+> 마지막 실측: 2026-09-11 (SPEC-002/TASK-001 커밋 기준. 이전 실측 2026-09-10 SPEC-001 종료 / 2026-09-09 `b2eaf90`)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | **M4-5 concerns 10/10 완료**(5/8 모듈), **26/44 엔드포인트** |
+| M4 진행률 | M4-5 완료 + M4-6 진행 중(advice 2/13), **28/44 엔드포인트** |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,9 +24,9 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (26 / 44)
+## 2. 구현된 엔드포인트 (28 / 44)
 
-실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls` 3개 include.
+실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls` 4개 include.
 
 | # | Method | Endpoint | 구현 파일 |
 | --- | --- | --- | --- |
@@ -55,23 +55,33 @@
 | 23 | GET | `/api/v1/admin/concerns/{concern-id}` | `AdminConcernDetailView.get` (SPEC-001/TASK-004) |
 | 24 | POST | `/api/v1/admin/concerns/{concern-id}/assignments` | `AdminAssignmentCreateView.post` (SPEC-001/TASK-005) |
 | 25 | DELETE | `/api/v1/admin/concerns/{concern-id}/assignments/{assignment-id}` | `AdminAssignmentDetailView.delete` (SPEC-001/TASK-005) |
+| 28 | POST | `/api/v1/concerns/{concern-id}/advices` | [advice/views.py](../../advice/views.py) `AdviceCreateView.post` (SPEC-002/TASK-001) |
+| 31 | GET | `/api/v1/users/me/advices-written` | `AdvicesWrittenView.get` (SPEC-002/TASK-001) |
 | 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
 
-## 3. 미구현 엔드포인트 (18 / 44)
+## 3. 미구현 엔드포인트 (16 / 44)
 
-`advice`·`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`(#16~25)는 **전량 구현 완료**(실측: `git ls-files`, `config/urls.py`).
+`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`(#16~25)는 전량 구현 완료, `advice`는 #28·#31만 구현됨(실측: `git ls-files`, `config/urls.py`).
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-6 advice + feedback | #26~38 (13개) | §4-26~38 |
+| M4-6 advice + feedback (남은 11개) | #26·#27·#29·#30·#32~#38 | §4-26~38 |
 | M4-7 notifications | #39~41 (3개) | §4-39~41 |
 | M4-8 admin roles | #42~43 (2개) | §4-42~43 |
 
 ## 4. Active SPEC
 
-**SPEC-002-advice-api** (`specs/SPEC-002-advice-api/`) — api.md #26~38 (M4-6 advice + feedback) 13개 엔드포인트. **Status: Draft — Owner 결정 4건 대기**(spec.md §7: 초안의 관리자 리뷰 대기열 노출 여부 / `submit` 토글의 version 증가 여부 / CLOSED concern 승인 시 전이 / #27 403-404 선택). 브랜치 `feat/spec-002-advice-api`.
+**SPEC-002-advice-api** (`specs/SPEC-002-advice-api/`) — api.md #26~38 (M4-6 advice + feedback) 13개 엔드포인트. **Status: Approved** — spec.md §7의 Owner 결정 4건 확정(2026-09-11, 전부 권고안 채택). 브랜치 `feat/spec-002-advice-api`.
 
-**다음 최소 작업 단위**: §7 결정 확정 후 TASK-001 — 조언 작성(#28) + 내가 쓴 조언 목록(#31).
+확정된 §7 결정:
+
+1. 관리자 리뷰 목록(#32)에서 **초안(`is_submitted=False`) 항상 제외**, #33도 초안 리뷰를 409로 거부.
+2. `submit` 토글만 바뀌면 `version` **증가하지 않음**(본문 변경 시에만 +1, §6.7).
+3. 승인 시 concern 전이는 **`ASSIGNED`일 때만** — `CLOSED`/`ANSWERED`는 불변(§6.6에 CLOSED→ANSWERED 간선 없음).
+4. #27에서 고민 작성자가 비-APPROVED advice 조회 시 **403**(api.md 문언 유지, #18의 404와 비대칭임을 인지).
+
+* [x] TASK-001 — 조언 작성(#28) + 내가 쓴 조언 목록(#31). 공용 `AdviceTestBase`로 fixture 1곳 집약, `IsActiveAdvisor` 재사용, 부분 유니크(DELETED 제외) 덕에 삭제 후 재작성 허용 확인. 테스트 18종(선-실패 16개 확인) → 검증 4종 통과(**80/80**) → 스크린샷 3장 확인 → 커밋.
+* [ ] **다음 최소 작업 단위**: TASK-002 — 조언 상세(#27) 3주체 분기(§6.2 핵심).
 
 <details>
 <summary>SPEC-001-concerns-api — 완료 (2026-09-10, PR #2 머지)</summary>
