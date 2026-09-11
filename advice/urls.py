@@ -14,4 +14,9 @@ urlpatterns = [
         views.AdvicesWrittenView.as_view(),
         name="users-me-advices-written",
     ),
+    path(
+        "advices/<uuid:advice_id>",
+        views.AdviceDetailView.as_view(),
+        name="advice-detail",
+    ),
 ]

@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-09-11 — SPEC-002/TASK-002: 조언 상세 3주체 분기 (api.md #27) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdviceDetailTests` 11케이스 추가(작성자 전상태 200+`reject_reason`, 고민 작성자 APPROVED만 200/`reject_reason` 없음, 고민 작성자 PENDING·REJECTED 403, ADMIN 전상태 200, 무관 사용자·조언가 403, 없는 advice 404, advisor 신원 최소 노출) → 실행해 10개 실패 확인.
+2. 최소 구현: `advice/services.py`에 `get_visible_advice()` — (작성자 → 관리자 → 고민 작성자+APPROVED) 우선순위 판정, 그 외 403. `_is_admin()` 헬퍼는 `common.permissions.IsAdmin`과 동일 로직을 의도적으로 별도 구현(객체 수준 판정과 DRF permission 클래스의 시그니처가 안 맞아 억지로 묶지 않음, 코드 주석에 사유 명시). `advice/serializers.py`에 `AdviceDetailSerializer`(고민 작성자용) + 상속받은 `AdviceDetailWithReasonSerializer`(작성자/관리자용, `reject_reason` 추가) — 필드 목록 중복을 상속으로 제거. `AdviceDetailView` + URL 1개 추가.
+3. 4종 검증 — 전체 91/91 통과.
+4. 시각 확인 중 **데모 계정 재사용 문제를 발견·정정**(아래).
+
+### 데모 재현 중 발견한 것 (버그 아님, 데모 설계 실수)
+
+첫 스크린샷 시도에서 `demo@example.com`(고민 작성자)이 심사중(PENDING) 조언을 열람했는데 403이 아니라 200이 나왔다. 원인은 코드가 아니라 데모 계정: `demo`는 **TASK-004에서 이미 ADMIN 역할을 부여받은 채로 영구 보존된 계정**이었다. `get_visible_advice()`의 판정 순서가 (작성자→관리자→고민 작성자) 이므로, admin이기도 한 고민 작성자는 관리자 시야로 응답받는다 — 이것 자체는 설계대로다. 다만 "순수 고민 작성자"를 보여주려던 데모가 실은 "관리자"를 보여주고 있었던 것. `plain.owner@example.com`(어떤 역할도 없는 신규 계정)을 새로 만들어 재현해 올바른 스크린샷 3장을 얻었다.
+
+**교훈**: Docker Compose를 세션 간 재사용하면서 데모 계정에 역할을 누적 부여해 왔다(`demo`는 이제 ADVISOR는 아니지만 ADMIN). 앞으로 권한 분기를 시각 확인할 때는 매번 신선한 계정을 만들거나, 계정별 역할을 먼저 조회해 전제를 확인해야 한다.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-11)
+
+TASK-002 진행 승인.
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice.tests.AdviceDetailTests` → 구현 전 10 fail → 구현 후 **11/11 OK**
+* `manage.py test` (전체) → **91/91 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인(정정 후, 권한 없는 신규 계정 기준): 승인된 조언 200(`reject_reason` 필드 자체 없음) / 심사중 조언 403 / 작성자 본인은 심사중 조언도 200(`is_submitted`·`reject_reason` 노출) — 스크린샷 3장 Owner 전송
+
+### 잔여 리스크
+
+1. **판정 우선순위(작성자>관리자>고민 작성자)가 명시적 결정이 아니라 구현 중 자연스럽게 정해짐** — 세 조건이 동시에 참인 경우(예: 관리자가 자기 자신에게 조언을 배정하는 기형적 케이스)는 스펙에 없다. Phase 2 실사용에서 발생 가능성은 낮으나 기록해 둔다.
+2. **개발용 Docker 컨테이너의 역할 오염** — `demo` 계정은 이제 ADMIN을 보유해 "평범한 사용자" 데모에 더 이상 적합하지 않다. 다음 세션에서 역할별 데모 계정을 명확히 분리(예: `owner.demo@`, `admin.demo@`, `advisor.demo@`)하는 것을 권고.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-003(#29 조언 수정 + #30 삭제) 착수.
+
+---
+
 ## 2026-09-10 — SPEC-001/TASK-006: 마무리 — SPEC-001 종료 [위임]
 
 ### 작업

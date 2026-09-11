@@ -16,6 +16,8 @@ from . import services
 from .serializers import (
     AdviceCreateResultSerializer,
     AdviceCreateSerializer,
+    AdviceDetailSerializer,
+    AdviceDetailWithReasonSerializer,
     AdviceWrittenListSerializer,
     AdviceWrittenQuerySerializer,
 )
@@ -61,3 +63,23 @@ class AdvicesWrittenView(APIView):
         page = paginator.paginate_queryset(queryset, request, view=self)
         serializer = AdviceWrittenListSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
+
+
+class AdviceDetailView(APIView):
+    """GET (#27) — /api/v1/advices/{advice-id}.
+
+    Three-audience visibility (spec.md §7-4, CLAUDE.md §6.2): the author and
+    admin see every status and the reject reason; the concern owner sees only
+    an APPROVED advice and never the reject reason; anyone else gets 403.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, advice_id):
+        advice, viewer_role = services.get_visible_advice(advice_id, request.user)
+        serializer_class = (
+            AdviceDetailWithReasonSerializer
+            if viewer_role in {services.VIEWER_AUTHOR, services.VIEWER_ADMIN}
+            else AdviceDetailSerializer
+        )
+        return Response(serializer_class(advice).data)

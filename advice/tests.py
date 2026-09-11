@@ -25,6 +25,10 @@ User = get_user_model()
 ADVICES_WRITTEN_URL = "/api/v1/users/me/advices-written"
 
 
+def advice_detail_url(advice_id):
+    return f"/api/v1/advices/{advice_id}"
+
+
 class AdviceTestBase(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -298,3 +302,113 @@ class AdvicesWrittenTests(AdviceTestBase):
         with self.assertNumQueries(2):
             response = self.client.get(ADVICES_WRITTEN_URL)
         self.assertEqual(response.data["page_info"]["total"], 5)
+
+
+class AdviceDetailTests(AdviceTestBase):
+    """SPEC-002 TASK-002 — api.md #27, the three-audience visibility rule
+    (spec.md §7-4, CLAUDE.md §6.2)."""
+
+    def test_detail_requires_login(self):
+        advice = self.make_advice()
+        response = self.client.get(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_detail_nonexistent_returns_404(self):
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(
+            advice_detail_url("00000000-0000-7000-8000-000000000000")
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # --- author: any status, sees is_submitted + reject_reason -----------
+
+    def test_detail_author_sees_rejected_with_reason(self):
+        advice = self.make_advice(
+            status=AdviceStatus.REJECTED, reject_reason="근거가 불충분합니다."
+        )
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(advice_detail_url(advice.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], AdviceStatus.REJECTED)
+        self.assertEqual(response.data["reject_reason"], "근거가 불충분합니다.")
+        self.assertIn("is_submitted", response.data)
+        self.assertEqual(response.data["advisor_display_name"], self.advisor.nickname)
+
+    def test_detail_author_sees_own_draft(self):
+        advice = self.make_advice(is_submitted=False)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(advice_detail_url(advice.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["is_submitted"])
+
+    # --- concern owner: APPROVED only, never reject_reason ----------------
+
+    def test_detail_owner_sees_approved_without_reason(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(advice_detail_url(advice.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn("reject_reason", response.data)
+
+    def test_detail_owner_forbidden_for_pending(self):
+        advice = self.make_advice(status=AdviceStatus.PENDING)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_detail_owner_forbidden_for_rejected(self):
+        # Not just "not yet visible" — REJECTED never becomes visible to the
+        # concern owner at all (§6.2: only APPROVED is ever shown to users).
+        advice = self.make_advice(
+            status=AdviceStatus.REJECTED, reject_reason="사유"
+        )
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    # --- admin: any status, sees reject_reason ----------------------------
+
+    def test_detail_admin_sees_pending_with_reason_field(self):
+        advice = self.make_advice(status=AdviceStatus.PENDING)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(advice_detail_url(advice.id))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("reject_reason", response.data)
+
+    # --- everyone else: 403 ------------------------------------------------
+
+    def test_detail_unrelated_advisor_forbidden(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.other_advisor)
+        response = self.client.get(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_detail_unrelated_user_forbidden(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+        bystander = User.objects.create_user(
+            email="bystander@example.com", nickname="bystander", password="pw12345!"
+        )
+
+        self.client.force_authenticate(bystander)
+        response = self.client.get(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_detail_never_exposes_advisor_identity_beyond_display_name(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(advice_detail_url(advice.id))
+
+        self.assertNotIn("advisor_user_id", response.data)
+        self.assertNotIn("email", response.data)

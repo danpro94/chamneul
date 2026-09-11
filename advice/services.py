@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404
 from common.exceptions import Conflict
 from concerns.models import Assignment, Concern
 
-from .models import Advice
+from .models import Advice, AdviceStatus
 
 
 def create_advice(concern_id, advisor, validated_data) -> Advice:
@@ -54,3 +54,45 @@ def list_advices_written_by(advisor):
     """Queryset for #31 — the advisor's own advices, every status, newest
     first. No derived fields, so no extra query beyond the page itself."""
     return Advice.objects.filter(advisor=advisor).order_by("-created_at")
+
+
+# Viewer roles for #27 — the caller's relationship to the advice, not a model
+# field. The view picks a serializer from this (author/admin see reject_reason,
+# owner does not).
+VIEWER_AUTHOR = "author"
+VIEWER_OWNER = "owner"
+VIEWER_ADMIN = "admin"
+
+
+def _is_admin(user) -> bool:
+    # Deliberately duplicates common.permissions.IsAdmin's check rather than
+    # reusing the DRF permission class here: this is an object-level branch
+    # inside a service function, not a view-level gate, and the two shapes
+    # (has_permission(request, view) vs. a plain user) don't fit together
+    # cleanly enough to be worth coupling them.
+    if user.is_superuser:
+        return True
+    from accounts.models import Role, UserRole
+
+    return UserRole.objects.filter(user=user, role=Role.ADMIN).exists()
+
+
+def get_visible_advice(advice_id, user) -> tuple[Advice, str]:
+    """#27 — fetch the target advice and decide which of the three shapes the
+    caller may see (spec.md §7-4, CLAUDE.md §6.2).
+
+    404 only for a genuinely missing advice. Existence is not hidden from a
+    concern owner the way another user's *concern* is (SPEC-001 #18) — a
+    non-APPROVED advice is 403 for them, matching api.md #27's own status
+    list (Owner decision 2026-09-11).
+    """
+    advice = get_object_or_404(
+        Advice.objects.select_related("concern", "advisor"), pk=advice_id
+    )
+    if advice.advisor_id == user.id:
+        return advice, VIEWER_AUTHOR
+    if _is_admin(user):
+        return advice, VIEWER_ADMIN
+    if advice.concern.author_id == user.id and advice.status == AdviceStatus.APPROVED:
+        return advice, VIEWER_OWNER
+    raise PermissionDenied("조회 권한이 없습니다.")
