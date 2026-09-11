@@ -6,6 +6,47 @@
 
 ---
 
+## 2026-09-12 — SPEC-002/TASK-005: 받은 조언함 + 피드백 (api.md #26·#34·#35) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `ReceivedAdviceListTests`·`FeedbackCreateTests`·`MyFeedbackListTests` 총 16케이스를 먼저 작성(승인된 것만 노출·타인 고민 미노출·REJECTED/DELETED 미노출, `is_feedback_submitted` 정확도, 활동명 사용, keyword/날짜 필터, 피드백 403/409/400/404, 내 피드백만) → 실행해 15개 실패 확인.
+2. 최소 구현: `advice/services.py`에 `list_received_advices()`(§6.2 노출 규칙을 필터 한 쌍으로 집약 + `Exists` annotate) / `create_feedback()` / `list_feedbacks_written_by()`. 시리얼라이저 5종, 뷰 3종, URL 3개 추가.
+3. **쿼리 수 기대값을 이번엔 먼저 실측**(TASK-004 잔여 리스크 #2의 개선안 실행): 임시 스크립트로 `CaptureQueriesContext`를 돌려 #26=3쿼리(COUNT+페이지+활동명 벌크), #35=2쿼리임을 확인한 뒤 그 값으로 `assertNumQueries` 테스트 2종을 추가 → **한 번에 통과**(직전 3회 연속 있었던 기대값 오차 재발 없음).
+4. 4종 검증 — 전체 143/143 통과.
+5. 시각 확인: 역할 조회로 오염 없음 확인(`owner roles: []`) 후, 받은 조언함 → 피드백 작성 201 → 중복 409 → 받은 조언함 재조회 시 `is_feedback_submitted: true`로 전환 → 내 피드백 목록까지 스크린샷 5장.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-12)
+
+TASK-005 진행 승인.
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test` (해당 3클래스) → 구현 전 15 fail → 구현 후 **18/18 OK**
+* `manage.py test` (전체) → **143/143 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 실측 쿼리 수: #26 = 3, #35 = 2 (행 수와 무관하게 고정)
+* 시각 확인: 스크린샷 5장 Owner 전송
+
+### 잔여 리스크
+
+1. **`advisor_display_name` 벌크 조회 패턴이 이제 3곳에 존재**(`concerns.services.approved_advices_view_data`, `advice` #27 단건 mixin, #26 목록 context 주입). 규칙 자체는 한 함수(`display_names_by_advisor`)에 있으나 호출 방식이 제각각 — TASK-007에서 한 번 훑어보고 정리 여부 판단 권고.
+2. **피드백 수정/삭제 API 부재는 의도된 것**(api.md #34 "제출 후 수정/삭제 불가") — 오타 신고 같은 실사용 요구가 생기면 Phase 3 논의 대상.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-006(#36·#37·#38 admin 피드백 3종) 착수 — SPEC-002 구현의 마지막 구간.
+
+---
+
 ## 2026-09-11 — SPEC-002/TASK-004: admin 리뷰 목록+승인/반려 (api.md #32·#33) [위임]
 
 ### 작업

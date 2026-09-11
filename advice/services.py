@@ -7,13 +7,14 @@ queryset shapes the list endpoints need.
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from common.exceptions import Conflict, PreconditionFailed, UnprocessableEntity
 from concerns.models import Assignment, Concern, ConcernStatus
 
-from .models import Advice, AdviceHistory, AdviceStatus
+from .models import Advice, AdviceHistory, AdviceStatus, Feedback
 
 # Decisions #33 accepts (api.md #33 request field `decision`).
 DECISION_APPROVED = "approved"
@@ -258,3 +259,47 @@ def review_advice(advice_id, actor, decision, reason, expected_version) -> tuple
                 payload={"advice_id": str(advice.id), "concern_id": str(concern.id)},
             )
     return advice, concern
+
+
+def list_received_advices(user):
+    """Queryset for #26 — APPROVED advices on the caller's own concerns.
+
+    CLAUDE.md §6.2 in its most user-facing form: the filter pair
+    (concern__author=user, status=APPROVED) is the whole exposure rule, so
+    nothing else in this path needs to re-check it. `is_feedback_submitted`
+    is an Exists annotation, not a per-row query.
+    """
+    return (
+        Advice.objects.filter(concern__author=user, status=AdviceStatus.APPROVED)
+        .select_related("concern", "advisor")
+        .annotate(
+            is_feedback_submitted=Exists(Feedback.objects.filter(advice=OuterRef("pk")))
+        )
+        .order_by("-created_at")
+    )
+
+
+def create_feedback(advice_id, author, validated_data) -> Feedback:
+    """#34 — one feedback per advice, by the concern's owner, on an APPROVED
+    advice only (api.md #34).
+
+    403 (not 404) for someone else's advice or a non-APPROVED one: api.md
+    #34 lists both under the same 403, and the concern owner already knows
+    an advice exists on their concern. 409 for a second feedback — the
+    OneToOne on Feedback.advice is what actually enforces "1회".
+    """
+    advice = get_object_or_404(Advice.objects.select_related("concern"), pk=advice_id)
+    if advice.concern.author_id != author.id:
+        raise PermissionDenied("본인 고민에 달린 조언에만 피드백할 수 있습니다.")
+    if advice.status != AdviceStatus.APPROVED:
+        raise PermissionDenied("승인된 조언에만 피드백할 수 있습니다.")
+
+    try:
+        return Feedback.objects.create(advice=advice, author=author, **validated_data)
+    except IntegrityError as exc:
+        raise Conflict("이미 이 조언에 피드백을 작성했습니다.") from exc
+
+
+def list_feedbacks_written_by(author):
+    """Queryset for #35 — the caller's own feedbacks, newest first."""
+    return Feedback.objects.filter(author=author).order_by("-created_at")

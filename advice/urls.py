@@ -29,4 +29,19 @@ urlpatterns = [
         views.AdminAdviceReviewView.as_view(),
         name="admin-advice-review",
     ),
+    path(
+        "users/me/advices",
+        views.ReceivedAdviceListView.as_view(),
+        name="users-me-advices",
+    ),
+    path(
+        "advices/<uuid:advice_id>/feedbacks",
+        views.FeedbackCreateView.as_view(),
+        name="advice-feedbacks",
+    ),
+    path(
+        "users/me/feedbacks",
+        views.MyFeedbackListView.as_view(),
+        name="users-me-feedbacks",
+    ),
 ]

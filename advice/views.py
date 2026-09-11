@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from common.pagination import StandardPagination
 from common.permissions import IsActiveAdvisor, IsAdmin
+from concerns.services import display_names_by_advisor
 
 from . import services
 from .serializers import (
@@ -24,6 +25,11 @@ from .serializers import (
     AdviceUpdateSerializer,
     AdviceWrittenListSerializer,
     AdviceWrittenQuerySerializer,
+    FeedbackCreateResultSerializer,
+    FeedbackCreateSerializer,
+    MyFeedbackListSerializer,
+    ReceivedAdviceListSerializer,
+    ReceivedAdviceQuerySerializer,
 )
 
 
@@ -157,3 +163,68 @@ class AdminAdviceReviewView(APIView):
                 "version": advice.version,
             }
         )
+
+
+class ReceivedAdviceListView(APIView):
+    """GET (#26) — /api/v1/users/me/advices.
+
+    The concern owner's inbox: APPROVED advices on their own concerns only
+    (CLAUDE.md §6.2). No active_role gate — this is the plain User side,
+    same as SPEC-001's #16~#19.
+    """
+
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        query = ReceivedAdviceQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        filters = query.validated_data
+
+        queryset = services.list_received_advices(request.user)
+        if filters.get("keyword"):
+            queryset = queryset.filter(
+                concern__concern_summary__icontains=filters["keyword"]
+            )
+        if "from_date" in filters:
+            queryset = queryset.filter(created_at__date__gte=filters["from_date"])
+        if "to_date" in filters:
+            queryset = queryset.filter(created_at__date__lte=filters["to_date"])
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        # One bulk lookup for the whole page instead of one per row (§8).
+        display_names = display_names_by_advisor([advice.advisor_id for advice in page])
+        serializer = ReceivedAdviceListSerializer(
+            page, many=True, context={"display_names": display_names}
+        )
+        return paginator.get_paginated_response(serializer.data)
+
+
+class FeedbackCreateView(APIView):
+    """POST (#34) — /api/v1/advices/{advice-id}/feedbacks. One per advice,
+    by the concern's owner, on an APPROVED advice only."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, advice_id):
+        serializer = FeedbackCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        feedback = services.create_feedback(
+            advice_id, request.user, serializer.validated_data
+        )
+        return Response(FeedbackCreateResultSerializer(feedback).data, status=201)
+
+
+class MyFeedbackListView(APIView):
+    """GET (#35) — /api/v1/users/me/feedbacks."""
+
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        queryset = services.list_feedbacks_written_by(request.user)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = MyFeedbackListSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)

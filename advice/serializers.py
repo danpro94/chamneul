@@ -9,7 +9,7 @@ from rest_framework import serializers
 
 from concerns.services import display_names_by_advisor
 
-from .models import Advice, AdviceStatus
+from .models import Advice, AdviceStatus, Feedback
 
 
 class _AdvisorDisplayNameMixin:
@@ -211,3 +211,89 @@ class AdviceReviewSerializer(serializers.Serializer):
     decision = serializers.ChoiceField(choices=["approved", "rejected"])
     reason = serializers.CharField(required=False, allow_blank=True, default="")
     expected_version = serializers.IntegerField(min_value=1)
+
+
+class ReceivedAdviceListSerializer(serializers.ModelSerializer):
+    """GET /api/v1/users/me/advices (#26) list item (api.md #26 fields).
+
+    `advisor_display_name` is resolved in bulk by the view and handed in via
+    context — unlike the single-object #27 path, a per-row lookup here would
+    be N+1 (CLAUDE.md §8). `is_feedback_submitted` is a queryset annotation.
+    """
+
+    advice_id = serializers.UUIDField(source="id", read_only=True)
+    concern_id = serializers.UUIDField(read_only=True)
+    concern_summary = serializers.CharField(
+        source="concern.concern_summary", read_only=True
+    )
+    advisor_display_name = serializers.SerializerMethodField()
+    is_feedback_submitted = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = Advice
+        fields = (
+            "advice_id",
+            "concern_id",
+            "concern_summary",
+            "advisor_display_name",
+            "created_at",
+            "is_feedback_submitted",
+        )
+        read_only_fields = fields
+
+    def get_advisor_display_name(self, obj):
+        return self.context["display_names"].get(obj.advisor_id, obj.advisor.nickname)
+
+
+class ReceivedAdviceQuerySerializer(serializers.Serializer):
+    """#26 query params — validated so a malformed date is 400, not an
+    empty page."""
+
+    keyword = serializers.CharField(required=False, allow_blank=True)
+    from_date = serializers.DateField(required=False)
+    to_date = serializers.DateField(required=False)
+
+
+class FeedbackCreateSerializer(serializers.ModelSerializer):
+    """POST /api/v1/advices/{advice-id}/feedbacks (#34) request body.
+
+    `score`'s 1..5 range comes from the model's validators, which
+    ModelSerializer copies onto the field — the same mechanism that caps
+    directional_guidance at 1500 chars.
+    """
+
+    class Meta:
+        model = Feedback
+        fields = ("score", "content")
+
+
+class FeedbackCreateResultSerializer(serializers.ModelSerializer):
+    """#34 response — api.md #34 field set."""
+
+    feedback_id = serializers.UUIDField(source="id", read_only=True)
+    advice_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = ("feedback_id", "advice_id", "status", "created_at")
+        read_only_fields = fields
+
+
+class MyFeedbackListSerializer(serializers.ModelSerializer):
+    """GET /api/v1/users/me/feedbacks (#35) list item. No admin-only fields
+    (`memo`, `reviewed_by`) — those belong to #37 only."""
+
+    feedback_id = serializers.UUIDField(source="id", read_only=True)
+    advice_id = serializers.UUIDField(read_only=True)
+
+    class Meta:
+        model = Feedback
+        fields = (
+            "feedback_id",
+            "advice_id",
+            "score",
+            "content",
+            "status",
+            "created_at",
+        )
+        read_only_fields = fields

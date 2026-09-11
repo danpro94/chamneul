@@ -15,16 +15,30 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from accounts.models import ActiveRole, Role, UserRole
+from advisors.models import (
+    AdvisorApplication,
+    AdvisorApplicationStatus,
+    CurrentStatus,
+    DomainCategory,
+    ExperienceBand,
+    IntendedLane,
+)
 from common.taxonomy import ConcernType
 from concerns.models import Assignment, Concern, ConcernStatus, TriageDecision
 from notifications.models import Notification, NotificationType
 
-from .models import Advice, AdviceHistory, AdviceStatus
+from .models import Advice, AdviceHistory, AdviceStatus, Feedback, FeedbackStatus
 
 User = get_user_model()
 
 ADVICES_WRITTEN_URL = "/api/v1/users/me/advices-written"
 ADMIN_ADVICES_URL = "/api/v1/admin/advices"
+RECEIVED_ADVICES_URL = "/api/v1/users/me/advices"
+MY_FEEDBACKS_URL = "/api/v1/users/me/feedbacks"
+
+
+def feedbacks_url(advice_id):
+    return f"/api/v1/advices/{advice_id}/feedbacks"
 
 
 def advice_detail_url(advice_id):
@@ -839,3 +853,281 @@ class AdviceReviewTests(AdviceTestBase):
         self.assertFalse(Notification.objects.exists())
         self.concern.refresh_from_db()
         self.assertEqual(self.concern.status, ConcernStatus.ASSIGNED)
+
+
+class ReceivedAdviceListTests(AdviceTestBase):
+    """SPEC-002 TASK-005 — api.md #26. §6.2's user-facing exposure rule."""
+
+    def other_persons_concern(self):
+        stranger = User.objects.create_user(
+            email="stranger@example.com", nickname="stranger", password="pw12345!"
+        )
+        return Concern.objects.create(
+            author=stranger,
+            concern_summary="남의 고민",
+            concern_type=ConcernType.BURNOUT,
+        )
+
+    def test_list_requires_login(self):
+        response = self.client.get(RECEIVED_ADVICES_URL)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_shows_only_approved_advices_on_own_concerns(self):
+        approved = self.make_advice(status=AdviceStatus.APPROVED)
+        # Same concern, a different advisor, still PENDING -> must not leak.
+        self.make_advice(advisor=self.other_advisor, status=AdviceStatus.PENDING)
+        # An APPROVED advice on someone else's concern -> must not leak.
+        self.make_advice(
+            concern=self.other_persons_concern(),
+            advisor=self.other_advisor,
+            status=AdviceStatus.APPROVED,
+        )
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(RECEIVED_ADVICES_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("page_info", response.data)
+        ids = [item["advice_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(approved.id)])
+
+    def test_list_hides_rejected_and_deleted(self):
+        for advice_status in (AdviceStatus.REJECTED, AdviceStatus.DELETED):
+            concern = Concern.objects.create(
+                author=self.requester,
+                concern_summary=f"{advice_status} 고민",
+                concern_type=ConcernType.BURNOUT,
+            )
+            self.make_advice(concern=concern, status=advice_status)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(RECEIVED_ADVICES_URL)
+        self.assertEqual(response.data["items"], [])
+
+    def test_list_is_feedback_submitted_reflects_feedback_rows(self):
+        without_feedback = self.make_advice(status=AdviceStatus.APPROVED)
+        second_concern = Concern.objects.create(
+            author=self.requester,
+            concern_summary="피드백 남긴 고민",
+            concern_type=ConcernType.BURNOUT,
+        )
+        with_feedback = self.make_advice(
+            concern=second_concern, status=AdviceStatus.APPROVED
+        )
+        Feedback.objects.create(advice=with_feedback, author=self.requester, score=5)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(RECEIVED_ADVICES_URL)
+
+        by_id = {item["advice_id"]: item for item in response.data["items"]}
+        self.assertTrue(by_id[str(with_feedback.id)]["is_feedback_submitted"])
+        self.assertFalse(by_id[str(without_feedback.id)]["is_feedback_submitted"])
+
+    def test_list_uses_advisor_application_display_name(self):
+        AdvisorApplication.objects.create(
+            applicant=self.advisor,
+            display_name="활동명조언가",
+            domain_category=DomainCategory.HR_ORG,
+            experience_band=ExperienceBand.BAND_5_7,
+            current_status=CurrentStatus.EMPLOYED,
+            intended_lane=IntendedLane.EXPERT,
+            career_narrative="경력",
+            advisable_concern_types=[ConcernType.BURNOUT],
+            sample_advice_response="샘플",
+            status=AdvisorApplicationStatus.APPROVED,
+        )
+        self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(RECEIVED_ADVICES_URL)
+
+        item = response.data["items"][0]
+        self.assertEqual(item["advisor_display_name"], "활동명조언가")
+        self.assertNotIn("advisor_user_id", item)
+
+    def test_list_keyword_filters_on_concern_summary(self):
+        self.make_advice(status=AdviceStatus.APPROVED)
+        target_concern = Concern.objects.create(
+            author=self.requester,
+            concern_summary="이직 고민입니다",
+            concern_type=ConcernType.JOB_CHANGE,
+        )
+        target = self.make_advice(concern=target_concern, status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(RECEIVED_ADVICES_URL, {"keyword": "이직"})
+
+        ids = [item["advice_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(target.id)])
+
+    def test_list_date_range_filter(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+        created = advice.created_at.date().isoformat()
+
+        self.client.force_authenticate(self.requester)
+        included = self.client.get(
+            RECEIVED_ADVICES_URL, {"from_date": created, "to_date": created}
+        )
+        self.assertEqual(len(included.data["items"]), 1)
+
+        excluded = self.client.get(RECEIVED_ADVICES_URL, {"from_date": "2099-01-01"})
+        self.assertEqual(len(excluded.data["items"]), 0)
+
+    def test_list_query_count_is_bounded(self):
+        for index in range(5):
+            concern = Concern.objects.create(
+                author=self.requester,
+                concern_summary=f"대량 고민 {index}",
+                concern_type=ConcernType.BURNOUT,
+            )
+            self.make_advice(concern=concern, status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.requester)
+        # Measured, not guessed (see README_AIUSAGE 2026-09-11 TASK-004):
+        # COUNT + the page + one bulk display-name lookup = 3, flat in the
+        # number of rows. An N+1 display-name lookup would make this 7.
+        with self.assertNumQueries(3):
+            response = self.client.get(RECEIVED_ADVICES_URL)
+        self.assertEqual(response.data["page_info"]["total"], 5)
+
+
+class FeedbackCreateTests(AdviceTestBase):
+    """SPEC-002 TASK-005 — api.md #34."""
+
+    def setUp(self):
+        super().setUp()
+        self.approved_advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+    def test_create_requires_login(self):
+        response = self.client.post(
+            feedbacks_url(self.approved_advice.id), {"score": 5}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_create_success(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            feedbacks_url(self.approved_advice.id),
+            {"score": 4, "content": "방향을 잡는 데 도움이 됐습니다."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], FeedbackStatus.SUBMITTED)
+        self.assertEqual(response.data["advice_id"], str(self.approved_advice.id))
+
+        feedback = Feedback.objects.get(pk=response.data["feedback_id"])
+        self.assertEqual(feedback.author, self.requester)
+        self.assertEqual(feedback.score, 4)
+
+    def test_create_on_pending_advice_forbidden(self):
+        # §6.2: a non-APPROVED advice is not visible to the user at all, so
+        # it cannot be the target of feedback either.
+        pending = self.make_advice(advisor=self.other_advisor)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            feedbacks_url(pending.id), {"score": 5}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_by_non_owner_forbidden(self):
+        bystander = User.objects.create_user(
+            email="bystander2@example.com", nickname="bystander2", password="pw12345!"
+        )
+
+        self.client.force_authenticate(bystander)
+        response = self.client.post(
+            feedbacks_url(self.approved_advice.id), {"score": 5}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_duplicate_returns_409(self):
+        Feedback.objects.create(
+            advice=self.approved_advice, author=self.requester, score=3
+        )
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            feedbacks_url(self.approved_advice.id), {"score": 5}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_create_rejects_out_of_range_score(self):
+        self.client.force_authenticate(self.requester)
+        for invalid_score in (0, 6):
+            response = self.client.post(
+                feedbacks_url(self.approved_advice.id),
+                {"score": invalid_score},
+                format="json",
+            )
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_400_BAD_REQUEST,
+                msg=f"score={invalid_score} should be rejected",
+            )
+
+    def test_create_on_missing_advice_returns_404(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            feedbacks_url("00000000-0000-7000-8000-000000000000"),
+            {"score": 5},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class MyFeedbackListTests(AdviceTestBase):
+    """SPEC-002 TASK-005 — api.md #35."""
+
+    def test_list_requires_login(self):
+        response = self.client.get(MY_FEEDBACKS_URL)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_returns_only_own_feedbacks(self):
+        mine_advice = self.make_advice(status=AdviceStatus.APPROVED)
+        mine = Feedback.objects.create(
+            advice=mine_advice, author=self.requester, score=5, content="좋았어요"
+        )
+
+        stranger = User.objects.create_user(
+            email="stranger2@example.com", nickname="stranger2", password="pw12345!"
+        )
+        stranger_concern = Concern.objects.create(
+            author=stranger,
+            concern_summary="남의 고민",
+            concern_type=ConcernType.BURNOUT,
+        )
+        stranger_advice = self.make_advice(
+            concern=stranger_concern,
+            advisor=self.other_advisor,
+            status=AdviceStatus.APPROVED,
+        )
+        Feedback.objects.create(advice=stranger_advice, author=stranger, score=2)
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(MY_FEEDBACKS_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("page_info", response.data)
+        ids = [item["feedback_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(mine.id)])
+        self.assertEqual(response.data["items"][0]["content"], "좋았어요")
+
+    def test_list_query_count_is_bounded(self):
+        for index in range(5):
+            concern = Concern.objects.create(
+                author=self.requester,
+                concern_summary=f"피드백 고민 {index}",
+                concern_type=ConcernType.BURNOUT,
+            )
+            advice = self.make_advice(concern=concern, status=AdviceStatus.APPROVED)
+            Feedback.objects.create(
+                advice=advice, author=self.requester, score=index % 5 + 1
+            )
+
+        self.client.force_authenticate(self.requester)
+        # Measured: COUNT + the page. No derived fields here, so nothing else.
+        with self.assertNumQueries(2):
+            response = self.client.get(MY_FEEDBACKS_URL)
+        self.assertEqual(response.data["page_info"]["total"], 5)
