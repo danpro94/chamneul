@@ -130,6 +130,41 @@ class AdviceDetailWithReasonSerializer(AdviceDetailSerializer):
         read_only_fields = fields
 
 
+class AdviceUpdateSerializer(serializers.ModelSerializer):
+    """PATCH /api/v1/advices/{advice-id} (#29) request body — every field is
+    optional (partial update). `submit` maps onto the model's `is_submitted`.
+    """
+
+    submit = serializers.BooleanField(source="is_submitted", required=False)
+
+    class Meta:
+        model = Advice
+        fields = (
+            "directional_guidance",
+            "reflective_questions",
+            "considerations",
+            "out_of_scope_flag",
+            "submit",
+        )
+        extra_kwargs = {
+            "directional_guidance": {"required": False},
+            "reflective_questions": {"required": False},
+            "considerations": {"required": False},
+            "out_of_scope_flag": {"required": False},
+        }
+
+
+class AdviceUpdateResultSerializer(serializers.ModelSerializer):
+    """#29 response — api.md #29 field set."""
+
+    advice_id = serializers.UUIDField(source="id", read_only=True)
+
+    class Meta:
+        model = Advice
+        fields = ("advice_id", "status", "version", "updated_at")
+        read_only_fields = fields
+
+
 class AdviceWrittenQuerySerializer(serializers.Serializer):
     """#31 query params. Validating them here turns a malformed status or
     date into 400 instead of a silently empty page."""

@@ -6,6 +6,45 @@
 
 ---
 
+## 2026-09-11 — SPEC-002/TASK-003: 조언 수정+삭제 (api.md #29·#30) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdviceUpdateTests`(10) + `AdviceDeleteTests`(7) 총 17케이스 추가(본문 수정 시 version+히스토리, `submit` 단독 토글은 무변화, REVIEWING 허용, APPROVED/DELETED 409, 타인 403, 없는 advice 404, 삭제 204+상태전이, 삭제 후 재작성 가능(엔드포인트 경유)) → 실행해 15개 실패 확인(PATCH/DELETE 라우트 없음 → 405/404 혼재).
+2. 최소 구현: `advice/services.py`에 `_get_own_editable_advice()`(조회+소유권 403+편집가능상태 409 공용 검사) / `update_advice()`(본문 변경 시에만 `AdviceHistory` 스냅샷 + `version` 증가, `transaction.atomic`) / `delete_advice()`. `advice/serializers.py`에 `AdviceUpdateSerializer`(`submit`→`is_submitted` source 매핑) + `AdviceUpdateResultSerializer`. `AdviceDetailView`에 `patch`/`delete` 추가, `get_permissions()`로 GET은 `IsAuthenticated`만·PATCH/DELETE는 `IsActiveAdvisor` 추가.
+3. 4종 검증 — 전체 108/108 통과.
+4. 시각 확인: **TASK-002의 계정 오염 교훈을 반영**해, 사용 전 역할을 명시적으로 조회·출력(`roles held: ['ADVISOR']`, `is_superuser: False`)한 신규 계정으로 재현. 본문 수정 → `version` 2 스크린샷, 삭제 → `status=DELETED` 스크린샷, 그리고 `AdviceHistory` row를 DB에서 직접 조회해 수정 **전** 본문이 정확히 `version=1`로 스냅샷됐음을 확인.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-11)
+
+TASK-003 진행 승인.
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice.tests.AdviceUpdateTests advice.tests.AdviceDeleteTests` → 구현 전 15 fail → 구현 후 **17/17 OK**
+* `manage.py test` (전체) → **108/108 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: PATCH 200(version 2) / DELETE 204 / 재조회 시 status=DELETED, `AdviceHistory.directional_guidance`가 수정 전 문구와 일치함을 DB에서 직접 확인 — 스크린샷 2장 Owner 전송
+
+### 잔여 리스크
+
+1. **없음 (이번 TASK 한정)** — TASK-002의 계정 오염 교훈을 실제로 적용해 재발 방지.
+2. TASK-004(리뷰 승인/반려)부터는 `AdviceHistory`가 아니라 `Notification`·`Concern.status`가 얽히므로, 여기서 검증한 "본문 변경 여부로 트리거 분기" 패턴이 그대로 재사용되지는 않음 — 별도 판정 로직 필요.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-004(#32 admin 리뷰 목록 + #33 승인/반려, 낙관적 잠금 412 최초 도입) 착수.
+
+---
+
 ## 2026-09-11 — SPEC-002/TASK-002: 조언 상세 3주체 분기 (api.md #27) [위임]
 
 ### 작업

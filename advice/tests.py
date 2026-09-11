@@ -18,7 +18,7 @@ from accounts.models import ActiveRole, Role, UserRole
 from common.taxonomy import ConcernType
 from concerns.models import Assignment, Concern, ConcernStatus, TriageDecision
 
-from .models import Advice, AdviceStatus
+from .models import Advice, AdviceHistory, AdviceStatus
 
 User = get_user_model()
 
@@ -412,3 +412,190 @@ class AdviceDetailTests(AdviceTestBase):
 
         self.assertNotIn("advisor_user_id", response.data)
         self.assertNotIn("email", response.data)
+
+
+class AdviceUpdateTests(AdviceTestBase):
+    """SPEC-002 TASK-003 — api.md #29."""
+
+    def test_update_requires_login(self):
+        advice = self.make_advice()
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "수정된 본문"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_update_requires_active_advisor_role(self):
+        # Owns the advice, but hasn't switched into ADVISOR (api.md §2 Roles
+        # — same gate as #28/#31).
+        passive = self.make_advisor("passive2@example.com", "passive2", active=False)
+        advice = self.make_advice(advisor=passive)
+
+        self.client.force_authenticate(passive)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "수정된 본문"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_update_body_change_bumps_version_and_snapshots_previous_body(self):
+        advice = self.make_advice(directional_guidance="원래 본문")
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "고친 본문"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["version"], 2)
+
+        advice.refresh_from_db()
+        self.assertEqual(advice.version, 2)
+        self.assertEqual(advice.directional_guidance, "고친 본문")
+
+        history = AdviceHistory.objects.get(advice=advice)
+        self.assertEqual(history.version, 1)
+        self.assertEqual(history.directional_guidance, "원래 본문")
+        self.assertEqual(history.edited_by, self.advisor)
+
+    def test_update_submit_only_does_not_bump_version_or_snapshot(self):
+        # Owner decision 2026-09-11 (spec.md §7-2): version is the body-
+        # history counter — toggling `submit` alone must not touch it.
+        advice = self.make_advice(is_submitted=False)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id), {"submit": True}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["version"], 1)
+        advice.refresh_from_db()
+        self.assertTrue(advice.is_submitted)
+        self.assertFalse(AdviceHistory.objects.filter(advice=advice).exists())
+
+    def test_update_allowed_in_reviewing_state(self):
+        advice = self.make_advice(status=AdviceStatus.REVIEWING)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "심사중 수정"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_update_rejected_when_approved(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "승인 후 수정 시도"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_update_rejected_when_deleted(self):
+        advice = self.make_advice(status=AdviceStatus.DELETED)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "삭제 후 수정 시도"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_update_forbidden_for_non_author(self):
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.other_advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "남의 조언 수정 시도"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_update_nonexistent_advice_returns_404(self):
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url("00000000-0000-7000-8000-000000000000"),
+            {"directional_guidance": "본문"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class AdviceDeleteTests(AdviceTestBase):
+    """SPEC-002 TASK-003 — api.md #30."""
+
+    def test_delete_requires_login(self):
+        advice = self.make_advice()
+        response = self.client.delete(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_delete_pending_succeeds(self):
+        advice = self.make_advice(status=AdviceStatus.PENDING)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.delete(advice_detail_url(advice.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        advice.refresh_from_db()
+        self.assertEqual(advice.status, AdviceStatus.DELETED)
+
+    def test_delete_reviewing_succeeds(self):
+        advice = self.make_advice(status=AdviceStatus.REVIEWING)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.delete(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_delete_approved_returns_409(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.delete(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_delete_already_deleted_returns_409(self):
+        advice = self.make_advice(status=AdviceStatus.DELETED)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.delete(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_delete_forbidden_for_non_author(self):
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.other_advisor)
+        response = self.client.delete(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_nonexistent_returns_404(self):
+        self.client.force_authenticate(self.advisor)
+        response = self.client.delete(
+            advice_detail_url("00000000-0000-7000-8000-000000000000")
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_delete_then_recreate_is_allowed(self):
+        # Ties back to AC-1: the (concern, advisor) partial unique excludes
+        # DELETED, so a withdrawn advice must not block a rewrite — proven
+        # here through the real DELETE endpoint, not a direct ORM write.
+        advice = self.make_advice()
+        self.client.force_authenticate(self.advisor)
+        self.client.delete(advice_detail_url(advice.id))
+
+        response = self.client.post(
+            self.advices_url(),
+            self.create_payload(directional_guidance="다시 작성한 조언"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)

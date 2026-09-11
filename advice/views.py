@@ -18,6 +18,8 @@ from .serializers import (
     AdviceCreateSerializer,
     AdviceDetailSerializer,
     AdviceDetailWithReasonSerializer,
+    AdviceUpdateResultSerializer,
+    AdviceUpdateSerializer,
     AdviceWrittenListSerializer,
     AdviceWrittenQuerySerializer,
 )
@@ -66,14 +68,18 @@ class AdvicesWrittenView(APIView):
 
 
 class AdviceDetailView(APIView):
-    """GET (#27) — /api/v1/advices/{advice-id}.
+    """GET (#27) / PATCH (#29) / DELETE (#30) — /api/v1/advices/{advice-id}.
 
-    Three-audience visibility (spec.md §7-4, CLAUDE.md §6.2): the author and
-    admin see every status and the reject reason; the concern owner sees only
-    an APPROVED advice and never the reject reason; anyone else gets 403.
+    GET is open to the three audiences resolved by get_visible_advice()
+    (spec.md §7-4, CLAUDE.md §6.2). PATCH/DELETE additionally require
+    active_role=ADVISOR (api.md #29/#30's "Advisor" permission label — the
+    same gate #28/#31 use), so the permission classes differ by method.
     """
 
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.request.method in ("PATCH", "DELETE"):
+            return [IsAuthenticated(), IsActiveAdvisor()]
+        return [IsAuthenticated()]
 
     def get(self, request, advice_id):
         advice, viewer_role = services.get_visible_advice(advice_id, request.user)
@@ -83,3 +89,15 @@ class AdviceDetailView(APIView):
             else AdviceDetailSerializer
         )
         return Response(serializer_class(advice).data)
+
+    def patch(self, request, advice_id):
+        serializer = AdviceUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        advice = services.update_advice(
+            advice_id, request.user, serializer.validated_data
+        )
+        return Response(AdviceUpdateResultSerializer(advice).data)
+
+    def delete(self, request, advice_id):
+        services.delete_advice(advice_id, request.user)
+        return Response(status=204)

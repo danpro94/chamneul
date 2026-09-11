@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-11 (SPEC-002/TASK-002 커밋 기준. 이전 실측 2026-09-11 TASK-001 / 2026-09-10 SPEC-001 종료)
+> 마지막 실측: 2026-09-11 (SPEC-002/TASK-003 커밋 기준. 이전 실측 2026-09-11 TASK-001~002 / 2026-09-10 SPEC-001 종료)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | M4-5 완료 + M4-6 진행 중(advice 3/13), **29/44 엔드포인트** |
+| M4 진행률 | M4-5 완료 + M4-6 진행 중(advice 5/13), **31/44 엔드포인트** |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (29 / 44)
+## 2. 구현된 엔드포인트 (31 / 44)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls` 4개 include.
 
@@ -58,15 +58,17 @@
 | 28 | POST | `/api/v1/concerns/{concern-id}/advices` | [advice/views.py](../../advice/views.py) `AdviceCreateView.post` (SPEC-002/TASK-001) |
 | 31 | GET | `/api/v1/users/me/advices-written` | `AdvicesWrittenView.get` (SPEC-002/TASK-001) |
 | 27 | GET | `/api/v1/advices/{advice-id}` | `AdviceDetailView.get` (SPEC-002/TASK-002) |
+| 29 | PATCH | `/api/v1/advices/{advice-id}` | `AdviceDetailView.patch` (SPEC-002/TASK-003) |
+| 30 | DELETE | `/api/v1/advices/{advice-id}` | `AdviceDetailView.delete` (SPEC-002/TASK-003) |
 | 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
 
-## 3. 미구현 엔드포인트 (15 / 44)
+## 3. 미구현 엔드포인트 (13 / 44)
 
 `notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`(#16~25)는 전량 구현 완료, `advice`는 #28·#31만 구현됨(실측: `git ls-files`, `config/urls.py`).
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-6 advice + feedback (남은 10개) | #26·#29·#30·#32~#38 | §4-26~38 |
+| M4-6 advice + feedback (남은 8개) | #26·#32~#38 | §4-26~38 |
 | M4-7 notifications | #39~41 (3개) | §4-39~41 |
 | M4-8 admin roles | #42~43 (2개) | §4-42~43 |
 
@@ -83,7 +85,8 @@
 
 * [x] TASK-001 — 조언 작성(#28) + 내가 쓴 조언 목록(#31). 공용 `AdviceTestBase`로 fixture 1곳 집약, `IsActiveAdvisor` 재사용, 부분 유니크(DELETED 제외) 덕에 삭제 후 재작성 허용 확인. 테스트 18종(선-실패 16개 확인) → 검증 4종 통과(**80/80**) → 스크린샷 3장 확인 → 커밋.
 * [x] TASK-002 — 조언 상세(#27) 3주체 분기. `get_visible_advice()`가 (작성자/관리자/고민 작성자) 우선순위로 판정 — ADMIN이 판정 순서상 고민 작성자보다 먼저 걸린다는 점을 데모 중 실측(같은 계정이 admin+owner를 겸하면 admin 시야로 응답됨, 버그 아님). `AdviceDetailSerializer`/`AdviceDetailWithReasonSerializer` 2종(상속)으로 `reject_reason` 유무만 분리. 테스트 11종(선-실패 10개 확인) → 검증 4종 통과(**91/91**) → 순수 사용자 계정으로 재현한 스크린샷 3장 확인 → 커밋.
-* [ ] **다음 최소 작업 단위**: TASK-003 — 조언 수정(#29, version+히스토리) + 삭제(#30).
+* [x] TASK-003 — 조언 수정(#29) + 삭제(#30). `_get_own_editable_advice()`로 조회·소유권(403)·편집가능상태(409, PENDING/REVIEWING만) 공용 검사. `version`·`AdviceHistory`는 본문 필드 변경 시에만 갱신(§7-2 결정) — `submit` 단독 토글은 건드리지 않음. PATCH/DELETE만 `IsActiveAdvisor` 추가 게이트(GET은 제외, `get_permissions()`로 메서드별 분기). 테스트 17종(선-실패 15개 확인) → 검증 4종 통과(**108/108**) → 스크린샷 2장 + `AdviceHistory` DB 직접 확인(수정 전 본문이 정확히 v1로 보존) → 커밋.
+* [ ] **다음 최소 작업 단위**: TASK-004 — admin 리뷰 목록(#32) + 승인/반려(#33) ★ 핵심(낙관적 잠금 412 최초 사례).
 
 <details>
 <summary>SPEC-001-concerns-api — 완료 (2026-09-10, PR #2 머지)</summary>

@@ -6,13 +6,29 @@ queryset shapes the list endpoints need.
 """
 
 from django.core.exceptions import PermissionDenied
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 
 from common.exceptions import Conflict
 from concerns.models import Assignment, Concern
 
-from .models import Advice, AdviceStatus
+from .models import Advice, AdviceHistory, AdviceStatus
+
+# States in which the author may still change or withdraw an advice
+# (api.md #29/#30) — anything else (APPROVED/REJECTED/DELETED) is terminal
+# for the author and returns 409.
+_EDITABLE_STATUSES = (AdviceStatus.PENDING, AdviceStatus.REVIEWING)
+
+# The body fields that make up an AdviceHistory snapshot (model.md §3.9).
+# `is_submitted` is deliberately excluded — spec.md §7-2: it is a workflow
+# flag, not part of the advice's body history, so toggling it alone must not
+# create a snapshot or bump `version`.
+_BODY_FIELDS = (
+    "directional_guidance",
+    "reflective_questions",
+    "considerations",
+    "out_of_scope_flag",
+)
 
 
 def create_advice(concern_id, advisor, validated_data) -> Advice:
@@ -96,3 +112,58 @@ def get_visible_advice(advice_id, user) -> tuple[Advice, str]:
     if advice.concern.author_id == user.id and advice.status == AdviceStatus.APPROVED:
         return advice, VIEWER_OWNER
     raise PermissionDenied("조회 권한이 없습니다.")
+
+
+def _get_own_editable_advice(advice_id, actor) -> Advice:
+    """Shared lookup for #29/#30: 404 if missing (existence is not hidden —
+    same reasoning as #27), 403 if the caller didn't write it, 409 if its
+    status is no longer editable (api.md #29/#30's own status-code sets)."""
+    advice = get_object_or_404(Advice, pk=advice_id)
+    if advice.advisor_id != actor.id:
+        raise PermissionDenied("작성자만 수정할 수 있습니다.")
+    if advice.status not in _EDITABLE_STATUSES:
+        raise Conflict("현재 상태에서는 변경할 수 없습니다.")
+    return advice
+
+
+def update_advice(advice_id, actor, validated_data) -> Advice:
+    """#29 — partial update. `version` increments, and a history row is
+    snapshotted, only when a body field actually changes (Owner decision
+    2026-09-11, spec.md §7-2) — a lone `submit` toggle does neither, since
+    `version` is the body-history counter (CLAUDE.md §6.7).
+    """
+    advice = _get_own_editable_advice(advice_id, actor)
+
+    body_changed = any(
+        field in validated_data and getattr(advice, field) != validated_data[field]
+        for field in _BODY_FIELDS
+    )
+
+    with transaction.atomic():
+        if body_changed:
+            # Snapshot the *pre-update* body under the *current* (soon to be
+            # previous) version number (CLAUDE.md §6.7).
+            AdviceHistory.objects.create(
+                advice=advice,
+                version=advice.version,
+                edited_by=actor,
+                **{field: getattr(advice, field) for field in _BODY_FIELDS},
+            )
+            advice.version += 1
+        for field in _BODY_FIELDS:
+            if field in validated_data:
+                setattr(advice, field, validated_data[field])
+        if "is_submitted" in validated_data:
+            advice.is_submitted = validated_data["is_submitted"]
+        advice.save()
+    return advice
+
+
+def delete_advice(advice_id, actor) -> None:
+    """#30 — soft delete: status -> DELETED, nothing else. The row stays (the
+    partial unique on (concern, advisor) excludes DELETED, model.md §3.8, so
+    this deliberately does not block the advisor from writing a fresh advice
+    on the same concern)."""
+    advice = _get_own_editable_advice(advice_id, actor)
+    advice.status = AdviceStatus.DELETED
+    advice.save(update_fields=["status"])
