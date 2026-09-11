@@ -10,14 +10,16 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.pagination import StandardPagination
-from common.permissions import IsActiveAdvisor
+from common.permissions import IsActiveAdvisor, IsAdmin
 
 from . import services
 from .serializers import (
+    AdminAdviceListSerializer,
     AdviceCreateResultSerializer,
     AdviceCreateSerializer,
     AdviceDetailSerializer,
     AdviceDetailWithReasonSerializer,
+    AdviceReviewSerializer,
     AdviceUpdateResultSerializer,
     AdviceUpdateSerializer,
     AdviceWrittenListSerializer,
@@ -101,3 +103,57 @@ class AdviceDetailView(APIView):
     def delete(self, request, advice_id):
         services.delete_advice(advice_id, request.user)
         return Response(status=204)
+
+
+class AdminAdviceListView(APIView):
+    """GET (#32) — /api/v1/admin/advices. Drafts never appear here (spec.md
+    §7-1, Owner decision 2026-09-11) regardless of the `status` filter."""
+
+    permission_classes = [IsAdmin]
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        queryset = services.list_advices_for_admin_review(
+            request.query_params.get("status")
+        )
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = AdminAdviceListSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class AdminAdviceReviewView(APIView):
+    """PATCH (#33) — /api/v1/admin/advices/{advice-id}/review.
+
+    Approval/rejection plus their side effects (concern transition,
+    notification) are one atomic unit in services.review_advice.
+    """
+
+    permission_classes = [IsAdmin]
+
+    def patch(self, request, advice_id):
+        serializer = AdviceReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        advice, concern = services.review_advice(
+            advice_id,
+            request.user,
+            decision=data["decision"],
+            reason=data["reason"],
+            expected_version=data["expected_version"],
+        )
+        return Response(
+            {
+                "advice_id": str(advice.id),
+                "status": advice.status,
+                "review": {
+                    "decision": data["decision"],
+                    "reviewed_by": str(advice.reviewed_by_id),
+                    "reviewed_at": advice.reviewed_at,
+                    "reason": advice.reject_reason,
+                },
+                "concern_id": str(concern.id),
+                "concern_status": concern.status,
+                "version": advice.version,
+            }
+        )

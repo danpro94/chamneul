@@ -6,6 +6,45 @@
 
 ---
 
+## 2026-09-11 — SPEC-002/TASK-004: admin 리뷰 목록+승인/반려 (api.md #32·#33) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdminAdviceListTests`(4) + `AdviceReviewTests`(13) 총 17케이스 추가(초안 항상 제외, 승인 시 상태+concern 전이+알림, 반려 시 알림+concern 불변, 사유 없는 반려 422, 버전 불일치 412, 이미 종결된 advice/초안 리뷰 409, CLOSED/ANSWERED concern 불변, 실패 시 부분 상태 없음) → 실행해 14개 실패 확인.
+2. 최소 구현: `common/exceptions.py`에 **`PreconditionFailed`(412) 신규 추가** — 이 프로젝트 첫 낙관적 잠금 예외(409와 구분: "요청 자체는 멀쩡한데 읽은 시점 이후 바뀌었다"). `advice/services.py`에 `list_advices_for_admin_review()`(초안 무조건 제외) + `review_advice()`(advice·concern 모두 `select_for_update()`, 404→409(초안/상태)→412(버전)→422(반려사유) 순서로 검사 후 상태 전이+알림을 한 트랜잭션에). `AdminAdviceListSerializer`·`AdviceReviewSerializer` + 뷰 2종 + URL 2개 추가.
+3. 4종 검증 — 도중 `assertNumQueries` 기대값을 2로 예상했다가 `IsAdmin`이 관리자 확인용 쿼리 1개를 추가로 쓴다는 걸 실측하고 3으로 정정(TASK-003 이전에도 concerns 앱에서 동일 패턴 발생 — 이제 반복되는 실수임을 인지).
+4. 시각 확인: **역할을 미리 조회·출력**하는 절차를 다시 적용해(`admin roles: ['ADMIN']`, `advisor roles: ['ADVISOR']`) 오염 없는 계정 확인 후 진행. 리뷰 대기열 → 버전 불일치 412 → 정상 승인 200(`concern_status: "ANSWERED"` 응답 포함) 스크린샷 3장 + DB로 `ADVICE_APPROVED` 알림 row 직접 확인.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-11)
+
+TASK-004 진행 승인. (겸하여: 낙관적 잠금 개념 설명 요청에 답변, PR 시점은 SPEC-002 TASK-007 완료 후로 권고·확인)
+
+### 생성된 산출물
+
+수정: `common/exceptions.py`(`PreconditionFailed` 추가), `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice.tests.AdminAdviceListTests advice.tests.AdviceReviewTests` → 구현 전 14 fail → 구현 후 **17/17 OK** (도중 쿼리 수 기대값 1건 보정)
+* `manage.py test` (전체) → **125/125 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: 대기열 200 / 412(stale version) / 승인 200(concern_status=ANSWERED) 스크린샷 3장 + `Notification(type=ADVICE_APPROVED, recipient=고민 작성자)` DB 직접 확인
+
+### 잔여 리스크
+
+1. **동시성은 코드로만 방어, 부하 테스트 미수행** — SPEC-001 TASK-005와 동일한 한계. `select_for_update()`의 실제 경합 동작 검증은 Phase 2 스코프 밖.
+2. **`assertNumQueries` 기대값을 매번 한 번 틀리고 보정하는 패턴이 3회째 반복**(concerns 앱 TASK-004, 여기)됨 — 원인은 매번 다른 permission 클래스가 DB 쿼리를 쓰는지 여부(`IsAdmin`은 쓰고 `IsActiveAdvisor`는 안 씀)를 사전에 확인하지 않고 추정한 것. TASK-005부터는 구현 직후 실제 쿼리 로그를 먼저 찍어보고 기대값을 정하는 순서로 바꾸는 것을 권고.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-005(#26 받은 조언 목록 + #34·#35 피드백 작성/내 목록) 착수.
+
+---
+
 ## 2026-09-11 — SPEC-002/TASK-003: 조언 수정+삭제 (api.md #29·#30) [위임]
 
 ### 작업

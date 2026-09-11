@@ -17,16 +17,22 @@ from rest_framework.test import APIClient
 from accounts.models import ActiveRole, Role, UserRole
 from common.taxonomy import ConcernType
 from concerns.models import Assignment, Concern, ConcernStatus, TriageDecision
+from notifications.models import Notification, NotificationType
 
 from .models import Advice, AdviceHistory, AdviceStatus
 
 User = get_user_model()
 
 ADVICES_WRITTEN_URL = "/api/v1/users/me/advices-written"
+ADMIN_ADVICES_URL = "/api/v1/admin/advices"
 
 
 def advice_detail_url(advice_id):
     return f"/api/v1/advices/{advice_id}"
+
+
+def advice_review_url(advice_id):
+    return f"/api/v1/admin/advices/{advice_id}/review"
 
 
 class AdviceTestBase(TestCase):
@@ -599,3 +605,237 @@ class AdviceDeleteTests(AdviceTestBase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+
+class AdminAdviceListTests(AdviceTestBase):
+    """SPEC-002 TASK-004 — api.md #32."""
+
+    def test_list_requires_login(self):
+        response = self.client.get(ADMIN_ADVICES_URL)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_list_requires_admin(self):
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(ADMIN_ADVICES_URL)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_list_default_excludes_drafts(self):
+        # Owner decision 2026-09-11 (spec.md §7-1): an advisor's unsubmitted
+        # draft must never reach the review queue, regardless of status.
+        submitted = self.make_advice(is_submitted=True)
+        self.make_advice(
+            concern=Concern.objects.create(
+                author=self.requester,
+                concern_summary="초안만 있는 고민",
+                concern_type=ConcernType.JOB_CHANGE,
+            ),
+            is_submitted=False,
+        )
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_ADVICES_URL)
+
+        ids = [item["advice_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(submitted.id)])
+
+    def test_list_status_filter_still_excludes_drafts(self):
+        approved = self.make_advice(status=AdviceStatus.APPROVED, is_submitted=True)
+        draft_other_concern = Concern.objects.create(
+            author=self.requester,
+            concern_summary="다른 고민",
+            concern_type=ConcernType.JOB_CHANGE,
+        )
+        # A draft cannot naturally reach APPROVED through the API, but an
+        # admin could hand-edit one in Django Admin — the filter must still
+        # exclude it here.
+        self.make_advice(
+            concern=draft_other_concern,
+            advisor=self.other_advisor,
+            status=AdviceStatus.APPROVED,
+            is_submitted=False,
+        )
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_ADVICES_URL, {"status": AdviceStatus.APPROVED})
+
+        ids = [item["advice_id"] for item in response.data["items"]]
+        self.assertEqual(ids, [str(approved.id)])
+
+    def test_list_query_count_is_bounded(self):
+        for index in range(5):
+            concern = Concern.objects.create(
+                author=self.requester,
+                concern_summary=f"대량 고민 {index}",
+                concern_type=ConcernType.BURNOUT,
+            )
+            self.make_advice(concern=concern, advisor=self.other_advisor)
+
+        self.client.force_authenticate(self.admin)
+        # IsAdmin adds one query (UserRole lookup) beyond the COUNT + page
+        # pair — unlike IsActiveAdvisor, which only reads an in-memory
+        # attribute. Fixed at 3 regardless of row count (TEST_CRITERIA §3).
+        with self.assertNumQueries(3):
+            response = self.client.get(ADMIN_ADVICES_URL)
+        self.assertEqual(response.data["page_info"]["total"], 5)
+
+
+class AdviceReviewTests(AdviceTestBase):
+    """SPEC-002 TASK-004 — api.md #33, the atomic side-effect core."""
+
+    def review_payload(self, **overrides):
+        payload = {"decision": "approved", "expected_version": 1}
+        payload.update(overrides)
+        return payload
+
+    def test_review_requires_admin(self):
+        advice = self.make_advice()
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_review_url(advice.id), self.review_payload(), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_approve_transitions_advice_and_concern_and_notifies(self):
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id), self.review_payload(), format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], AdviceStatus.APPROVED)
+        self.assertEqual(response.data["concern_status"], ConcernStatus.ANSWERED)
+        self.assertEqual(response.data["review"]["decision"], "approved")
+        self.assertEqual(response.data["review"]["reviewed_by"], str(self.admin.id))
+
+        advice.refresh_from_db()
+        self.assertEqual(advice.status, AdviceStatus.APPROVED)
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ANSWERED)
+
+        notification = Notification.objects.get(recipient=self.requester)
+        self.assertEqual(notification.type, NotificationType.ADVICE_APPROVED)
+
+    def test_approve_does_not_revert_closed_concern(self):
+        # Owner decision 2026-09-11 (spec.md §7-3): §6.6 has no
+        # CLOSED->ANSWERED edge, so approval must not touch a CLOSED concern.
+        self.concern.status = ConcernStatus.CLOSED
+        self.concern.save(update_fields=["status"])
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.admin)
+        self.client.patch(
+            advice_review_url(advice.id), self.review_payload(), format="json"
+        )
+
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.CLOSED)
+
+    def test_approve_leaves_already_answered_concern_unchanged(self):
+        self.concern.status = ConcernStatus.ANSWERED
+        self.concern.save(update_fields=["status"])
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id), self.review_payload(), format="json"
+        )
+
+        self.assertEqual(response.data["concern_status"], ConcernStatus.ANSWERED)
+
+    def test_reject_notifies_advisor_and_leaves_concern_unchanged(self):
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id),
+            self.review_payload(decision="rejected", reason="근거 보강이 필요합니다."),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], AdviceStatus.REJECTED)
+
+        advice.refresh_from_db()
+        self.assertEqual(advice.reject_reason, "근거 보강이 필요합니다.")
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ASSIGNED)
+
+        notification = Notification.objects.get(recipient=self.advisor)
+        self.assertEqual(notification.type, NotificationType.ADVICE_REJECTED)
+
+    def test_reject_without_reason_returns_422(self):
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id),
+            self.review_payload(decision="rejected"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    def test_version_mismatch_returns_412(self):
+        advice = self.make_advice()
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id),
+            self.review_payload(expected_version=99),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_412_PRECONDITION_FAILED)
+
+    def test_reviewing_already_approved_advice_returns_409(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id), self.review_payload(), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_reviewing_draft_returns_409(self):
+        # Owner decision 2026-09-11 (spec.md §7-1): a draft is not eligible
+        # for review even if someone calls this endpoint directly.
+        advice = self.make_advice(is_submitted=False)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id), self.review_payload(), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_reviewing_state_is_allowed(self):
+        advice = self.make_advice(status=AdviceStatus.REVIEWING)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id), self.review_payload(), format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_nonexistent_advice_returns_404(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url("00000000-0000-7000-8000-000000000000"),
+            self.review_payload(),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_failed_review_leaves_no_partial_state(self):
+        # 409 path (already APPROVED): no second notification, no re-review.
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+
+        self.client.force_authenticate(self.admin)
+        self.client.patch(
+            advice_review_url(advice.id),
+            self.review_payload(expected_version=1),
+            format="json",
+        )
+
+        self.assertFalse(Notification.objects.exists())
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ASSIGNED)

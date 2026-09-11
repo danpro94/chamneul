@@ -19,4 +19,14 @@ urlpatterns = [
         views.AdviceDetailView.as_view(),
         name="advice-detail",
     ),
+    path(
+        "admin/advices",
+        views.AdminAdviceListView.as_view(),
+        name="admin-advices",
+    ),
+    path(
+        "admin/advices/<uuid:advice_id>/review",
+        views.AdminAdviceReviewView.as_view(),
+        name="admin-advice-review",
+    ),
 ]

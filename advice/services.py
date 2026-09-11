@@ -8,11 +8,20 @@ queryset shapes the list endpoints need.
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
-from common.exceptions import Conflict
-from concerns.models import Assignment, Concern
+from common.exceptions import Conflict, PreconditionFailed, UnprocessableEntity
+from concerns.models import Assignment, Concern, ConcernStatus
 
 from .models import Advice, AdviceHistory, AdviceStatus
+
+# Decisions #33 accepts (api.md #33 request field `decision`).
+DECISION_APPROVED = "approved"
+DECISION_REJECTED = "rejected"
+
+# States a submitted advice may still be reviewed from (api.md #33: "허용
+# 전이: PENDING|REVIEWING → APPROVED|REJECTED").
+_REVIEWABLE_STATUSES = (AdviceStatus.PENDING, AdviceStatus.REVIEWING)
 
 # States in which the author may still change or withdraw an advice
 # (api.md #29/#30) — anything else (APPROVED/REJECTED/DELETED) is terminal
@@ -167,3 +176,85 @@ def delete_advice(advice_id, actor) -> None:
     advice = _get_own_editable_advice(advice_id, actor)
     advice.status = AdviceStatus.DELETED
     advice.save(update_fields=["status"])
+
+
+def list_advices_for_admin_review(status_filter=None):
+    """Queryset for #32 — the admin review queue.
+
+    Drafts (is_submitted=False) never appear here, under any status filter
+    (Owner decision 2026-09-11, spec.md §7-1) — an advisor who hasn't
+    submitted must not be reviewable, and review_advice() enforces the same
+    rule again so a direct #33 call cannot bypass it either.
+    """
+    queryset = Advice.objects.filter(is_submitted=True).order_by("-created_at")
+    if status_filter:
+        return queryset.filter(status=status_filter)
+    return queryset.filter(status=AdviceStatus.PENDING)
+
+
+def review_advice(advice_id, actor, decision, reason, expected_version) -> tuple[Advice, Concern]:
+    """#33 — approve or reject a submitted advice, atomically.
+
+    One transaction covers the advice's own transition, the concern's
+    (approval only, and only from ASSIGNED — Owner decision 2026-09-11,
+    spec.md §7-3: §6.6 has no CLOSED/ANSWERED->ANSWERED edge), and the
+    resulting notification (§6.4), so a failure partway through never leaves
+    one without the others.
+
+    Checks run in this order: existence (404) -> draft/state eligibility
+    (409) -> optimistic-lock version match (412) -> decision-specific shape
+    (422, reject needs a reason) -> apply. 412 sits before 422 because a
+    stale read makes the request's own content moot.
+    """
+    from notifications.models import Notification, NotificationType
+
+    with transaction.atomic():
+        advice = get_object_or_404(
+            Advice.objects.select_for_update().select_related("advisor"), pk=advice_id
+        )
+        if not advice.is_submitted:
+            raise Conflict("제출되지 않은 초안은 리뷰할 수 없습니다.")
+        if advice.status not in _REVIEWABLE_STATUSES:
+            raise Conflict(f"{advice.status} 상태의 조언은 리뷰할 수 없습니다.")
+        if advice.version != expected_version:
+            raise PreconditionFailed()
+        if decision == DECISION_REJECTED and not reason.strip():
+            raise UnprocessableEntity("반려 시 사유는 필수입니다.")
+
+        concern = Concern.objects.select_for_update().select_related("author").get(
+            pk=advice.concern_id
+        )
+
+        advice.reviewed_by = actor
+        advice.reviewed_at = timezone.now()
+        if decision == DECISION_APPROVED:
+            advice.status = AdviceStatus.APPROVED
+        else:
+            advice.status = AdviceStatus.REJECTED
+            advice.reject_reason = reason
+        advice.save()
+
+        if decision == DECISION_APPROVED:
+            if concern.status == ConcernStatus.ASSIGNED:
+                concern.status = ConcernStatus.ANSWERED
+                concern.save(update_fields=["status"])
+            Notification.objects.create(
+                recipient=concern.author,
+                type=NotificationType.ADVICE_APPROVED,
+                title="조언이 승인되었습니다",
+                message="회원님의 고민에 새로운 조언이 도착했습니다.",
+                target_url=f"/api/v1/advices/{advice.id}",
+                actor_user=actor,
+                payload={"advice_id": str(advice.id), "concern_id": str(concern.id)},
+            )
+        else:
+            Notification.objects.create(
+                recipient=advice.advisor,
+                type=NotificationType.ADVICE_REJECTED,
+                title="조언이 반려되었습니다",
+                message=reason,
+                target_url=f"/api/v1/advices/{advice.id}",
+                actor_user=actor,
+                payload={"advice_id": str(advice.id), "concern_id": str(concern.id)},
+            )
+    return advice, concern

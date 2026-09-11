@@ -173,3 +173,41 @@ class AdviceWrittenQuerySerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=AdviceStatus.choices, required=False)
     from_date = serializers.DateField(required=False)
     to_date = serializers.DateField(required=False)
+
+
+class AdminAdviceListSerializer(serializers.ModelSerializer):
+    """GET /api/v1/admin/advices (#32) list item (api.md #32 response
+    fields). No advisor_display_name here — the review queue works off the
+    raw advisor_user_id; api.md doesn't ask for the display name at this
+    level (contrast #26/#27, which are user-facing).
+    """
+
+    advice_id = serializers.UUIDField(source="id", read_only=True)
+    concern_id = serializers.UUIDField(read_only=True)
+    advisor_user_id = serializers.UUIDField(source="advisor_id", read_only=True)
+
+    class Meta:
+        model = Advice
+        fields = (
+            "advice_id",
+            "concern_id",
+            "advisor_user_id",
+            "status",
+            "version",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = fields
+
+
+class AdviceReviewSerializer(serializers.Serializer):
+    """PATCH /api/v1/admin/advices/{advice-id}/review (#33) request.
+
+    `reason`-required-on-reject is a semantic check (422) owned by
+    services.review_advice, not this shape validator (400) — same split as
+    advisors.serializers.AdvisorApplicationReviewSerializer.
+    """
+
+    decision = serializers.ChoiceField(choices=["approved", "rejected"])
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
+    expected_version = serializers.IntegerField(min_value=1)

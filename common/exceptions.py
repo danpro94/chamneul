@@ -22,6 +22,19 @@ class UnprocessableEntity(APIException):
     default_detail = "요청을 처리할 수 없습니다."
     default_code = "unprocessable_entity"
 
+
+class PreconditionFailed(APIException):
+    """412 — optimistic locking (api.md §1.8, #33): the caller's
+    `expected_version` no longer matches the resource's current version
+    because it changed between their read and this write (e.g. an admin
+    reviewing an advice the advisor edited in the meantime). Distinct from
+    409: the request itself is fine, only stale relative to a fresher read.
+    """
+
+    status_code = status.HTTP_412_PRECONDITION_FAILED
+    default_detail = "리소스가 조회 이후 변경되었습니다. 다시 조회 후 시도하세요."
+    default_code = "precondition_failed"
+
 # Map HTTP status to the SCREAMING_SNAKE_CASE `code` fixed by api.md §1.5.
 _STATUS_TO_CODE = {
     status.HTTP_400_BAD_REQUEST: "INVALID_REQUEST",
