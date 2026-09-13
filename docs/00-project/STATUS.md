@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-10 (SPEC-001/TASK-006 커밋 기준 — SPEC-001 종료. 이전 실측 2026-09-10 TASK-001~005 / 2026-09-09 `b2eaf90`)
+> 마지막 실측: 2026-09-13 (SPEC-002/TASK-007 커밋 기준 — SPEC-002 종료, PR 대기. 이전 실측 2026-09-11~12 TASK-001~006 / 2026-09-10 SPEC-001 종료)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | **M4-5 concerns 10/10 완료**(5/8 모듈), **26/44 엔드포인트** |
+| M4 진행률 | **M4-6 완료**(6/8 모듈), **39/44 엔드포인트** — 남은 모듈: M4-7 알림(3), M4-8 역할(2) |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,9 +24,9 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (26 / 44)
+## 2. 구현된 엔드포인트 (39 / 44)
 
-실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls` 3개 include.
+실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls` 4개 include.
 
 | # | Method | Endpoint | 구현 파일 |
 | --- | --- | --- | --- |
@@ -55,21 +55,54 @@
 | 23 | GET | `/api/v1/admin/concerns/{concern-id}` | `AdminConcernDetailView.get` (SPEC-001/TASK-004) |
 | 24 | POST | `/api/v1/admin/concerns/{concern-id}/assignments` | `AdminAssignmentCreateView.post` (SPEC-001/TASK-005) |
 | 25 | DELETE | `/api/v1/admin/concerns/{concern-id}/assignments/{assignment-id}` | `AdminAssignmentDetailView.delete` (SPEC-001/TASK-005) |
+| 28 | POST | `/api/v1/concerns/{concern-id}/advices` | [advice/views.py](../../advice/views.py) `AdviceCreateView.post` (SPEC-002/TASK-001) |
+| 31 | GET | `/api/v1/users/me/advices-written` | `AdvicesWrittenView.get` (SPEC-002/TASK-001) |
+| 27 | GET | `/api/v1/advices/{advice-id}` | `AdviceDetailView.get` (SPEC-002/TASK-002) |
+| 29 | PATCH | `/api/v1/advices/{advice-id}` | `AdviceDetailView.patch` (SPEC-002/TASK-003) |
+| 30 | DELETE | `/api/v1/advices/{advice-id}` | `AdviceDetailView.delete` (SPEC-002/TASK-003) |
+| 32 | GET | `/api/v1/admin/advices` | `AdminAdviceListView.get` (SPEC-002/TASK-004) |
+| 33 | PATCH | `/api/v1/admin/advices/{advice-id}/review` | `AdminAdviceReviewView.patch` (SPEC-002/TASK-004) |
+| 26 | GET | `/api/v1/users/me/advices` | `ReceivedAdviceListView.get` (SPEC-002/TASK-005) |
+| 34 | POST | `/api/v1/advices/{advice-id}/feedbacks` | `FeedbackCreateView.post` (SPEC-002/TASK-005) |
+| 35 | GET | `/api/v1/users/me/feedbacks` | `MyFeedbackListView.get` (SPEC-002/TASK-005) |
+| 36 | GET | `/api/v1/admin/feedbacks` | `AdminFeedbackListView.get` (SPEC-002/TASK-006) |
+| 37 | GET | `/api/v1/admin/feedbacks/{feedback-id}` | `AdminFeedbackDetailView.get` (SPEC-002/TASK-006) |
+| 38 | PATCH | `/api/v1/admin/feedbacks/{feedback-id}` | `AdminFeedbackDetailView.patch` (SPEC-002/TASK-006) |
 | 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
 
-## 3. 미구현 엔드포인트 (18 / 44)
+## 3. 미구현 엔드포인트 (5 / 44)
 
-`advice`·`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`(#16~25)는 **전량 구현 완료**(실측: `git ls-files`, `config/urls.py`).
+`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`(#16~25)·`advice`(#26~38)는 전량 구현 완료(실측: `git ls-files`, `config/urls.py`).
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-6 advice + feedback | #26~38 (13개) | §4-26~38 |
 | M4-7 notifications | #39~41 (3개) | §4-39~41 |
 | M4-8 admin roles | #42~43 (2개) | §4-42~43 |
 
 ## 4. Active SPEC
 
-**SPEC-001-concerns-api — 완료 (2026-09-10).** api.md #16~25 (M4-5 concerns 모듈) 10개 엔드포인트 전량 구현, AC-1~AC-10 전항 통과, 테스트 62개. 다음 Active SPEC은 아직 없음 — **SPEC-002(M4-6 advice+feedback, #26~38) 작성이 다음 단계**.
+**SPEC-002-advice-api — 완료 (2026-09-13), PR 대기.** api.md #26~38 (M4-6) 13개 엔드포인트 전량 구현, AC-1~AC-11 전항 통과, advice 앱 테스트 106개(전체 168개). 브랜치 `feat/spec-002-advice-api` (origin에 push 완료, PR 미생성).
+
+확정된 §7 결정:
+
+1. 관리자 리뷰 목록(#32)에서 **초안(`is_submitted=False`) 항상 제외**, #33도 초안 리뷰를 409로 거부.
+2. `submit` 토글만 바뀌면 `version` **증가하지 않음**(본문 변경 시에만 +1, §6.7).
+3. 승인 시 concern 전이는 **`ASSIGNED`일 때만** — `CLOSED`/`ANSWERED`는 불변(§6.6에 CLOSED→ANSWERED 간선 없음).
+4. #27에서 고민 작성자가 비-APPROVED advice 조회 시 **403**(api.md 문언 유지, #18의 404와 비대칭임을 인지).
+
+* [x] TASK-001 — 조언 작성(#28) + 내가 쓴 조언 목록(#31). 공용 `AdviceTestBase`로 fixture 1곳 집약, `IsActiveAdvisor` 재사용, 부분 유니크(DELETED 제외) 덕에 삭제 후 재작성 허용 확인. 테스트 18종(선-실패 16개 확인) → 검증 4종 통과(**80/80**) → 스크린샷 3장 확인 → 커밋.
+* [x] TASK-002 — 조언 상세(#27) 3주체 분기. `get_visible_advice()`가 (작성자/관리자/고민 작성자) 우선순위로 판정 — ADMIN이 판정 순서상 고민 작성자보다 먼저 걸린다는 점을 데모 중 실측(같은 계정이 admin+owner를 겸하면 admin 시야로 응답됨, 버그 아님). `AdviceDetailSerializer`/`AdviceDetailWithReasonSerializer` 2종(상속)으로 `reject_reason` 유무만 분리. 테스트 11종(선-실패 10개 확인) → 검증 4종 통과(**91/91**) → 순수 사용자 계정으로 재현한 스크린샷 3장 확인 → 커밋.
+* [x] TASK-003 — 조언 수정(#29) + 삭제(#30). `_get_own_editable_advice()`로 조회·소유권(403)·편집가능상태(409, PENDING/REVIEWING만) 공용 검사. `version`·`AdviceHistory`는 본문 필드 변경 시에만 갱신(§7-2 결정) — `submit` 단독 토글은 건드리지 않음. PATCH/DELETE만 `IsActiveAdvisor` 추가 게이트(GET은 제외, `get_permissions()`로 메서드별 분기). 테스트 17종(선-실패 15개 확인) → 검증 4종 통과(**108/108**) → 스크린샷 2장 + `AdviceHistory` DB 직접 확인(수정 전 본문이 정확히 v1로 보존) → 커밋.
+* [x] TASK-004 — admin 리뷰 목록(#32) + 승인/반려(#33) ★ 핵심. `list_advices_for_admin_review()`가 `is_submitted=True`를 무조건 강제(§7-1 결정, status 필터 유무와 무관). `review_advice()`가 **한 트랜잭션**으로 advice 전이 + concern 전이(ASSIGNED일 때만, §7-3) + `Notification` 처리 — advice·concern 모두 `select_for_update()`. 체크 순서: 404→409(초안/상태)→412(버전 불일치)→422(반려 사유). `common/exceptions.py`에 `PreconditionFailed`(412) 신규 추가. 테스트 17종(선-실패 14개 확인, 1건은 `assertNumQueries` 기대값 실측 보정) → 검증 4종 통과(**125/125**) → 스크린샷 3장(대기열/412/승인+ANSWERED 전이) + DB로 알림 확인 → 커밋.
+* [x] TASK-005 — 받은 조언 목록(#26) + 피드백 작성(#34)/내 목록(#35). §6.2 노출 규칙이 `filter(concern__author=user, status=APPROVED)` 한 쌍으로 끝나도록 서비스에 집약. `advisor_display_name`은 페이지 단위 벌크 조회를 serializer context로 주입(단건 경로인 #27과 달리 목록이라 N+1 방지 필요). 피드백 1회 제한은 `Feedback.advice` OneToOne이 실제 강제 → IntegrityError를 409로 변환. 테스트 18종(선-실패 15개 확인) → 검증 4종 통과(**143/143**) → 스크린샷 5장 확인 → 커밋.
+* [x] TASK-006 — admin 피드백 목록(#36)/상세(#37)/상태 변경(#38). `_ALLOWED_FEEDBACK_TRANSITIONS` 표로 §6.3 단방향 흐름 강제(역방향·건너뛰기·동일 상태 전부 409). `memo`·`author_nickname`은 #37에서만 노출(#35에는 없음). `reviewed_by`/`reviewed_at`은 **REVIEWED 진입 시에만** 기록(판단 기록 참조). 테스트 19종(선-실패 16개 확인) → 검증 4종 통과(**162/162**) → 스크린샷 3장 확인 → 커밋.
+* [x] TASK-007 마무리 — AC-1~AC-11 전항 대조 후 **미커버 6건 보강**(AC-11 §6.2 6지점 스윕 신설이 핵심, 나머지 5건은 "AC가 N개 상태를 열거하는데 테스트는 일부만" 유형). 전부 구현은 옳았고 검증만 없던 경우로 보강분이 첫 실행에서 통과. api.md 정정 4건 반영(#27·#29·#32·#33 + 상단 개정 이력). 검증 4종 통과(**168/168**).
+* [ ] **남은 것**: PR 생성 → 리뷰 → 머지.
+
+<details>
+<summary>SPEC-001-concerns-api — 완료 (2026-09-10, PR #2 머지)</summary>
+
+api.md #16~25 (M4-5 concerns) 10개 엔드포인트 전량 구현, AC-1~AC-10 전항 통과, 테스트 62개.
 
 * [x] TASK-001 — `POST /api/v1/users/me/concerns` (#16) + `GET /api/v1/users/me/concerns` (#17). 테스트 8종 작성(선-실패 확인) → 구현(`concerns/{serializers,services,views,urls}.py`) → `check`/`makemigrations --check`/`ruff`/`test` 전부 통과 → DRF Browsable API로 로그인→생성→목록 확인(스크린샷) → 커밋.
 * [x] TASK-002 — `GET /api/v1/users/me/concerns/{concern-id}` (#18, `approved_advices[]` 포함) + `DELETE .../{concern-id}` (#19, soft delete). 테스트 8종 추가(선-실패 확인) → 구현(`ConcernDetailSerializer`, `ConcernDetailView`, `get_own_concern`/`get_own_concern_including_deleted`/`soft_delete_concern`/`approved_advices_view_data` 서비스) → 검증 4종 통과 → 스크린샷으로 상세/삭제/재조회 404 확인 → 커밋.
@@ -77,6 +110,8 @@
 * [x] TASK-004 — admin 조회 `GET /api/v1/admin/concerns` (#22) + `GET .../concerns/{concern-id}` (#23). `include_deleted`/`status`/`keyword` 필터, `assignment_count`(활성 배정만), `is_deleted` 파생 필드. #23은 soft-deleted concern도 조회 가능(감사 경로) + assignments/advices 상태 무관 전량 노출(§6.2는 고민 작성자 보호용이지 admin 제한이 아님). 테스트 12종 추가(선-실패 11개 확인) → 검증 4종 통과(`assertNumQueries(5)`로 N+1 부재 고정) → 스크린샷 3장 확인 → 커밋.
 * [x] TASK-005 — 배정 생성 `POST .../concerns/{concern-id}/assignments` (#24) + 해제 `DELETE .../assignments/{assignment-id}` (#25). `assign_advisor`/`unassign_advisor` 서비스가 **한 트랜잭션**으로 Assignment row + 상태 전이(SUBMITTED→ASSIGNED / 마지막 해제 시 ASSIGNED→SUBMITTED) + `ASSIGNMENT_CREATED` 알림을 함께 처리(§6.4/§6.6). concern row에 `select_for_update()`로 동시 배정/해제 직렬화. 비-advisor 지정은 422, 중복 활성 배정·CLOSED/삭제 concern·이미 해제된 배정은 409. 테스트 18종 추가(선-실패 14개 확인) → 검증 4종 통과(전체 60/60) → 스크린샷 4장(배정 전/201/조언가 큐/해제 후 복귀) 확인 → 커밋.
 * [x] TASK-006 마무리 — #20 `status` 필터 구현(Owner 승인안: `concern.status` 기준), api.md 문구 정정 2건(#20 "assignment 상태"→"concern 상태", #16·#18·#19·#24의 `is_deleted` 상태 서술→`deleted_at`), AC-1~AC-10 전항 대조 후 미커버 2건 보강(AC-4 Assignment 보존 단언, #20 목록 `assertNumQueries`), 검증 4종 통과(**62/62**).
+
+</details>
 
 ## 5. 미결 Owner 결정
 

@@ -4,6 +4,8 @@
 
 > 2026-07-08 M4 착수 전 Owner 결정 반영 (D-1~D-8, C-10·C-11): §3 요약표 #44 추가, §1.2 CSRF 부트스트랩, 응답 필드 3건 보강(`is_submitted`·작성자 한정 `reject_reason`·`expected_version`, D-3), 알림 `target_url` 규약(C-10), Google nickname 자동 산정(C-11), `domain_category` 11종 확정(D-6), `is_deleted` 표기 정리(C-1). 기존 #1~43 번호는 ux/01 등 상호참조 안정성을 위해 유지하고 신규 엔드포인트만 #44로 덧붙인다.
 >
+> 2026-09-13 SPEC-002(M4-6 advice + feedback) 구현 중 Owner 결정 4건 반영(전부 2026-09-11 승인, 상세는 `specs/SPEC-002-advice-api/spec.md` §7): (1) #32/#33 — 제출되지 않은 초안은 리뷰 목록에서 항상 제외되고 직접 리뷰 시도도 409. (2) #29 — `submit` 플래그만 토글하면 `version`을 올리지 않는다(본문 변경 시에만). (3) #33 — 승인 시 concern 전이는 `ASSIGNED`에서만 발생하고 `CLOSED`/`ANSWERED`는 불변. (4) #27 — 주체 판정 우선순위(작성자→ADMIN→고민 작성자)와 비-APPROVED 조회 시 403(404 아님) 명시. 엔드포인트 계약(경로·메서드·상태 코드 집합)은 변경 없음.
+>
 > 2026-09-10 SPEC-001(M4-5 concerns) 구현 중 Owner 결정 반영: (1) #20 `status` 쿼리 파라미터를 "assignment 상태"에서 **"concern 상태"**로 정정 — `Assignment` 모델에는 상태 enum이 없고 `is_active`(bool)만 존재하며, 그 값은 이미 목록의 전제 조건이다(STATUS.md §5). (2) #16·#18·#19·#24의 상태 서술에서 `is_deleted=true/false` 표기를 실제 저장 컬럼인 `deleted_at`으로 교체 — C-1(§6) 규약대로 `is_deleted`는 **응답 필드**로만 쓰고(#22), 저장·상태 서술에는 쓰지 않는다. 엔드포인트 계약(경로·메서드·상태 코드)은 변경 없음.
 
 확정 결정의 출처:
@@ -597,7 +599,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Request 주요 필드 | Path: `advice-id` |
 | Response 주요 필드 | `advice_id`, `concern_id`, `advisor_display_name`, `directional_guidance`, `reflective_questions?`, `considerations?`, `out_of_scope_flag`, `status`, `version`, `is_submitted`, `created_at`, `updated_at`, `reject_reason?` (작성자/Admin에게만, D-3) |
 | Status | 200 / 401 / 403 / 404 / 500 |
-| 접근 제어 조건 | (a) 조언 작성자: 자신의 advice는 상태 무관 조회 가능. `is_submitted`(draft 구분)·`reject_reason`(반려 사유) 노출. (b) 고민 작성자: 해당 advice가 APPROVED일 때만 조회 가능. `reject_reason`은 미노출(항상 APPROVED이므로 무의미). (c) ADMIN: 상태 무관 + `reject_reason` 노출. 그 외 403. |
+| 접근 제어 조건 | 판정 우선순위 (a)→(b)→(c) 순. (a) 조언 작성자: 자신의 advice는 상태 무관 조회 가능. `is_submitted`(draft 구분)·`reject_reason`(반려 사유) 노출. (b) ADMIN: 상태 무관 + `reject_reason` 노출. (c) 고민 작성자: 해당 advice가 APPROVED일 때만 조회 가능하고, `reject_reason`은 응답 필드에서 아예 제외된다. **APPROVED가 아닌 advice는 404가 아니라 403** — 고민 작성자는 자기 고민에 조언이 달렸다는 사실 자체는 알 수 있는 위치이므로 존재를 숨기지 않는다(#18의 타인 자원 404와 의도적으로 다름 — SPEC-002 §7-4, Owner 결정 2026-09-11). 그 외 403. |
 | Side Effect | 없음. |
 | MVP 여부 | ✓ |
 
@@ -623,7 +625,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Method | PATCH |
 | Endpoint | `/api/v1/advices/{advice-id}` |
 | Permission | Advisor (작성자) |
-| Description | 조언 수정. `PENDING` 또는 `REVIEWING` 상태에서만 가능. 수정 시 `version`이 +1되고 이전 본문은 audit 테이블에 보존. |
+| Description | 조언 수정. `PENDING` 또는 `REVIEWING` 상태에서만 가능. **본문 필드가 실제로 바뀔 때만** `version`이 +1되고 직전 본문이 audit 테이블에 보존된다 — `submit` 플래그만 토글하는 요청은 `version`을 올리지 않는다(SPEC-002 §7-2, Owner 결정 2026-09-11). |
 | Request 주요 필드 | `directional_guidance?`, `reflective_questions?`, `considerations?`, `out_of_scope_flag?`, `submit?` |
 | Response 주요 필드 | `advice_id`, `status`, `version`, `updated_at` |
 | Status | 200 / 400 / 401 / 403 / 404 / 409(승인/반려/삭제 후 수정) / 500 |
@@ -668,7 +670,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Method | GET |
 | Endpoint | `/api/v1/admin/advices` |
 | Permission | Admin |
-| Description | 조언 리뷰 목록. |
+| Description | 조언 리뷰 목록. **제출되지 않은 초안(`is_submitted=false`)은 `status` 필터와 무관하게 항상 제외**된다 — 조언가가 제출한 적 없는 글이 리뷰 대기열에 올라 승인되는 것을 막는다(SPEC-002 §7-1, Owner 결정 2026-09-11). |
 | Request 주요 필드 | Query: `status?` (default `PENDING`), `page?`, `size?` |
 | Response 주요 필드 | `items[]`: { `advice_id`, `concern_id`, `advisor_user_id`, `status`, `version`, `created_at`, `updated_at` }, `page_info` |
 | Status | 200 / 400 / 401 / 403 / 500 |
@@ -687,8 +689,8 @@ URI 변경 요약 (Notion v0 → v1):
 | Request 주요 필드 | `decision` (필수, `approved`/`rejected`), `reason?` (rejected 시 필수 — 422 검증), `expected_version` (필수, 낙관적 잠금 — 관리자가 조회한 advice.version. 서버가 현재 version과 비교, 불일치 시 412, D-3) |
 | Response 주요 필드 | `advice_id`, `status`, `review`: { `decision`, `reviewed_by`, `reviewed_at`, `reason` }, `concern_id`, `concern_status` (전이 후), `version` |
 | Status | 200 / 401 / 403 / 404 / 409(허용되지 않는 전이) / 412(`expected_version` ≠ 현재 version — 리뷰 중 조언가가 수정함, 재조회 유도) / 422 / 500 |
-| 접근 제어 조건 | ADMIN. 허용 전이: `PENDING|REVIEWING → APPROVED|REJECTED`. |
-| Side Effect | `APPROVED` → 고민 작성자에게 `ADVICE_APPROVED` 알림 + concern.status → `ANSWERED` (아직 ANSWERED가 아닌 경우). `REJECTED` → advisor에게 `ADVICE_REJECTED` 알림. |
+| 접근 제어 조건 | ADMIN. 허용 전이: `PENDING|REVIEWING → APPROVED|REJECTED`. 제출되지 않은 초안(`is_submitted=false`)은 409 — 목록(#32)에서 제외되는 것과 같은 규칙을 엔드포인트 직접 호출에도 적용한다(SPEC-002 §7-1). |
+| Side Effect | `APPROVED` → 고민 작성자에게 `ADVICE_APPROVED` 알림 + **concern.status가 `ASSIGNED`인 경우에만** `ANSWERED`로 전이(CLAUDE.md §6.6 상태 머신에 `CLOSED`/`ANSWERED` → `ANSWERED` 간선이 없으므로 그 두 상태는 불변 — SPEC-002 §7-3, Owner 결정 2026-09-11). `REJECTED` → advisor에게 `ADVICE_REJECTED` 알림, concern 상태 불변. |
 | MVP 여부 | ✓ |
 
 ### 34. POST /api/v1/advices/{advice-id}/feedbacks

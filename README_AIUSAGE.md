@@ -6,6 +6,274 @@
 
 ---
 
+## 2026-09-13 — SPEC-002/TASK-007: 마무리 — SPEC-002 종료 [위임]
+
+### 작업
+
+1. 브랜치 `feat/spec-002-advice-api`를 origin에 push(커밋 6개가 로컬에만 있던 상태 해소). PR은 규칙대로 SPEC 완료 후로 미룸.
+2. **AC-1~AC-11을 실제 테스트 목록과 1:1 대조** → 미커버 6건 발견·보강(아래).
+3. `docs/api.md` 정정 4건: #32/#33(초안 제외 규칙), #29(`submit` 토글은 version 미증가), #33(승인 시 concern 전이는 `ASSIGNED`에서만), #27(주체 판정 우선순위 + 비-APPROVED는 403). 상단 개정 이력에 2026-09-13 항목 추가.
+4. `tasks.md` 전 항목 체크, `acceptance.md`에 종료 판정 절 추가, STATUS.md 갱신.
+5. 4종 검증 — 전체 **168/168** 통과.
+
+### AC 대조에서 발견한 미커버 6건 (전부 보강)
+
+| # | 미커버였던 AC | 조치 |
+| --- | --- | --- |
+| 1 | **AC-11 전체** — §6.2 노출 6지점 전수 점검 자체가 없었음 | `PendingAdviceExposureSweepTests` 신설(6 테스트) |
+| 2 | AC-2 DELETED 포함 미검증 | #31 목록을 5개 상태 전부로 확장 |
+| 3 | AC-3 작성자 5개 상태 중 2개만 검증 | subTest 5종 추가 |
+| 4 | AC-4 REJECTED 상태 수정 미검증 | 3개 상태 subTest 루프 |
+| 5 | AC-7 REJECTED 재리뷰 미검증 | 2개 상태 subTest 루프 |
+| 6 | AC-8 REVIEWING 미노출 미검증 | 4개 상태 전부로 확장 |
+
+**중요한 관찰**: 6건 전부 *구현은 이미 옳았고 검증만 없던* 경우였다 — 보강한 테스트가 첫 실행에서 모두 통과했다. 즉 이 단계에서 잡은 것은 버그가 아니라 **증거의 공백**이다. 특히 AC-11은 §6.2가 두 앱 6곳에 흩어져 강제되는데, 각 지점의 단위 테스트는 있어도 *하나의 조언*에 대해 여섯 곳이 동시에 성립하는지는 아무도 확인하지 않고 있었다.
+
+### 과정에서 있었던 오판 1건 (정정 기록)
+
+AC 대조 중 `AdminAdviceListTests`의 테스트가 4개만 잡혀 "TASK-004에서 쓴 테스트 1개가 유실됐다"고 판단했으나, **오판이었다**. 실제로는 테스트 집계에 쓴 grep 파이프라인이 `Applying sessions.0001_initial...test_xxx`처럼 마이그레이션 출력과 붙어 나온 첫 줄을 놓친 것이었다. 코드에서 직접 세어 100개 전부 존재함을 확인했다. 교훈: 테스트 목록은 실행 로그 파싱이 아니라 소스에서 세는 편이 안전하다.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-13)
+
+| 결정 | 내용 |
+| --- | --- |
+| push/PR 시점 | **push는 지금, PR은 TASK-007 후** — push는 백업이고 PR은 리뷰 요청이라 "하나의 SPEC = 하나의 PR" 규칙에 걸린다는 권고 승인 |
+
+### 생성된 산출물
+
+수정: `advice/tests.py`(보강 6건), `docs/api.md`(정정 4건 + 개정 이력), `specs/SPEC-002-advice-api/{tasks,acceptance}.md`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice` → **106/106 OK** / 전체 → **168/168 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+
+### 잔여 리스크
+
+1. **서브에이전트 리뷰 미실행** — SPEC-001 PR과 동일하게 `security-reviewer`·`api-architect`를 아직 돌리지 않았다. SPEC-002는 3주체 가시성·낙관적 잠금 등 보안 판단이 더 많으므로, SPEC-001 때보다 리뷰 가치가 크다.
+2. **M4 전체 문서 부채 지속** — M4-1~M4-4 AIUSAGE 소급 기록, 리뷰 노트 2건, model.md drift 6건(STATUS.md §7).
+3. **남은 모듈 2개**(M4-7 알림 3개, M4-8 역할 2개) — 둘 다 작아서 SPEC 하나로 묶을지 판단 필요.
+
+### 다음 단계 권장
+
+1. PR 생성 → (선택) 서브에이전트 리뷰 → 머지.
+2. 이후 M4-7·M4-8을 하나의 SPEC-003으로 묶어 진행 검토.
+
+---
+
+## 2026-09-12 — SPEC-002/TASK-006: admin 피드백 3종 (api.md #36·#37·#38) — M4-6 구현 완료 [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdminFeedbackListTests`·`AdminFeedbackDetailTests`·`AdminFeedbackTransitionTests` 18케이스를 먼저 작성(권한 401/403, `status`/`score_min`/`score_max` 필터, 잘못된 점수 필터 400, 관리자 전용 필드(`memo`·`author_nickname`) 노출, SUBMITTED→REVIEWED→ARCHIVED 정상 전이, 역방향·건너뛰기·동일 상태 409, memo 저장, 잘못된 status 400, 404) → 실행해 16개 실패 확인.
+2. 최소 구현: `advice/services.py`에 `_ALLOWED_FEEDBACK_TRANSITIONS` 표 + `list_feedbacks_for_admin()`/`get_feedback_for_admin()`/`transition_feedback()`. 시리얼라이저 5종, 뷰 2종(#37·#38은 같은 경로라 한 클래스), URL 2개.
+3. 쿼리 수는 이번에도 **먼저 실측**(3쿼리: IsAdmin 확인 + COUNT + 페이지, `select_related` 조인 덕에 행 수와 무관) 후 고정 → 한 번에 통과. 2회 연속 성공.
+4. 4종 검증 — 전체 **162/162** 통과.
+5. 시각 확인: 피드백 목록 → 건너뛰기 전이 409 → 정상 전이 후 상세에 `memo`·`reviewed_by`·`reviewed_at` 기록 확인, 스크린샷 3장.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-12)
+
+TASK-006 진행 승인.
+
+### 판단 기록 (AI가 정한 것, 이견 시 저렴하게 수정 가능)
+
+* **`reviewed_by`/`reviewed_at`은 REVIEWED로 들어갈 때만 기록**하고, ARCHIVED로 넘어갈 때는 건드리지 않는다. 필드 이름이 "review" 사건을 가리키므로, 나중에 다른 관리자가 보관 처리했다고 해서 "누가 실제로 검토했는가"를 덮어쓰면 감사 정보가 사라진다. (api.md #38은 이 지점을 명시하지 않음)
+* **동일 상태로의 전이도 409**로 막았다 — 전이표에 self-edge를 두지 않는 방식(advisors 앱의 신청 전이표와 동일한 형태).
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* 해당 3클래스 → 구현 전 16 fail → 구현 후 **19/19 OK**(쿼리 고정 테스트 포함)
+* `manage.py test` (전체) → **162/162 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: 스크린샷 3장 Owner 전송
+
+### 잔여 리스크
+
+1. **M4-6 코드는 끝났지만 SPEC-002는 미완** — TASK-007(AC-1~AC-11 전항 재검증, 특히 §6.2 노출 6지점 전수 점검 + api.md 문구 정정 4건)이 남아 있다. SPEC-001 때 이 마무리 단계에서 미커버 AC 2건이 나왔으므로 생략하지 않는다.
+2. **피드백에 알림이 없다**(api.md #38 "알림 없음") — 조언가는 자기 조언이 어떤 평가를 받았는지 API로 알 수 없다. 의도된 Phase 2 범위지만, 실사용 시 조언가 경험의 빈 구멍이 될 수 있어 기록해 둔다.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-007(SPEC-002 마무리 + PR) 착수.
+
+---
+
+## 2026-09-12 — SPEC-002/TASK-005: 받은 조언함 + 피드백 (api.md #26·#34·#35) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `ReceivedAdviceListTests`·`FeedbackCreateTests`·`MyFeedbackListTests` 총 16케이스를 먼저 작성(승인된 것만 노출·타인 고민 미노출·REJECTED/DELETED 미노출, `is_feedback_submitted` 정확도, 활동명 사용, keyword/날짜 필터, 피드백 403/409/400/404, 내 피드백만) → 실행해 15개 실패 확인.
+2. 최소 구현: `advice/services.py`에 `list_received_advices()`(§6.2 노출 규칙을 필터 한 쌍으로 집약 + `Exists` annotate) / `create_feedback()` / `list_feedbacks_written_by()`. 시리얼라이저 5종, 뷰 3종, URL 3개 추가.
+3. **쿼리 수 기대값을 이번엔 먼저 실측**(TASK-004 잔여 리스크 #2의 개선안 실행): 임시 스크립트로 `CaptureQueriesContext`를 돌려 #26=3쿼리(COUNT+페이지+활동명 벌크), #35=2쿼리임을 확인한 뒤 그 값으로 `assertNumQueries` 테스트 2종을 추가 → **한 번에 통과**(직전 3회 연속 있었던 기대값 오차 재발 없음).
+4. 4종 검증 — 전체 143/143 통과.
+5. 시각 확인: 역할 조회로 오염 없음 확인(`owner roles: []`) 후, 받은 조언함 → 피드백 작성 201 → 중복 409 → 받은 조언함 재조회 시 `is_feedback_submitted: true`로 전환 → 내 피드백 목록까지 스크린샷 5장.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-12)
+
+TASK-005 진행 승인.
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test` (해당 3클래스) → 구현 전 15 fail → 구현 후 **18/18 OK**
+* `manage.py test` (전체) → **143/143 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 실측 쿼리 수: #26 = 3, #35 = 2 (행 수와 무관하게 고정)
+* 시각 확인: 스크린샷 5장 Owner 전송
+
+### 잔여 리스크
+
+1. **`advisor_display_name` 벌크 조회 패턴이 이제 3곳에 존재**(`concerns.services.approved_advices_view_data`, `advice` #27 단건 mixin, #26 목록 context 주입). 규칙 자체는 한 함수(`display_names_by_advisor`)에 있으나 호출 방식이 제각각 — TASK-007에서 한 번 훑어보고 정리 여부 판단 권고.
+2. **피드백 수정/삭제 API 부재는 의도된 것**(api.md #34 "제출 후 수정/삭제 불가") — 오타 신고 같은 실사용 요구가 생기면 Phase 3 논의 대상.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-006(#36·#37·#38 admin 피드백 3종) 착수 — SPEC-002 구현의 마지막 구간.
+
+---
+
+## 2026-09-11 — SPEC-002/TASK-004: admin 리뷰 목록+승인/반려 (api.md #32·#33) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdminAdviceListTests`(4) + `AdviceReviewTests`(13) 총 17케이스 추가(초안 항상 제외, 승인 시 상태+concern 전이+알림, 반려 시 알림+concern 불변, 사유 없는 반려 422, 버전 불일치 412, 이미 종결된 advice/초안 리뷰 409, CLOSED/ANSWERED concern 불변, 실패 시 부분 상태 없음) → 실행해 14개 실패 확인.
+2. 최소 구현: `common/exceptions.py`에 **`PreconditionFailed`(412) 신규 추가** — 이 프로젝트 첫 낙관적 잠금 예외(409와 구분: "요청 자체는 멀쩡한데 읽은 시점 이후 바뀌었다"). `advice/services.py`에 `list_advices_for_admin_review()`(초안 무조건 제외) + `review_advice()`(advice·concern 모두 `select_for_update()`, 404→409(초안/상태)→412(버전)→422(반려사유) 순서로 검사 후 상태 전이+알림을 한 트랜잭션에). `AdminAdviceListSerializer`·`AdviceReviewSerializer` + 뷰 2종 + URL 2개 추가.
+3. 4종 검증 — 도중 `assertNumQueries` 기대값을 2로 예상했다가 `IsAdmin`이 관리자 확인용 쿼리 1개를 추가로 쓴다는 걸 실측하고 3으로 정정(TASK-003 이전에도 concerns 앱에서 동일 패턴 발생 — 이제 반복되는 실수임을 인지).
+4. 시각 확인: **역할을 미리 조회·출력**하는 절차를 다시 적용해(`admin roles: ['ADMIN']`, `advisor roles: ['ADVISOR']`) 오염 없는 계정 확인 후 진행. 리뷰 대기열 → 버전 불일치 412 → 정상 승인 200(`concern_status: "ANSWERED"` 응답 포함) 스크린샷 3장 + DB로 `ADVICE_APPROVED` 알림 row 직접 확인.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-11)
+
+TASK-004 진행 승인. (겸하여: 낙관적 잠금 개념 설명 요청에 답변, PR 시점은 SPEC-002 TASK-007 완료 후로 권고·확인)
+
+### 생성된 산출물
+
+수정: `common/exceptions.py`(`PreconditionFailed` 추가), `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice.tests.AdminAdviceListTests advice.tests.AdviceReviewTests` → 구현 전 14 fail → 구현 후 **17/17 OK** (도중 쿼리 수 기대값 1건 보정)
+* `manage.py test` (전체) → **125/125 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: 대기열 200 / 412(stale version) / 승인 200(concern_status=ANSWERED) 스크린샷 3장 + `Notification(type=ADVICE_APPROVED, recipient=고민 작성자)` DB 직접 확인
+
+### 잔여 리스크
+
+1. **동시성은 코드로만 방어, 부하 테스트 미수행** — SPEC-001 TASK-005와 동일한 한계. `select_for_update()`의 실제 경합 동작 검증은 Phase 2 스코프 밖.
+2. **`assertNumQueries` 기대값을 매번 한 번 틀리고 보정하는 패턴이 3회째 반복**(concerns 앱 TASK-004, 여기)됨 — 원인은 매번 다른 permission 클래스가 DB 쿼리를 쓰는지 여부(`IsAdmin`은 쓰고 `IsActiveAdvisor`는 안 씀)를 사전에 확인하지 않고 추정한 것. TASK-005부터는 구현 직후 실제 쿼리 로그를 먼저 찍어보고 기대값을 정하는 순서로 바꾸는 것을 권고.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-005(#26 받은 조언 목록 + #34·#35 피드백 작성/내 목록) 착수.
+
+---
+
+## 2026-09-11 — SPEC-002/TASK-003: 조언 수정+삭제 (api.md #29·#30) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdviceUpdateTests`(10) + `AdviceDeleteTests`(7) 총 17케이스 추가(본문 수정 시 version+히스토리, `submit` 단독 토글은 무변화, REVIEWING 허용, APPROVED/DELETED 409, 타인 403, 없는 advice 404, 삭제 204+상태전이, 삭제 후 재작성 가능(엔드포인트 경유)) → 실행해 15개 실패 확인(PATCH/DELETE 라우트 없음 → 405/404 혼재).
+2. 최소 구현: `advice/services.py`에 `_get_own_editable_advice()`(조회+소유권 403+편집가능상태 409 공용 검사) / `update_advice()`(본문 변경 시에만 `AdviceHistory` 스냅샷 + `version` 증가, `transaction.atomic`) / `delete_advice()`. `advice/serializers.py`에 `AdviceUpdateSerializer`(`submit`→`is_submitted` source 매핑) + `AdviceUpdateResultSerializer`. `AdviceDetailView`에 `patch`/`delete` 추가, `get_permissions()`로 GET은 `IsAuthenticated`만·PATCH/DELETE는 `IsActiveAdvisor` 추가.
+3. 4종 검증 — 전체 108/108 통과.
+4. 시각 확인: **TASK-002의 계정 오염 교훈을 반영**해, 사용 전 역할을 명시적으로 조회·출력(`roles held: ['ADVISOR']`, `is_superuser: False`)한 신규 계정으로 재현. 본문 수정 → `version` 2 스크린샷, 삭제 → `status=DELETED` 스크린샷, 그리고 `AdviceHistory` row를 DB에서 직접 조회해 수정 **전** 본문이 정확히 `version=1`로 스냅샷됐음을 확인.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-11)
+
+TASK-003 진행 승인.
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice.tests.AdviceUpdateTests advice.tests.AdviceDeleteTests` → 구현 전 15 fail → 구현 후 **17/17 OK**
+* `manage.py test` (전체) → **108/108 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인: PATCH 200(version 2) / DELETE 204 / 재조회 시 status=DELETED, `AdviceHistory.directional_guidance`가 수정 전 문구와 일치함을 DB에서 직접 확인 — 스크린샷 2장 Owner 전송
+
+### 잔여 리스크
+
+1. **없음 (이번 TASK 한정)** — TASK-002의 계정 오염 교훈을 실제로 적용해 재발 방지.
+2. TASK-004(리뷰 승인/반려)부터는 `AdviceHistory`가 아니라 `Notification`·`Concern.status`가 얽히므로, 여기서 검증한 "본문 변경 여부로 트리거 분기" 패턴이 그대로 재사용되지는 않음 — 별도 판정 로직 필요.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-004(#32 admin 리뷰 목록 + #33 승인/반려, 낙관적 잠금 412 최초 도입) 착수.
+
+---
+
+## 2026-09-11 — SPEC-002/TASK-002: 조언 상세 3주체 분기 (api.md #27) [위임]
+
+### 작업
+
+1. `advice/tests.py`에 `AdviceDetailTests` 11케이스 추가(작성자 전상태 200+`reject_reason`, 고민 작성자 APPROVED만 200/`reject_reason` 없음, 고민 작성자 PENDING·REJECTED 403, ADMIN 전상태 200, 무관 사용자·조언가 403, 없는 advice 404, advisor 신원 최소 노출) → 실행해 10개 실패 확인.
+2. 최소 구현: `advice/services.py`에 `get_visible_advice()` — (작성자 → 관리자 → 고민 작성자+APPROVED) 우선순위 판정, 그 외 403. `_is_admin()` 헬퍼는 `common.permissions.IsAdmin`과 동일 로직을 의도적으로 별도 구현(객체 수준 판정과 DRF permission 클래스의 시그니처가 안 맞아 억지로 묶지 않음, 코드 주석에 사유 명시). `advice/serializers.py`에 `AdviceDetailSerializer`(고민 작성자용) + 상속받은 `AdviceDetailWithReasonSerializer`(작성자/관리자용, `reject_reason` 추가) — 필드 목록 중복을 상속으로 제거. `AdviceDetailView` + URL 1개 추가.
+3. 4종 검증 — 전체 91/91 통과.
+4. 시각 확인 중 **데모 계정 재사용 문제를 발견·정정**(아래).
+
+### 데모 재현 중 발견한 것 (버그 아님, 데모 설계 실수)
+
+첫 스크린샷 시도에서 `demo@example.com`(고민 작성자)이 심사중(PENDING) 조언을 열람했는데 403이 아니라 200이 나왔다. 원인은 코드가 아니라 데모 계정: `demo`는 **TASK-004에서 이미 ADMIN 역할을 부여받은 채로 영구 보존된 계정**이었다. `get_visible_advice()`의 판정 순서가 (작성자→관리자→고민 작성자) 이므로, admin이기도 한 고민 작성자는 관리자 시야로 응답받는다 — 이것 자체는 설계대로다. 다만 "순수 고민 작성자"를 보여주려던 데모가 실은 "관리자"를 보여주고 있었던 것. `plain.owner@example.com`(어떤 역할도 없는 신규 계정)을 새로 만들어 재현해 올바른 스크린샷 3장을 얻었다.
+
+**교훈**: Docker Compose를 세션 간 재사용하면서 데모 계정에 역할을 누적 부여해 왔다(`demo`는 이제 ADVISOR는 아니지만 ADMIN). 앞으로 권한 분기를 시각 확인할 때는 매번 신선한 계정을 만들거나, 계정별 역할을 먼저 조회해 전제를 확인해야 한다.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-11)
+
+TASK-002 진행 승인.
+
+### 생성된 산출물
+
+수정: `advice/{services,serializers,views,urls,tests}.py`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice.tests.AdviceDetailTests` → 구현 전 10 fail → 구현 후 **11/11 OK**
+* `manage.py test` (전체) → **91/91 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* 시각 확인(정정 후, 권한 없는 신규 계정 기준): 승인된 조언 200(`reject_reason` 필드 자체 없음) / 심사중 조언 403 / 작성자 본인은 심사중 조언도 200(`is_submitted`·`reject_reason` 노출) — 스크린샷 3장 Owner 전송
+
+### 잔여 리스크
+
+1. **판정 우선순위(작성자>관리자>고민 작성자)가 명시적 결정이 아니라 구현 중 자연스럽게 정해짐** — 세 조건이 동시에 참인 경우(예: 관리자가 자기 자신에게 조언을 배정하는 기형적 케이스)는 스펙에 없다. Phase 2 실사용에서 발생 가능성은 낮으나 기록해 둔다.
+2. **개발용 Docker 컨테이너의 역할 오염** — `demo` 계정은 이제 ADMIN을 보유해 "평범한 사용자" 데모에 더 이상 적합하지 않다. 다음 세션에서 역할별 데모 계정을 명확히 분리(예: `owner.demo@`, `admin.demo@`, `advisor.demo@`)하는 것을 권고.
+
+### 다음 단계 권장
+
+1. Owner 확인 후 TASK-003(#29 조언 수정 + #30 삭제) 착수.
+
+---
+
 ## 2026-09-10 — SPEC-001/TASK-006: 마무리 — SPEC-001 종료 [위임]
 
 ### 작업
