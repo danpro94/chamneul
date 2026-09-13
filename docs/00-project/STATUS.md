@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-12 (SPEC-002/TASK-006 커밋 기준 — M4-6 구현 완료. 이전 실측 2026-09-11~12 TASK-001~005 / 2026-09-10 SPEC-001 종료)
+> 마지막 실측: 2026-09-13 (SPEC-002/TASK-007 커밋 기준 — SPEC-002 종료, PR 대기. 이전 실측 2026-09-11~12 TASK-001~006 / 2026-09-10 SPEC-001 종료)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | **M4-6 advice 13/13 구현 완료**(6/8 모듈), **39/44 엔드포인트** |
+| M4 진행률 | **M4-6 완료**(6/8 모듈), **39/44 엔드포인트** — 남은 모듈: M4-7 알림(3), M4-8 역할(2) |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -81,7 +81,7 @@
 
 ## 4. Active SPEC
 
-**SPEC-002-advice-api** (`specs/SPEC-002-advice-api/`) — api.md #26~38 (M4-6 advice + feedback) 13개 엔드포인트. **Status: Approved** — spec.md §7의 Owner 결정 4건 확정(2026-09-11, 전부 권고안 채택). 브랜치 `feat/spec-002-advice-api`.
+**SPEC-002-advice-api — 완료 (2026-09-13), PR 대기.** api.md #26~38 (M4-6) 13개 엔드포인트 전량 구현, AC-1~AC-11 전항 통과, advice 앱 테스트 106개(전체 168개). 브랜치 `feat/spec-002-advice-api` (origin에 push 완료, PR 미생성).
 
 확정된 §7 결정:
 
@@ -96,7 +96,8 @@
 * [x] TASK-004 — admin 리뷰 목록(#32) + 승인/반려(#33) ★ 핵심. `list_advices_for_admin_review()`가 `is_submitted=True`를 무조건 강제(§7-1 결정, status 필터 유무와 무관). `review_advice()`가 **한 트랜잭션**으로 advice 전이 + concern 전이(ASSIGNED일 때만, §7-3) + `Notification` 처리 — advice·concern 모두 `select_for_update()`. 체크 순서: 404→409(초안/상태)→412(버전 불일치)→422(반려 사유). `common/exceptions.py`에 `PreconditionFailed`(412) 신규 추가. 테스트 17종(선-실패 14개 확인, 1건은 `assertNumQueries` 기대값 실측 보정) → 검증 4종 통과(**125/125**) → 스크린샷 3장(대기열/412/승인+ANSWERED 전이) + DB로 알림 확인 → 커밋.
 * [x] TASK-005 — 받은 조언 목록(#26) + 피드백 작성(#34)/내 목록(#35). §6.2 노출 규칙이 `filter(concern__author=user, status=APPROVED)` 한 쌍으로 끝나도록 서비스에 집약. `advisor_display_name`은 페이지 단위 벌크 조회를 serializer context로 주입(단건 경로인 #27과 달리 목록이라 N+1 방지 필요). 피드백 1회 제한은 `Feedback.advice` OneToOne이 실제 강제 → IntegrityError를 409로 변환. 테스트 18종(선-실패 15개 확인) → 검증 4종 통과(**143/143**) → 스크린샷 5장 확인 → 커밋.
 * [x] TASK-006 — admin 피드백 목록(#36)/상세(#37)/상태 변경(#38). `_ALLOWED_FEEDBACK_TRANSITIONS` 표로 §6.3 단방향 흐름 강제(역방향·건너뛰기·동일 상태 전부 409). `memo`·`author_nickname`은 #37에서만 노출(#35에는 없음). `reviewed_by`/`reviewed_at`은 **REVIEWED 진입 시에만** 기록(판단 기록 참조). 테스트 19종(선-실패 16개 확인) → 검증 4종 통과(**162/162**) → 스크린샷 3장 확인 → 커밋.
-* [ ] **남은 것**: TASK-007 마무리 — AC-1~AC-11 전항 재검증(§6.2 노출 6지점 전수 포함), api.md 정정(결정 1~4), STATUS/AIUSAGE 갱신, PR 생성.
+* [x] TASK-007 마무리 — AC-1~AC-11 전항 대조 후 **미커버 6건 보강**(AC-11 §6.2 6지점 스윕 신설이 핵심, 나머지 5건은 "AC가 N개 상태를 열거하는데 테스트는 일부만" 유형). 전부 구현은 옳았고 검증만 없던 경우로 보강분이 첫 실행에서 통과. api.md 정정 4건 반영(#27·#29·#32·#33 + 상단 개정 이력). 검증 4종 통과(**168/168**).
+* [ ] **남은 것**: PR 생성 → 리뷰 → 머지.
 
 <details>
 <summary>SPEC-001-concerns-api — 완료 (2026-09-10, PR #2 머지)</summary>

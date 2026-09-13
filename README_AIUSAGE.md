@@ -6,6 +6,65 @@
 
 ---
 
+## 2026-09-13 — SPEC-002/TASK-007: 마무리 — SPEC-002 종료 [위임]
+
+### 작업
+
+1. 브랜치 `feat/spec-002-advice-api`를 origin에 push(커밋 6개가 로컬에만 있던 상태 해소). PR은 규칙대로 SPEC 완료 후로 미룸.
+2. **AC-1~AC-11을 실제 테스트 목록과 1:1 대조** → 미커버 6건 발견·보강(아래).
+3. `docs/api.md` 정정 4건: #32/#33(초안 제외 규칙), #29(`submit` 토글은 version 미증가), #33(승인 시 concern 전이는 `ASSIGNED`에서만), #27(주체 판정 우선순위 + 비-APPROVED는 403). 상단 개정 이력에 2026-09-13 항목 추가.
+4. `tasks.md` 전 항목 체크, `acceptance.md`에 종료 판정 절 추가, STATUS.md 갱신.
+5. 4종 검증 — 전체 **168/168** 통과.
+
+### AC 대조에서 발견한 미커버 6건 (전부 보강)
+
+| # | 미커버였던 AC | 조치 |
+| --- | --- | --- |
+| 1 | **AC-11 전체** — §6.2 노출 6지점 전수 점검 자체가 없었음 | `PendingAdviceExposureSweepTests` 신설(6 테스트) |
+| 2 | AC-2 DELETED 포함 미검증 | #31 목록을 5개 상태 전부로 확장 |
+| 3 | AC-3 작성자 5개 상태 중 2개만 검증 | subTest 5종 추가 |
+| 4 | AC-4 REJECTED 상태 수정 미검증 | 3개 상태 subTest 루프 |
+| 5 | AC-7 REJECTED 재리뷰 미검증 | 2개 상태 subTest 루프 |
+| 6 | AC-8 REVIEWING 미노출 미검증 | 4개 상태 전부로 확장 |
+
+**중요한 관찰**: 6건 전부 *구현은 이미 옳았고 검증만 없던* 경우였다 — 보강한 테스트가 첫 실행에서 모두 통과했다. 즉 이 단계에서 잡은 것은 버그가 아니라 **증거의 공백**이다. 특히 AC-11은 §6.2가 두 앱 6곳에 흩어져 강제되는데, 각 지점의 단위 테스트는 있어도 *하나의 조언*에 대해 여섯 곳이 동시에 성립하는지는 아무도 확인하지 않고 있었다.
+
+### 과정에서 있었던 오판 1건 (정정 기록)
+
+AC 대조 중 `AdminAdviceListTests`의 테스트가 4개만 잡혀 "TASK-004에서 쓴 테스트 1개가 유실됐다"고 판단했으나, **오판이었다**. 실제로는 테스트 집계에 쓴 grep 파이프라인이 `Applying sessions.0001_initial...test_xxx`처럼 마이그레이션 출력과 붙어 나온 첫 줄을 놓친 것이었다. 코드에서 직접 세어 100개 전부 존재함을 확인했다. 교훈: 테스트 목록은 실행 로그 파싱이 아니라 소스에서 세는 편이 안전하다.
+
+### 사용 도구
+
+* Claude Code (VS Code Extension)
+
+### 인간 결정 (Owner, 2026-09-13)
+
+| 결정 | 내용 |
+| --- | --- |
+| push/PR 시점 | **push는 지금, PR은 TASK-007 후** — push는 백업이고 PR은 리뷰 요청이라 "하나의 SPEC = 하나의 PR" 규칙에 걸린다는 권고 승인 |
+
+### 생성된 산출물
+
+수정: `advice/tests.py`(보강 6건), `docs/api.md`(정정 4건 + 개정 이력), `specs/SPEC-002-advice-api/{tasks,acceptance}.md`, `docs/00-project/STATUS.md`.
+
+### 검증 결과 (전부 실행 완료)
+
+* `manage.py test advice` → **106/106 OK** / 전체 → **168/168 OK**
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+
+### 잔여 리스크
+
+1. **서브에이전트 리뷰 미실행** — SPEC-001 PR과 동일하게 `security-reviewer`·`api-architect`를 아직 돌리지 않았다. SPEC-002는 3주체 가시성·낙관적 잠금 등 보안 판단이 더 많으므로, SPEC-001 때보다 리뷰 가치가 크다.
+2. **M4 전체 문서 부채 지속** — M4-1~M4-4 AIUSAGE 소급 기록, 리뷰 노트 2건, model.md drift 6건(STATUS.md §7).
+3. **남은 모듈 2개**(M4-7 알림 3개, M4-8 역할 2개) — 둘 다 작아서 SPEC 하나로 묶을지 판단 필요.
+
+### 다음 단계 권장
+
+1. PR 생성 → (선택) 서브에이전트 리뷰 → 머지.
+2. 이후 M4-7·M4-8을 하나의 SPEC-003으로 묶어 진행 검토.
+
+---
+
 ## 2026-09-12 — SPEC-002/TASK-006: admin 피드백 3종 (api.md #36·#37·#38) — M4-6 구현 완료 [위임]
 
 ### 작업

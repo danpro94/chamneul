@@ -121,3 +121,29 @@ CLAUDE.md §6.2는 이 SPEC의 6개 지점에 걸린다. **PENDING advice 1건�
 ## 종료 조건
 
 AC-1 ~ AC-11 전항 통과 + TEST_CRITERIA.md §3 공통 체크리스트 + `manage.py check`/`makemigrations --check`/`ruff check`/`manage.py test` 4종 무오류 실행 출력 첨부 → SPEC-002 완료, STATUS.md 갱신, PR 생성.
+
+---
+
+## 종료 판정 (TASK-007, 2026-09-13)
+
+**결과: AC-1 ~ AC-11 전항 통과.** `advice/tests.py` 106개 테스트가 커버하며, 4종 검증 전부 무오류.
+
+TASK-007에서 AC를 테스트 목록과 1:1 대조하다 발견한 미커버 6건을 모두 보강했다. 전부 **구현은 이미 옳았고 검증만 없던** 경우로, 보강한 테스트는 첫 실행에서 통과했다 — 즉 이 단계에서 잡은 것은 버그가 아니라 *증거의 공백*이다.
+
+| # | 미커버였던 AC | 조치 |
+| --- | --- | --- |
+| 1 | **AC-11 전체** — §6.2 노출 규칙 6지점 전수 점검이 아예 없었음 | `PendingAdviceExposureSweepTests` 신설(6 테스트). PENDING advice 1건을 만들어 #26·#27·#18·#34·#35에서 안 보이는 것과, #32·#23·#27 admin 경로에서는 보이는 것을 함께 검증 |
+| 2 | AC-2 "상태 무관 전량"인데 DELETED 포함 미검증 | #31 목록 테스트를 5개 상태 전부로 확장 |
+| 3 | AC-3 "작성자는 5개 상태 전부 200"인데 2개만 검증 | `test_detail_author_sees_every_status`(subTest 5종) 추가 |
+| 4 | AC-4 "APPROVED/REJECTED/DELETED 수정 409"인데 REJECTED 미검증 | 3개 상태 subTest 루프로 통합 |
+| 5 | AC-7 "이미 APPROVED/REJECTED 재리뷰 409"인데 REJECTED 미검증 | 2개 상태 subTest 루프로 통합 |
+| 6 | AC-8 "PENDING/REVIEWING/REJECTED/DELETED 미노출"인데 REVIEWING 미검증 | 4개 상태 전부로 확장 |
+
+**AC-11이 특히 중요한 이유**: §6.2는 두 앱 6곳에 흩어져 강제된다. 각 지점의 단위 테스트는 있었지만, *하나의 조언*에 대해 여섯 곳이 동시에 성립하는지는 아무도 확인하지 않았다. 이 스윕이 그 구멍을 막는다 — 앞으로 어느 한 곳에서 노출 필터가 빠지면 이 클래스가 즉시 깨진다.
+
+실행 출력(2026-09-13):
+
+```
+Ran 106 tests in 37.529s   # advice 앱
+OK
+```

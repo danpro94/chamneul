@@ -232,17 +232,27 @@ class AdvicesWrittenTests(AdviceTestBase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_list_returns_own_advices_regardless_of_status(self):
-        mine_pending = self.make_advice()
-        other_concern = Concern.objects.create(
-            author=self.requester,
-            concern_summary="다른 고민",
-            concern_type=ConcernType.JOB_CHANGE,
-        )
-        mine_rejected = self.make_advice(
-            concern=other_concern, status=AdviceStatus.REJECTED
-        )
+        # AC-2 says "상태 무관 전량" — including DELETED, which the advisor
+        # still needs to see in their own record of work (unlike every
+        # user-facing list, where DELETED is hidden).
+        mine = {}
+        for advice_status in (
+            AdviceStatus.PENDING,
+            AdviceStatus.REVIEWING,
+            AdviceStatus.APPROVED,
+            AdviceStatus.REJECTED,
+            AdviceStatus.DELETED,
+        ):
+            concern = Concern.objects.create(
+                author=self.requester,
+                concern_summary=f"{advice_status} 고민",
+                concern_type=ConcernType.JOB_CHANGE,
+            )
+            mine[advice_status] = self.make_advice(
+                concern=concern, status=advice_status
+            )
         # Another advisor's advice must not appear.
-        self.make_advice(advisor=self.other_advisor, concern=other_concern)
+        self.make_advice(advisor=self.other_advisor)
 
         self.client.force_authenticate(self.advisor)
         response = self.client.get(ADVICES_WRITTEN_URL)
@@ -250,7 +260,7 @@ class AdvicesWrittenTests(AdviceTestBase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("page_info", response.data)
         ids = {item["advice_id"] for item in response.data["items"]}
-        self.assertEqual(ids, {str(mine_pending.id), str(mine_rejected.id)})
+        self.assertEqual(ids, {str(advice.id) for advice in mine.values()})
 
     def test_list_exposes_is_submitted_and_version(self):
         advice = self.make_advice(is_submitted=False, version=3)
@@ -369,6 +379,27 @@ class AdviceDetailTests(AdviceTestBase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(response.data["is_submitted"])
+
+    def test_detail_author_sees_every_status(self):
+        # AC-3's first line in full: the author is never blocked by state.
+        self.client.force_authenticate(self.advisor)
+        for advice_status in (
+            AdviceStatus.PENDING,
+            AdviceStatus.REVIEWING,
+            AdviceStatus.APPROVED,
+            AdviceStatus.REJECTED,
+            AdviceStatus.DELETED,
+        ):
+            with self.subTest(status=advice_status):
+                concern = Concern.objects.create(
+                    author=self.requester,
+                    concern_summary=f"{advice_status} 고민",
+                    concern_type=ConcernType.BURNOUT,
+                )
+                advice = self.make_advice(concern=concern, status=advice_status)
+                response = self.client.get(advice_detail_url(advice.id))
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertIn("reject_reason", response.data)
 
     # --- concern owner: APPROVED only, never reject_reason ----------------
 
@@ -514,27 +545,27 @@ class AdviceUpdateTests(AdviceTestBase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    def test_update_rejected_when_approved(self):
-        advice = self.make_advice(status=AdviceStatus.APPROVED)
-
+    def test_update_rejected_in_every_terminal_state(self):
+        # AC-4 lists all three terminal states; each must be 409.
         self.client.force_authenticate(self.advisor)
-        response = self.client.patch(
-            advice_detail_url(advice.id),
-            {"directional_guidance": "승인 후 수정 시도"},
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
-
-    def test_update_rejected_when_deleted(self):
-        advice = self.make_advice(status=AdviceStatus.DELETED)
-
-        self.client.force_authenticate(self.advisor)
-        response = self.client.patch(
-            advice_detail_url(advice.id),
-            {"directional_guidance": "삭제 후 수정 시도"},
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        for advice_status in (
+            AdviceStatus.APPROVED,
+            AdviceStatus.REJECTED,
+            AdviceStatus.DELETED,
+        ):
+            with self.subTest(status=advice_status):
+                concern = Concern.objects.create(
+                    author=self.requester,
+                    concern_summary=f"{advice_status} 고민",
+                    concern_type=ConcernType.BURNOUT,
+                )
+                advice = self.make_advice(concern=concern, status=advice_status)
+                response = self.client.patch(
+                    advice_detail_url(advice.id),
+                    {"directional_guidance": "종결 후 수정 시도"},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
 
     def test_update_forbidden_for_non_author(self):
         advice = self.make_advice()
@@ -806,14 +837,21 @@ class AdviceReviewTests(AdviceTestBase):
         )
         self.assertEqual(response.status_code, status.HTTP_412_PRECONDITION_FAILED)
 
-    def test_reviewing_already_approved_advice_returns_409(self):
-        advice = self.make_advice(status=AdviceStatus.APPROVED)
-
+    def test_reviewing_already_decided_advice_returns_409(self):
+        # AC-7 lists both terminal decisions — neither can be re-reviewed.
         self.client.force_authenticate(self.admin)
-        response = self.client.patch(
-            advice_review_url(advice.id), self.review_payload(), format="json"
-        )
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        for advice_status in (AdviceStatus.APPROVED, AdviceStatus.REJECTED):
+            with self.subTest(status=advice_status):
+                concern = Concern.objects.create(
+                    author=self.requester,
+                    concern_summary=f"{advice_status} 고민",
+                    concern_type=ConcernType.BURNOUT,
+                )
+                advice = self.make_advice(concern=concern, status=advice_status)
+                response = self.client.patch(
+                    advice_review_url(advice.id), self.review_payload(), format="json"
+                )
+                self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
 
     def test_reviewing_draft_returns_409(self):
         # Owner decision 2026-09-11 (spec.md §7-1): a draft is not eligible
@@ -896,8 +934,14 @@ class ReceivedAdviceListTests(AdviceTestBase):
         ids = [item["advice_id"] for item in response.data["items"]]
         self.assertEqual(ids, [str(approved.id)])
 
-    def test_list_hides_rejected_and_deleted(self):
-        for advice_status in (AdviceStatus.REJECTED, AdviceStatus.DELETED):
+    def test_list_hides_every_non_approved_status(self):
+        # AC-8 names all four; APPROVED is the only thing a user ever sees.
+        for advice_status in (
+            AdviceStatus.PENDING,
+            AdviceStatus.REVIEWING,
+            AdviceStatus.REJECTED,
+            AdviceStatus.DELETED,
+        ):
             concern = Concern.objects.create(
                 author=self.requester,
                 concern_summary=f"{advice_status} 고민",
@@ -1344,3 +1388,73 @@ class AdminFeedbackTransitionTests(AdminFeedbackTestBase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class PendingAdviceExposureSweepTests(AdviceTestBase):
+    """SPEC-002 TASK-007 / acceptance.md AC-11 — CLAUDE.md §6.2 end to end.
+
+    §6.2 ("users see only APPROVED advice") is enforced in six separate
+    places across two apps. Each of those has its own unit test, but nothing
+    proved they hold *together* for one concrete advice. This does: one
+    PENDING advice is created, then every user-facing surface is checked for
+    a leak, and the admin surfaces are checked to still show it (§6.2 protects
+    concern owners — it is not an admin restriction).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.pending_advice = self.make_advice(status=AdviceStatus.PENDING)
+
+    def test_pending_advice_is_absent_from_received_advices(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(RECEIVED_ADVICES_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["items"], [])
+
+    def test_pending_advice_detail_is_forbidden_for_concern_owner(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(advice_detail_url(self.pending_advice.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_pending_advice_is_absent_from_concern_detail(self):
+        # SPEC-001 #18: the concern owner's own concern detail carries
+        # approved_advices[] — a PENDING advice must not appear there either.
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(
+            f"/api/v1/users/me/concerns/{self.concern.id}"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["approved_advices"], [])
+
+    def test_pending_advice_cannot_receive_feedback(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            feedbacks_url(self.pending_advice.id), {"score": 5}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_pending_advice_leaves_no_trace_in_my_feedbacks(self):
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(MY_FEEDBACKS_URL)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["items"], [])
+
+    def test_pending_advice_is_visible_to_admin(self):
+        # The other half of §6.2: admins must see it, or review is impossible.
+        self.client.force_authenticate(self.admin)
+
+        admin_list = self.client.get(ADMIN_ADVICES_URL)
+        listed_ids = [item["advice_id"] for item in admin_list.data["items"]]
+        self.assertIn(str(self.pending_advice.id), listed_ids)
+
+        concern_detail = self.client.get(
+            f"/api/v1/admin/concerns/{self.concern.id}"
+        )
+        advice_ids = [item["advice_id"] for item in concern_detail.data["advices"]]
+        self.assertIn(str(self.pending_advice.id), advice_ids)
+
+        advice_detail = self.client.get(advice_detail_url(self.pending_advice.id))
+        self.assertEqual(advice_detail.status_code, status.HTTP_200_OK)
