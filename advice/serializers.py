@@ -200,6 +200,14 @@ class AdminAdviceListSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class AdminAdviceQuerySerializer(serializers.Serializer):
+    """#32 query params. Without this an unknown `status` silently produced an
+    empty review queue, which an admin reads as "nothing to review" — api.md
+    #32 declares 400 for it (review finding MJ-3)."""
+
+    status = serializers.ChoiceField(choices=AdviceStatus.choices, required=False)
+
+
 class AdviceReviewSerializer(serializers.Serializer):
     """PATCH /api/v1/admin/advices/{advice-id}/review (#33) request.
 

@@ -16,6 +16,7 @@ from concerns.services import display_names_by_advisor
 from . import services
 from .serializers import (
     AdminAdviceListSerializer,
+    AdminAdviceQuerySerializer,
     AdminFeedbackDetailSerializer,
     AdminFeedbackListSerializer,
     AdminFeedbackQuerySerializer,
@@ -124,8 +125,10 @@ class AdminAdviceListView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
+        query = AdminAdviceQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
         queryset = services.list_advices_for_admin_review(
-            request.query_params.get("status")
+            query.validated_data.get("status")
         )
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(queryset, request, view=self)

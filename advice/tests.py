@@ -1442,6 +1442,20 @@ class PendingAdviceExposureSweepTests(AdviceTestBase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["items"], [])
 
+    def test_pending_advice_does_not_flip_has_approved_advice(self):
+        # The seventh §6.2 surface, missed when this sweep was first written
+        # (security review m-4): SPEC-001 #17's derived has_approved_advice
+        # must stay false while the only advice is PENDING.
+        self.client.force_authenticate(self.requester)
+        response = self.client.get("/api/v1/users/me/concerns")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        item = next(
+            i for i in response.data["items"]
+            if i["concern_id"] == str(self.concern.id)
+        )
+        self.assertFalse(item["has_approved_advice"])
+
     def test_pending_advice_is_visible_to_admin(self):
         # The other half of §6.2: admins must see it, or review is impossible.
         self.client.force_authenticate(self.admin)
@@ -1458,3 +1472,162 @@ class PendingAdviceExposureSweepTests(AdviceTestBase):
 
         advice_detail = self.client.get(advice_detail_url(self.pending_advice.id))
         self.assertEqual(advice_detail.status_code, status.HTTP_200_OK)
+
+
+class ReviewFindingsTests(AdviceTestBase):
+    """SPEC-002 리뷰 반영 (2026-09-13, security-reviewer + api-architect).
+
+    Each test pins one finding from the two subagent reviews. Owner decisions
+    of 2026-09-13 chose option (a) for all four policy questions.
+    """
+
+    def soft_delete_concern(self):
+        from django.utils import timezone
+
+        self.concern.deleted_at = timezone.now()
+        self.concern.save(update_fields=["deleted_at"])
+
+    # --- M-1: an advisor's edit must not clobber an admin's decision -------
+
+    def test_update_does_not_overwrite_review_columns(self):
+        """The advisor's PATCH writes body columns only.
+
+        Simulates the lost-update window: a review lands in the DB after the
+        advisor's request began. Before the fix, `advice.save()` wrote every
+        column from the stale in-memory instance and wiped reject_reason /
+        reviewed_by (security review M-1).
+        """
+        advice = self.make_advice()
+        # A write that the request's in-memory instance knows nothing about.
+        Advice.objects.filter(pk=advice.pk).update(
+            reject_reason="관리자가 남긴 사유", reviewed_by=self.admin
+        )
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "조언가가 고친 본문"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        advice.refresh_from_db()
+        self.assertEqual(advice.directional_guidance, "조언가가 고친 본문")
+        self.assertEqual(advice.reject_reason, "관리자가 남긴 사유")
+        self.assertEqual(advice.reviewed_by, self.admin)
+
+    # --- Decision 1: reviewing an advice on a deleted concern -------------
+
+    def test_review_on_soft_deleted_concern_returns_409(self):
+        advice = self.make_advice()
+        self.soft_delete_concern()
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            advice_review_url(advice.id),
+            {"decision": "approved", "expected_version": 1},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertFalse(Notification.objects.exists())
+
+    def test_admin_review_queue_excludes_deleted_concerns(self):
+        self.make_advice()
+        self.soft_delete_concern()
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_ADVICES_URL)
+        self.assertEqual(response.data["items"], [])
+
+    # --- Decision 3: REJECTED is no longer a dead end ---------------------
+
+    def test_rejected_advice_can_be_deleted(self):
+        advice = self.make_advice(
+            status=AdviceStatus.REJECTED, reject_reason="근거 부족"
+        )
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.delete(advice_detail_url(advice.id))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        advice.refresh_from_db()
+        self.assertEqual(advice.status, AdviceStatus.DELETED)
+
+    def test_rejected_advice_can_be_rewritten_after_delete(self):
+        self.make_advice(status=AdviceStatus.REJECTED, reject_reason="근거 부족")
+
+        self.client.force_authenticate(self.advisor)
+        rejected = Advice.objects.get(concern=self.concern, advisor=self.advisor)
+        self.client.delete(advice_detail_url(rejected.id))
+
+        response = self.client.post(
+            self.advices_url(),
+            self.create_payload(directional_guidance="반려 후 다시 쓴 조언"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_rejected_advice_still_cannot_be_edited(self):
+        # Decision 3(a) opened DELETE only — editing a decided advice stays 409.
+        advice = self.make_advice(status=AdviceStatus.REJECTED)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            advice_detail_url(advice.id),
+            {"directional_guidance": "반려 후 수정 시도"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    # --- Decision 4: a deleted concern hides its advices from the owner ---
+
+    def test_received_advices_excludes_deleted_concern(self):
+        self.make_advice(status=AdviceStatus.APPROVED)
+        self.soft_delete_concern()
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(RECEIVED_ADVICES_URL)
+        self.assertEqual(response.data["items"], [])
+
+    def test_advice_detail_hidden_from_owner_when_concern_deleted(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+        self.soft_delete_concern()
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.get(advice_detail_url(advice.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_feedback_blocked_when_concern_deleted(self):
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+        self.soft_delete_concern()
+
+        self.client.force_authenticate(self.requester)
+        response = self.client.post(
+            feedbacks_url(advice.id), {"score": 5}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_author_and_admin_still_see_advice_on_deleted_concern(self):
+        # Decision 4 hides it from the *owner*; the advisor's own record and
+        # the admin's audit path are unaffected.
+        advice = self.make_advice(status=AdviceStatus.APPROVED)
+        self.soft_delete_concern()
+
+        self.client.force_authenticate(self.advisor)
+        self.assertEqual(
+            self.client.get(advice_detail_url(advice.id)).status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(
+            self.client.get(advice_detail_url(advice.id)).status_code,
+            status.HTTP_200_OK,
+        )
+
+    # --- MJ-3: #32's status filter must be validated ----------------------
+
+    def test_admin_review_queue_rejects_invalid_status(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(ADMIN_ADVICES_URL, {"status": "NOT_A_STATUS"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

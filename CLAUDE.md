@@ -357,7 +357,7 @@ Soft delete (project-wide convention):
 `advice.version` is an audit-only integer (Owner decision 2026-06-22):
 
 * Starts at 1 on create.
-* `+1` on every advice update by the advisor (only allowed in `PENDING` / `REVIEWING` states).
+* `+1` **when an advice update changes a body field** (`directional_guidance`, `reflective_questions`, `considerations`, `out_of_scope_flag`) — updates that only toggle the `submit`/`is_submitted` workflow flag do not increment it. Updates are still allowed only in `PENDING` / `REVIEWING` states. *(Superseded by ADR-007, 2026-09-14; the original wording was "+1 on every advice update by the advisor".)*
 * Exposed in API responses so the advisor can see their iteration history.
 * A separate audit table (advice history) preserves prior body content per version. The audit table is not exposed as a public API in Phase 2.
 
@@ -565,6 +565,7 @@ Constitutional lock (Owner directive):
 * This CLAUDE.md is the project constitution. The 2026-06-22 alignment session and the 2026-06-26 model alignment session are the only authorized in-place edit windows. After 2026-06-26 ends, **CLAUDE.md is frozen** — changes happen only through a new ADR that explicitly supersedes the affected clause. A future Claude session must never edit CLAUDE.md directly; it must read it as ground truth and propose an ADR if it disagrees.
 * The 2026-06-26 edit explicitly absorbed the SQLite-exclusion rule (§4) and the `deleted_at` soft-delete convention with partial-unique enforcement (§6.6) directly into CLAUDE.md, so no separate supersession ADR is required for these clauses.
 * ADR-006 (AI-Native / Spec-Driven skeleton, Accepted 2026-09-10) explicitly supersedes §2 (Source of Truth Order), §3 (Current Known Project Tree), §5 (endpoint count 43→44), §9-§12 (split into `.claude/rules/*.md`), §13 (STATUS.md/specs maintenance added), and §17 (workflow replaced) per the process this section requires. The edits are applied verbatim from ADR-006's Consequences section.
+* ADR-007 (`advice.version` counts body revisions, Accepted 2026-09-14) explicitly supersedes the second bullet of §6.7. It was written *after* the implementation already followed the new rule — a 2026-09-11 SPEC decision changed behaviour without an ADR, and the gap was caught by an `api-architect` review on 2026-09-13. The lesson is recorded here deliberately: **a SPEC decision that contradicts a CLAUDE.md clause needs an ADR at the moment of the decision, not at review time.**
 
 ---
 
