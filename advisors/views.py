@@ -75,11 +75,14 @@ class AdminAdvisorApplicationDetailView(APIView):
         return Response(AdvisorApplicationAdminDetailSerializer(application).data)
 
     def patch(self, request, application_id):
-        application = get_object_or_404(AdvisorApplication, pk=application_id)
         serializer = AdvisorApplicationReviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        services.review_application(
-            application,
+        # The id goes to the service, not a pre-fetched object: the service
+        # re-reads the row under a lock so a decision committed elsewhere in
+        # the meantime is a 409 rather than a duplicate approval (audit
+        # finding A-1, 2026-09-14).
+        application = services.review_application(
+            application_id,
             actor=request.user,
             target_status=serializer.validated_data["status"],
             reject_reason=serializer.validated_data.get("reject_reason", ""),
