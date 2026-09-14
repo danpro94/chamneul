@@ -24,10 +24,21 @@ DECISION_REJECTED = "rejected"
 # 전이: PENDING|REVIEWING → APPROVED|REJECTED").
 _REVIEWABLE_STATUSES = (AdviceStatus.PENDING, AdviceStatus.REVIEWING)
 
-# States in which the author may still change or withdraw an advice
-# (api.md #29/#30) — anything else (APPROVED/REJECTED/DELETED) is terminal
-# for the author and returns 409.
+# States in which the author may still change an advice's body (api.md #29).
+# APPROVED/REJECTED/DELETED are terminal for editing and return 409.
 _EDITABLE_STATUSES = (AdviceStatus.PENDING, AdviceStatus.REVIEWING)
+
+# States from which the author may withdraw an advice (api.md #30). REJECTED
+# is deletable but not editable (Owner decision 2026-09-13, review finding
+# MJ-2): a rejection notification tells the advisor why and points at the
+# advice, so they need *some* way forward — deleting frees the
+# (concern, advisor) slot (the partial unique excludes DELETED) and lets them
+# write a fresh one. Editing a decided advice in place stays forbidden.
+_DELETABLE_STATUSES = (
+    AdviceStatus.PENDING,
+    AdviceStatus.REVIEWING,
+    AdviceStatus.REJECTED,
+)
 
 # The body fields that make up an AdviceHistory snapshot (model.md §3.9).
 # `is_submitted` is deliberately excluded — spec.md §7-2: it is a workflow
@@ -119,40 +130,59 @@ def get_visible_advice(advice_id, user) -> tuple[Advice, str]:
         return advice, VIEWER_AUTHOR
     if _is_admin(user):
         return advice, VIEWER_ADMIN
-    if advice.concern.author_id == user.id and advice.status == AdviceStatus.APPROVED:
+    # The owner branch additionally requires a live concern: withdrawing a
+    # concern (#19) hides its advices from the owner too, so "deleted" means
+    # the same thing on every user-facing path (Owner decision 2026-09-13,
+    # review finding MJ-1). The author and admin branches above are
+    # deliberately unaffected — the advisor keeps their own record of work
+    # and the admin keeps the audit trail.
+    if (
+        advice.concern.author_id == user.id
+        and advice.status == AdviceStatus.APPROVED
+        and advice.concern.deleted_at is None
+    ):
         return advice, VIEWER_OWNER
     raise PermissionDenied("조회 권한이 없습니다.")
 
 
-def _get_own_editable_advice(advice_id, actor) -> Advice:
-    """Shared lookup for #29/#30: 404 if missing (existence is not hidden —
-    same reasoning as #27), 403 if the caller didn't write it, 409 if its
-    status is no longer editable (api.md #29/#30's own status-code sets)."""
-    advice = get_object_or_404(Advice, pk=advice_id)
+def _lock_own_advice(advice_id, actor, allowed_statuses) -> Advice:
+    """Shared lookup for #29/#30, **inside the caller's transaction and under
+    a row lock**.
+
+    The lock is not optional. Without it the read happened outside any
+    transaction and the later write used the stale in-memory row, so an
+    admin's review committed in between was silently reverted — rejection,
+    reject_reason and reviewed_by all wiped (security review M-1). #33's
+    optimistic lock only protects the admin from a stale read; it does
+    nothing for the reverse direction, which is what this closes.
+
+    404 if missing (existence is not hidden — same reasoning as #27), 403 if
+    the caller didn't write it, 409 if its status is outside allowed_statuses.
+    """
+    advice = get_object_or_404(Advice.objects.select_for_update(), pk=advice_id)
     if advice.advisor_id != actor.id:
         raise PermissionDenied("작성자만 수정할 수 있습니다.")
-    if advice.status not in _EDITABLE_STATUSES:
+    if advice.status not in allowed_statuses:
         raise Conflict("현재 상태에서는 변경할 수 없습니다.")
     return advice
 
 
 def update_advice(advice_id, actor, validated_data) -> Advice:
     """#29 — partial update. `version` increments, and a history row is
-    snapshotted, only when a body field actually changes (Owner decision
-    2026-09-11, spec.md §7-2) — a lone `submit` toggle does neither, since
-    `version` is the body-history counter (CLAUDE.md §6.7).
+    snapshotted, only when a body field actually changes (ADR-007, which
+    supersedes CLAUDE.md §6.7's "every update" wording) — a lone `submit`
+    toggle does neither, since `version` counts body revisions.
     """
-    advice = _get_own_editable_advice(advice_id, actor)
-
-    body_changed = any(
-        field in validated_data and getattr(advice, field) != validated_data[field]
-        for field in _BODY_FIELDS
-    )
-
     with transaction.atomic():
+        advice = _lock_own_advice(advice_id, actor, _EDITABLE_STATUSES)
+
+        body_changed = any(
+            field in validated_data and getattr(advice, field) != validated_data[field]
+            for field in _BODY_FIELDS
+        )
         if body_changed:
             # Snapshot the *pre-update* body under the *current* (soon to be
-            # previous) version number (CLAUDE.md §6.7).
+            # previous) version number (ADR-007 / CLAUDE.md §6.7).
             AdviceHistory.objects.create(
                 advice=advice,
                 version=advice.version,
@@ -165,18 +195,24 @@ def update_advice(advice_id, actor, validated_data) -> Advice:
                 setattr(advice, field, validated_data[field])
         if "is_submitted" in validated_data:
             advice.is_submitted = validated_data["is_submitted"]
-        advice.save()
+
+        # Scoped save: the advisor's path must not be able to write review
+        # columns (status / reject_reason / reviewed_*) even by accident.
+        advice.save(
+            update_fields=[*_BODY_FIELDS, "version", "is_submitted", "updated_at"]
+        )
     return advice
 
 
 def delete_advice(advice_id, actor) -> None:
     """#30 — soft delete: status -> DELETED, nothing else. The row stays (the
-    partial unique on (concern, advisor) excludes DELETED, model.md §3.8, so
-    this deliberately does not block the advisor from writing a fresh advice
-    on the same concern)."""
-    advice = _get_own_editable_advice(advice_id, actor)
-    advice.status = AdviceStatus.DELETED
-    advice.save(update_fields=["status"])
+    partial unique on (concern, advisor) excludes DELETED, model.md §3.8), so
+    this is also the advisor's route back after a rejection: delete, then
+    write a fresh advice on the same concern (Owner decision 2026-09-13)."""
+    with transaction.atomic():
+        advice = _lock_own_advice(advice_id, actor, _DELETABLE_STATUSES)
+        advice.status = AdviceStatus.DELETED
+        advice.save(update_fields=["status"])
 
 
 def list_advices_for_admin_review(status_filter=None):
@@ -187,7 +223,15 @@ def list_advices_for_admin_review(status_filter=None):
     submitted must not be reviewable, and review_advice() enforces the same
     rule again so a direct #33 call cannot bypass it either.
     """
-    queryset = Advice.objects.filter(is_submitted=True).order_by("-created_at")
+    # concern__deleted_at: an advice whose concern was withdrawn is out of the
+    # review pipeline entirely — #33 refuses it (409), so leaving it in the
+    # queue would only give admins an unreviewable row (Owner decision
+    # 2026-09-13). FK traversal uses the unfiltered base manager, so this has
+    # to be spelled out.
+    queryset = (
+        Advice.objects.filter(is_submitted=True, concern__deleted_at__isnull=True)
+        .order_by("-created_at")
+    )
     if status_filter:
         return queryset.filter(status=status_filter)
     return queryset.filter(status=AdviceStatus.PENDING)
@@ -210,8 +254,14 @@ def review_advice(advice_id, actor, decision, reason, expected_version) -> tuple
     from notifications.models import Notification, NotificationType
 
     with transaction.atomic():
+        # of=("self",): lock the advice row only. Without it Postgres also
+        # locks the joined accounts_user row, and since one account can be
+        # both an advisor and another concern's author, two concurrent
+        # reviews could grab those rows in opposite order and deadlock
+        # (review finding MN-4 / m-2).
         advice = get_object_or_404(
-            Advice.objects.select_for_update().select_related("advisor"), pk=advice_id
+            Advice.objects.select_for_update(of=("self",)).select_related("advisor"),
+            pk=advice_id,
         )
         if not advice.is_submitted:
             raise Conflict("제출되지 않은 초안은 리뷰할 수 없습니다.")
@@ -222,9 +272,20 @@ def review_advice(advice_id, actor, decision, reason, expected_version) -> tuple
         if decision == DECISION_REJECTED and not reason.strip():
             raise UnprocessableEntity("반려 시 사유는 필수입니다.")
 
-        concern = Concern.objects.select_for_update().select_related("author").get(
-            pk=advice.concern_id
+        # with_deleted(): the default manager hides soft-deleted concerns, and
+        # .get() on it raised DoesNotExist — not an APIException — so a
+        # withdrawn concern turned admin review into a 500 (review finding
+        # BL-1 / M-2). Reviewing an advice on a withdrawn concern is a
+        # conflict, matching concerns.services.assign_advisor's 409 for the
+        # same situation (Owner decision 2026-09-13).
+        concern = (
+            Concern.objects.with_deleted()
+            .select_for_update(of=("self",))
+            .select_related("author")
+            .get(pk=advice.concern_id)
         )
+        if concern.deleted_at is not None:
+            raise Conflict("삭제된 고민의 조언은 리뷰할 수 없습니다.")
 
         advice.reviewed_by = actor
         advice.reviewed_at = timezone.now()
@@ -269,8 +330,16 @@ def list_received_advices(user):
     nothing else in this path needs to re-check it. `is_feedback_submitted`
     is an Exists annotation, not a per-row query.
     """
+    # concern__deleted_at is part of the rule, not an extra: a withdrawn
+    # concern hides its advices from its owner (Owner decision 2026-09-13).
+    # The FK join uses the unfiltered base manager, so the soft-delete
+    # predicate has to be written out here.
     return (
-        Advice.objects.filter(concern__author=user, status=AdviceStatus.APPROVED)
+        Advice.objects.filter(
+            concern__author=user,
+            concern__deleted_at__isnull=True,
+            status=AdviceStatus.APPROVED,
+        )
         .select_related("concern", "advisor")
         .annotate(
             is_feedback_submitted=Exists(Feedback.objects.filter(advice=OuterRef("pk")))
@@ -291,6 +360,10 @@ def create_feedback(advice_id, author, validated_data) -> Feedback:
     advice = get_object_or_404(Advice.objects.select_related("concern"), pk=advice_id)
     if advice.concern.author_id != author.id:
         raise PermissionDenied("본인 고민에 달린 조언에만 피드백할 수 있습니다.")
+    if advice.concern.deleted_at is not None:
+        # Same rule as #26/#27: a withdrawn concern's advices are out of reach
+        # for their owner (Owner decision 2026-09-13).
+        raise PermissionDenied("삭제된 고민의 조언에는 피드백할 수 없습니다.")
     if advice.status != AdviceStatus.APPROVED:
         raise PermissionDenied("승인된 조언에만 피드백할 수 있습니다.")
 

@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-13 (SPEC-002/TASK-007 커밋 기준 — SPEC-002 종료, PR 대기. 이전 실측 2026-09-11~12 TASK-001~006 / 2026-09-10 SPEC-001 종료)
+> 마지막 실측: 2026-09-14 (SPEC-002 서브에이전트 리뷰 반영 커밋 기준 — PR #3 갱신됨. 이전 실측 2026-09-13 TASK-007 / 2026-09-10 SPEC-001 종료)
 
 ---
 
@@ -81,7 +81,7 @@
 
 ## 4. Active SPEC
 
-**SPEC-002-advice-api — 완료 (2026-09-13), PR 대기.** api.md #26~38 (M4-6) 13개 엔드포인트 전량 구현, AC-1~AC-11 전항 통과, advice 앱 테스트 106개(전체 168개). 브랜치 `feat/spec-002-advice-api` (origin에 push 완료, PR 미생성).
+**SPEC-002-advice-api — 완료 (2026-09-14), 리뷰 반영 후 머지 대기.** api.md #26~38 (M4-6) 13개 엔드포인트, AC-1~AC-11 전항 통과, advice 앱 테스트 118개(전체 **180개**). [PR #3](https://github.com/danpro94/chamneul/pull/3). 서브에이전트 리뷰 2종(`security-reviewer`·`api-architect`) 실행 후 **블로커 1·메이저 5 전부 반영** — 결론은 [docs/reviews/05-spec002-subagent-review.md](../reviews/05-spec002-subagent-review.md).
 
 확정된 §7 결정:
 
@@ -97,7 +97,8 @@
 * [x] TASK-005 — 받은 조언 목록(#26) + 피드백 작성(#34)/내 목록(#35). §6.2 노출 규칙이 `filter(concern__author=user, status=APPROVED)` 한 쌍으로 끝나도록 서비스에 집약. `advisor_display_name`은 페이지 단위 벌크 조회를 serializer context로 주입(단건 경로인 #27과 달리 목록이라 N+1 방지 필요). 피드백 1회 제한은 `Feedback.advice` OneToOne이 실제 강제 → IntegrityError를 409로 변환. 테스트 18종(선-실패 15개 확인) → 검증 4종 통과(**143/143**) → 스크린샷 5장 확인 → 커밋.
 * [x] TASK-006 — admin 피드백 목록(#36)/상세(#37)/상태 변경(#38). `_ALLOWED_FEEDBACK_TRANSITIONS` 표로 §6.3 단방향 흐름 강제(역방향·건너뛰기·동일 상태 전부 409). `memo`·`author_nickname`은 #37에서만 노출(#35에는 없음). `reviewed_by`/`reviewed_at`은 **REVIEWED 진입 시에만** 기록(판단 기록 참조). 테스트 19종(선-실패 16개 확인) → 검증 4종 통과(**162/162**) → 스크린샷 3장 확인 → 커밋.
 * [x] TASK-007 마무리 — AC-1~AC-11 전항 대조 후 **미커버 6건 보강**(AC-11 §6.2 6지점 스윕 신설이 핵심, 나머지 5건은 "AC가 N개 상태를 열거하는데 테스트는 일부만" 유형). 전부 구현은 옳았고 검증만 없던 경우로 보강분이 첫 실행에서 통과. api.md 정정 4건 반영(#27·#29·#32·#33 + 상단 개정 이력). 검증 4종 통과(**168/168**).
-* [ ] **남은 것**: PR 생성 → 리뷰 → 머지.
+* [x] PR #3 생성 → 서브에이전트 리뷰 2종 → **지적 사항 전량 반영**(데이터 손실 버그 M-1, 500 크래시 M-2, REJECTED 막다른 길, 소프트 삭제 정책 3곳, #32 검증, 잠금 범위, AC-11 7번째 지점) + ADR-007 신설.
+* [ ] **남은 것**: PR #3 머지.
 
 <details>
 <summary>SPEC-001-concerns-api — 완료 (2026-09-10, PR #2 머지)</summary>
@@ -117,6 +118,7 @@ api.md #16~25 (M4-5 concerns) 10개 엔드포인트 전량 구현, AC-1~AC-10 �
 
 | # | 항목 | 상태 |
 | --- | --- | --- |
+| 신규 (2026-09-14 리뷰) | **M4-8 선행 조건** — 역할 회수(#43) 시 `active_role`을 강등하지 않으면 회수된 조언가가 #29~#31을 계속 통과한다(`IsActiveAdvisor`가 `active_role`만 확인). M4-8 SPEC의 AC로 못 박을 것 | 미결 — M4-8 착수 시 |
 | D-4 | Concern `ANSWERED → CLOSED` 사용자 API 도입 여부 | 미결 (권고: Phase 2는 Admin으로만 종료 처리, 신규 API 없음) |
 | D-6 | `domain_category`(advisor) 11종 확정 여부 | 확정됨(2026-07-08 D-6) — model.md §11에서 재확인 필요 |
 | 신규 (2026-09-10 TASK-003) | api.md #20의 query param `status?`("assignment 상태")가 `Assignment` 모델의 실제 필드와 불일치 | **종결됨** — Owner 승인(후보 B: `concern.status` 필터로 재해석) 후 TASK-006에서 구현 + api.md 문구 정정 완료. |
