@@ -8,17 +8,17 @@
 
 **착수 전제**: PR #5(`fix/audit-state-transition-locking`, A-1 수정 + 상태 전이 규칙)가 머지되고 이 브랜치가 리베이스되어야 한다. 이 브랜치는 `main` 기준이라 아직 A-1 수정을 포함하지 않는다.
 
-## TASK-001 — 알림 목록 + 상세 (#39, #40)
+## TASK-001 — 알림 목록 + 상세 (#39, #40) — **완료 (2026-09-15)**
 
-* [ ] 내 알림만 조회, 타인 알림 미노출 — 실패 테스트
-* [ ] `unread_count`가 **필터와 무관하게** 전체 미읽음 수 — 실패 테스트
-* [ ] `?is_read=false` / `?type=` 필터 동작 + `page_info` — 실패 테스트
-* [ ] #40 타인의 알림 → **404**(결정 2) / 없는 id → 404 / 비로그인 → 401 — 실패 테스트
-* [ ] #40 응답에 `actor` 관련 필드가 **없다**(결정 1(a) 승인 시) — 실패 테스트
-* [ ] `notifications/{serializers,services,views,urls}.py` 신설 + `config/urls.py` include
-* [ ] `assertNumQueries` — `CaptureQueriesContext`로 **측정 후** 작성
-* [ ] Mock-Up UI: 알림 목록 화면 + 상세 화면 스크린샷
-* [ ] 검증 4종 실행 결과 첨부
+* [x] 내 알림만 조회, 타인 알림 미노출 — 실패 테스트
+* [x] `unread_count`가 **필터와 무관하게** 전체 미읽음 수 — 실패 테스트
+* [x] `?is_read=false` / `?type=` 필터 동작 + `page_info` — 실패 테스트
+* [x] #40 타인의 알림 → **404**(결정 2) / 없는 id → 404 / 비로그인 → 401 — 실패 테스트
+* [x] #40 응답에 `actor` 관련 필드가 **없다**(결정 1) — 실패 테스트
+* [x] `notifications/{serializers,services,views,urls}.py` 신설 + `config/urls.py` include
+* [x] `assertNumQueries` — **실측 3건**(페이지 COUNT + 페이지 행 + unread_count 집계)
+* [x] Mock-Up UI: 목록 / 읽음필터 / 상세 / 타인 알림 404 — 4장
+* [x] 검증 4종 실행 결과 첨부 — check 0 issues / makemigrations No changes / ruff passed / **207 tests OK**
 
 ## TASK-002 — 알림 읽음 처리 (#41)
 

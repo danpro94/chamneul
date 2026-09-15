@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | **M4-6 완료**(6/8 모듈), **39/44 엔드포인트** — 남은 모듈: M4-7 알림(3), M4-8 역할(2) |
+| M4 진행률 | **M4-7 진행 중**(6/8 모듈 완료), **41/44 엔드포인트** — 남은 것: #41 읽음, M4-8 역할(2) |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,9 +24,9 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (39 / 44)
+## 2. 구현된 엔드포인트 (41 / 44)
 
-실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls` 4개 include.
+실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls`, `notifications.urls` 5개 include.
 
 | # | Method | Endpoint | 구현 파일 |
 | --- | --- | --- | --- |
@@ -68,18 +68,25 @@
 | 36 | GET | `/api/v1/admin/feedbacks` | `AdminFeedbackListView.get` (SPEC-002/TASK-006) |
 | 37 | GET | `/api/v1/admin/feedbacks/{feedback-id}` | `AdminFeedbackDetailView.get` (SPEC-002/TASK-006) |
 | 38 | PATCH | `/api/v1/admin/feedbacks/{feedback-id}` | `AdminFeedbackDetailView.patch` (SPEC-002/TASK-006) |
+| 39 | GET | `/api/v1/notifications` | [notifications/views.py](../../notifications/views.py) `NotificationListView.get` (SPEC-003/TASK-001) |
+| 40 | GET | `/api/v1/notifications/{notification-id}` | `NotificationDetailView.get` (SPEC-003/TASK-001) |
 | 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
 
-## 3. 미구현 엔드포인트 (5 / 44)
+## 3. 미구현 엔드포인트 (3 / 44)
 
-`notifications` 앱은 `models.py`·`admin.py`·마이그레이션만 존재하고 views/serializers/urls/services 파일이 아직 없다. `concerns`(#16~25)·`advice`(#26~38)는 전량 구현 완료(실측: `git ls-files`, `config/urls.py`).
+`notifications` 앱은 SPEC-003/TASK-001에서 serializers/services/views/urls/tests를 갖췄다(#39·#40 구현). `accounts`는 여전히 #42·#43용 서비스·뷰가 없다.
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-7 notifications | #39~41 (3개) | §4-39~41 |
+| M4-7 notifications | #41 읽음 처리 (1개) | §4-41 |
 | M4-8 admin roles | #42~43 (2개) | §4-42~43 |
 
 ## 4. Active SPEC
+
+**SPEC-003-notifications-roles — 진행 중 (2026-09-15).** api.md #39~43 (M4-7 + M4-8) 5개 엔드포인트. §7 결정 3건 Owner 승인 완료: **(1) 알림 응답에 `actor`(관리자 신원) 미노출 (2) 타인 알림 조회는 404 — 쿼리셋을 `recipient=user`로 좁혀 존재 자체를 숨김 (3) ADVISOR 회수 시 활성 배정은 자동 해제하지 않음(관리자가 #25로 명시 해제)**. 셋 다 CLAUDE.md 조항과 충돌하지 않아 ADR 불필요.
+
+* **TASK-001 완료** — #39 목록 + #40 상세. `notifications` 앱 테스트 20개(전체 **207개**). 검증 4종 통과. Mock-Up UI 4장으로 목록·필터·상세·404 확인.
+* 남은 TASK: 002(#41 읽음), 003(#42 부여), 004(#43 회수 — A-3 포함), 005(교차 검증 + 마무리).
 
 **SPEC-002-advice-api — 완료·머지 (2026-09-14, PR #3 + 리뷰 반영 PR #4).** api.md #26~38 (M4-6) 13개 엔드포인트, AC-1~AC-11 전항 통과, advice 앱 테스트 118개(전체 **180개**). [PR #3](https://github.com/danpro94/chamneul/pull/3). 서브에이전트 리뷰 2종(`security-reviewer`·`api-architect`) 실행 후 **블로커 1·메이저 5 전부 반영** — 결론은 [docs/reviews/05-spec002-subagent-review.md](../reviews/05-spec002-subagent-review.md).
 

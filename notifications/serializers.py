@@ -1,0 +1,38 @@
+"""Serializers for the notifications API (SPEC-003, api.md #39-#40).
+
+`actor_user` is stored on the model but is **never serialized**. All five
+notification types in Phase 2 are triggered by an admin (advice approve/reject,
+application approve/reject, assignment), so exposing the actor would hand a
+concern author or advisor an administrator's account id (spec.md §7 결정 1,
+CLAUDE.md §8 — response fields must be intentionally chosen). `payload` is
+likewise internal: the client resolves a destination from (type, target_url).
+"""
+
+from rest_framework import serializers
+
+from .models import Notification
+
+
+class NotificationListSerializer(serializers.ModelSerializer):
+    """#39 row. No `read_at` — the list only needs the unread flag."""
+
+    notification_id = serializers.UUIDField(source="id", read_only=True)
+
+    class Meta:
+        model = Notification
+        fields = (
+            "notification_id",
+            "type",
+            "title",
+            "message",
+            "target_url",
+            "is_read",
+            "created_at",
+        )
+
+
+class NotificationDetailSerializer(NotificationListSerializer):
+    """#40 — the list fields plus `read_at`."""
+
+    class Meta(NotificationListSerializer.Meta):
+        fields = NotificationListSerializer.Meta.fields + ("read_at",)

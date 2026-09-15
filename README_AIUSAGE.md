@@ -6,6 +6,48 @@
 
 ---
 
+## 2026-09-15 — SPEC-003 작성 + TASK-001: 알림 목록/상세 (api.md #39·#40) [위임]
+
+### 작업
+
+M4-7(알림 3개)과 M4-8(역할 2개)을 **SPEC-003 하나로 묶어** 명세 4종을 작성하고, TASK-001(#39 목록 + #40 상세)을 프롬프트 3 루프로 구현했다. `notifications` 앱은 M3 이후 `models.py`·`admin.py`만 있는 껍데기였다 — SPEC-001/002/M4-4가 알림 행을 **쓰기만** 하고 읽는 코드가 없었으므로, 이번이 알림 필드 설계의 첫 소비자 검증이다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+**§7 결정 3건 전부 승인 (권고안대로):**
+
+1. **알림 응답에 `actor`(관리자 신원) 미노출.** api.md #40은 `actor?: {user_id?, display_name?}`를 명세했으나, Phase 2 알림 5종의 actor가 전부 관리자여서 그대로 구현하면 일반 사용자에게 관리자 계정 id가 샌다. SPEC-002 보안 리뷰가 "SPEC-003 응답 필드 설계 시 재검토"로 지목했던 지점.
+2. **타인 알림 조회는 404(403 아님).** Owner 근거: *"애초에 이 앱 서비스는 개인화 앱이므로 남의 알림을 열 수 없어야 함. 알림은 나에게만."* 이에 따라 구현은 쿼리셋을 `recipient=user`로 좁히는 형태만 쓴다 — 객체를 꺼낸 뒤 소유자를 비교하는 형태는 403/404 분기 실수를 낳으므로 배제.
+3. **ADVISOR 회수 시 활성 배정은 자동 해제하지 않음.** 관리자가 #25로 명시 해제한다. 역할 회수 한 번이 배정 해제·상태 전이·알림까지 연쇄하면 부수효과가 과도하게 숨는다.
+
+세 결정 모두 CLAUDE.md 조항과 충돌하지 않아 **ADR 불필요**(§16, ADR-007 교훈 적용 확인).
+
+### 생성 산출물
+
+* `specs/SPEC-003-notifications-roles/{spec,plan,tasks,acceptance}.md` — 결정 3건, `revoke_role` 잠금 설계, TASK-001~005, AC-1~AC-10
+* `notifications/{serializers,services,views,urls,tests}.py` (신규 5종), `config/urls.py` include 추가
+* `docs/00-project/STATUS.md` 갱신 (41/44)
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **207개 통과**(notifications 20개 신규). 구현 전 20개 전부 실패(404) 확인 후 착수 — TDD 순서 준수
+* `assertNumQueries`는 **추정하지 않고 실측**했다(3건: 페이지 COUNT + 페이지 행 + unread_count 집계). SPEC-001·002에서 추정으로 쓴 3회가 전부 틀렸던 항목
+* Mock-Up UI 4장(DRF Browsable API): 목록(3건·unread_count=2) / `?is_read=true` 필터(total=1인데 unread_count는 2 유지) / 상세(read_at 있음·관리자 신원 없음) / 타인 알림 → 404
+
+### 잔여 리스크
+
+1. **`target_url` 규약(C-10)이 아직 실제로 호출되지 않았다.** 5개 타입의 경로가 urlconf에 실재함은 확인했으나, 수신자 세션으로 GET → 200 왕복은 TASK-005의 AC-8에서 검증한다.
+2. **#41 미구현.** 목록·상세만 있어 사용자가 알림을 읽음 처리할 수단이 아직 없다(TASK-002).
+3. **A-3 미해소.** 역할 회수 시 `active_role` 강등은 TASK-004에서 구현하며, 권한이 실제로 닫히는지는 AC-7 end-to-end로 판정한다.
+4. **`accounts` 앱 테스트 여전히 0건.** TASK-003에서 #42/#43 경로에 한해 첫 테스트 파일이 생긴다. M4-1~M4-3(회원가입·로그인·OAuth·프로필)의 소급 테스트는 이번 SPEC 범위가 아니다.
+
+---
+
 ## 2026-09-14 — 동일 유형 결함 전수 점검 (A-1 수정, A-2·A-3 기록) [위임]
 
 ### 작업
