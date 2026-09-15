@@ -7,6 +7,7 @@ land or none do (the "role-less approved advisor" failure class from M2).
 """
 
 from django.db import IntegrityError, transaction
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from common.exceptions import Conflict, UnprocessableEntity
@@ -46,26 +47,41 @@ def create_application(applicant, validated_data) -> AdvisorApplication:
         raise Conflict("이미 사용 중인 활동명입니다.") from exc
 
 
-def review_application(application, actor, target_status, reject_reason=""):
+def review_application(application_id, actor, target_status, reject_reason=""):
     """Apply a review transition and its side effects, atomically (api.md #15).
 
     APPROVED -> grant ADVISOR role + RoleGrant audit + applicant notification.
     REJECTED -> applicant notification (reason required, 422 if missing).
-    """
-    allowed = _ALLOWED_TRANSITIONS.get(application.status, set())
-    if target_status not in allowed:
-        raise Conflict(
-            f"{application.status} 상태에서 {target_status}로 전이할 수 없습니다."
-        )
-    if target_status == AdvisorApplicationStatus.REJECTED and not reject_reason.strip():
-        raise UnprocessableEntity("반려 시 사유는 필수입니다.")
 
+    Takes an **id, not an object, and re-reads it under a row lock** inside the
+    transaction. The earlier signature accepted whatever snapshot the view had
+    fetched and checked the transition against it, so two admins approving at
+    once both passed the check and both ran the side effects — two RoleGrant
+    rows and two notifications for one approval, corrupting the audit trail
+    ADR-003 §3 establishes. (2026-09-14 audit finding A-1, the same shape as
+    SPEC-002's M-1.)
+    """
     # Deferred imports keep advisors independent of accounts/notifications at
     # module load (they reference accounts via settings.AUTH_USER_MODEL strings).
     from accounts.models import Role, RoleGrant, RoleGrantAction, UserRole
     from notifications.models import Notification, NotificationType
 
     with transaction.atomic():
+        application = get_object_or_404(
+            AdvisorApplication.objects.select_for_update(of=("self",)),
+            pk=application_id,
+        )
+        allowed = _ALLOWED_TRANSITIONS.get(application.status, set())
+        if target_status not in allowed:
+            raise Conflict(
+                f"{application.status} 상태에서 {target_status}로 전이할 수 없습니다."
+            )
+        if (
+            target_status == AdvisorApplicationStatus.REJECTED
+            and not reject_reason.strip()
+        ):
+            raise UnprocessableEntity("반려 시 사유는 필수입니다.")
+
         application.status = target_status
         application.reviewed_by = actor
         application.reviewed_at = timezone.now()
