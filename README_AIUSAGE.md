@@ -6,6 +6,54 @@
 
 ---
 
+## 2026-09-15 — SPEC-003/TASK-004: 역할 회수 (api.md #43) — A-3 양방향 해소 [위임]
+
+### 작업
+
+`DELETE /api/v1/admin/users/{user-id}/roles/{role}` 구현. **44/44 엔드포인트**가 되어 M4의 구현 구간이 끝났다. Owner가 "가장 위험하니만큼 리더급 수준으로 신중히"를 요구한 구간이라, 구현보다 **판정 순서·잠금·실증**에 시간을 더 썼다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-004 착수 승인 + 최고 수준의 신중함 요구. 설계는 ADR-003·SPEC-003 확정 범위 내 — 신규 결정 없음.
+
+### 생성 산출물
+
+* `accounts/services.py` — `revoke_role()` 신규, **`set_active_role()` 잠금 추가**
+* `accounts/views.py` — `AdminUserRoleDetailView` / `accounts/urls.py` — `GrantableRoleConverter` + path
+* `accounts/tests.py` — `RoleRevokeTests`(22) + `ActiveRoleSwitchTests`(4) + `StateTransitionLockingTests`(3) 추가, 앱 누적 45개
+* `docs/00-project/STATUS.md` — A-3 2개 행 및 §5 미결 항목을 해소 완료로 갱신
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **260개 통과**. 회수 22개 중 구현 전 **14개 실질 실패** 확인 후 착수.
+* **발행 SQL 실측**: ADMIN 회수 = `FOR UPDATE OF "accounts_user"` → `role='ADMIN' ORDER BY id ASC FOR UPDATE` → DELETE → INSERT. ADVISOR 회수 = User 잠금 → DELETE → INSERT → `UPDATE accounts_user SET active_role='USER', updated_at=...`(2개 컬럼만).
+* **AC-7(A-3 end-to-end)을 TASK-005에서 앞당겨 실증**: 회수 전 #20=200·#29=200 → 회수(204) → 회수 후 #20=403·#29=403, 조언 데이터는 #27=200으로 보존, concern은 `ASSIGNED` + 배정 1건 유지(결정 3 의도대로). `/roles/USER`는 404(URL 미매칭), 재회수는 409.
+
+### 설계 판단 4건 (기록 목적)
+
+1. **판정 순서 = 자기회수 → 미보유 → 마지막관리자.** 순서를 바꾸면 관리자가 1명일 때 ADMIN을 갖지도 않은 사용자를 회수 시도했을 때 "마지막 관리자"라는 **사실이 아닌** 오류가 나간다. 테스트로 고정했다.
+2. **`count()` 대신 `list()`.** PostgreSQL은 집계 위의 `FOR UPDATE`를 거부한다. 잠기지 않은 count가 바로 이 가드가 막으려는 경합이므로, 행을 실제로 잠그고 파이썬에서 센다.
+3. **잠금 순서 고정.** `User` → ADMIN `UserRole`(`order_by("pk")`). `grant_role`·`set_active_role`은 `User`만 잠그므로 순환이 없다. 순서를 고정하지 않으면 두 회수가 반대 순서로 잠가 교착(500)할 수 있다.
+4. **"마지막 ADMIN"은 `UserRole` 행 기준, superuser 미포함.** `IsAdmin`은 superuser도 통과시키지만(ADR-003 §1), 잘못 막으면 재시도로 끝나고 잘못 허용하면 시스템이 잠긴다. 이 비대칭이 보수적 판정의 근거다.
+
+### 범위를 한 항목 넘어선 부분 (명시)
+
+TASK-004 체크리스트에는 없었으나 **`set_active_role`(#10)도 수정했다.** STATUS.md §7의 A-3 정의가 원래 이 함수의 경합을 가리키고 있었고, 회수 쪽만 고치면 *"전환이 역할을 읽음 → 회수가 지움 → 전환이 씀"* 순서로 동일한 위험 상태(역할 없이 ADVISOR 착용)에 그대로 도달한다. 한쪽만 닫고 "A-3 해소"로 보고하면 사실과 다르므로 양쪽을 닫았다. 시그니처는 불변이며, 이 함수의 첫 테스트 4개를 함께 추가했다.
+
+### 잔여 리스크
+
+1. **동시성은 단일 스레드 테스트로 증명할 수 없다.** Django `TestCase`가 트랜잭션 안에서 돌기 때문이다. 대신 **발행 SQL을 검사하는 테스트**(`StateTransitionLockingTests`)로 잠금·순서·`update_fields` 범위를 고정했다 — 규칙을 문서가 아니라 기계가 지킨다. 실제 경합 재현(`TransactionTestCase` + 스레드)은 M5 이후 과제.
+2. **ADMIN 집합 전체를 잠근다.** Phase 2의 관리자 수가 한 자리라 비용이 무시할 수준이고 ADMIN 회수끼리만 막지만, 관리자가 수백 명이 되면 advisory lock 등으로 재검토해야 한다.
+3. **회수 후에도 `advisor_status`는 `APPROVED`로 남는다**(#9). 신청이 승인됐던 것은 사실이므로 거짓은 아니나, 화면에서 "역할 없음 + 승인됨"이 함께 보이면 혼동될 수 있다. 현재 동작을 유지하되 M5 UX 검토 항목으로 남긴다.
+4. **회수된 조언가의 배정이 남는다** — 결정 3(a)에 따른 의도된 동작. #23 admin 상세에서 식별 가능함을 실증했고, M5 스모크 항목으로 남긴다.
+
+---
+
 ## 2026-09-15 — SPEC-003/TASK-003: 역할 부여 (api.md #42) [위임]
 
 ### 작업

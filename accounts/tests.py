@@ -205,3 +205,404 @@ class RoleGrantTests(AdminRoleTestBase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+
+class RoleRevokeTests(AdminRoleTestBase):
+    """DELETE /api/v1/admin/users/{user-id}/roles/{role} (#43).
+
+    The highest-risk endpoint in SPEC-003. Two failure modes are operational
+    incidents rather than bugs, and each gets its own cluster of tests:
+
+      * **A-3** — revoking ADVISOR without demoting `active_role` leaves the
+        former advisor passing `IsActiveAdvisor`, so #20/#21/#28-#30 stay open
+        to someone who is no longer an advisor.
+      * **system lockout** — if the "last ADMIN" check and the delete are not
+        serialized, two concurrent revokes can each see two admins and leave
+        zero. Nobody can grant a role back afterwards.
+
+    Django's TestCase runs inside one transaction, so real concurrency cannot
+    be exercised here. What *can* be pinned is that the service re-reads state
+    inside its own transaction instead of trusting what the caller saw — the
+    same regression shape as A-1 in advisors.services.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.advisor = User.objects.create_user(
+            email="advisor@example.com", nickname="advisor", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.advisor, role=Role.ADVISOR)
+        self.advisor.active_role = ActiveRole.ADVISOR
+        self.advisor.save(update_fields=["active_role"])
+
+    def revoke(self, user_id, role, query=""):
+        return self.client.delete(f"{roles_url(user_id)}/{role}{query}")
+
+    # --- 정상 경로 ---------------------------------------------------------
+
+    def test_revokes_advisor_role(self):
+        self.client.force_authenticate(self.admin)
+        response = self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(
+            UserRole.objects.filter(user=self.advisor, role=Role.ADVISOR).exists()
+        )
+
+    def test_response_has_no_body(self):
+        self.client.force_authenticate(self.admin)
+        response = self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(response.data)
+
+    def test_writes_one_audit_row(self):
+        self.client.force_authenticate(self.admin)
+        self.revoke(self.advisor.id, Role.ADVISOR, "?reason=활동+중단+요청")
+
+        grants = RoleGrant.objects.filter(user=self.advisor)
+        self.assertEqual(grants.count(), 1)
+        grant = grants.get()
+        self.assertEqual(grant.role, Role.ADVISOR)
+        self.assertEqual(grant.action, RoleGrantAction.REVOKE)
+        self.assertEqual(grant.acted_by_id, self.admin.id)
+        self.assertEqual(grant.reason, "활동 중단 요청")
+
+    def test_reason_is_optional(self):
+        self.client.force_authenticate(self.admin)
+        self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.assertEqual(RoleGrant.objects.get(user=self.advisor).reason, "")
+
+    def test_revoke_sends_no_notification(self):
+        """ADR-003 §4 — 회수도 알림을 발송하지 않는다."""
+        self.client.force_authenticate(self.admin)
+        self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.assertFalse(Notification.objects.exists())
+
+    def test_revoking_one_role_keeps_the_other(self):
+        UserRole.objects.create(user=self.advisor, role=Role.ADMIN)
+
+        self.client.force_authenticate(self.admin)
+        self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.assertTrue(
+            UserRole.objects.filter(user=self.advisor, role=Role.ADMIN).exists()
+        )
+
+    # --- A-3: active_role 강등 ---------------------------------------------
+
+    def test_demotes_active_role_when_the_target_is_wearing_advisor(self):
+        """A-3. 강등하지 않으면 자격을 잃은 조언가가 IsActiveAdvisor를 계속
+        통과한다 — 권한이 닫히지 않는다."""
+        self.assertEqual(self.advisor.active_role, ActiveRole.ADVISOR)
+
+        self.client.force_authenticate(self.admin)
+        self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.advisor.refresh_from_db()
+        self.assertEqual(self.advisor.active_role, ActiveRole.USER)
+
+    def test_does_not_touch_active_role_when_the_target_is_not_wearing_it(self):
+        self.advisor.active_role = ActiveRole.USER
+        self.advisor.save(update_fields=["active_role"])
+
+        self.client.force_authenticate(self.admin)
+        self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.advisor.refresh_from_db()
+        self.assertEqual(self.advisor.active_role, ActiveRole.USER)
+
+    def test_admin_revoke_never_touches_active_role(self):
+        """ADMIN은 active_role이 될 수 없다 (ActiveRole choices에 없음)."""
+        other_admin = User.objects.create_user(
+            email="admin2@example.com", nickname="admin2", password="pw12345!"
+        )
+        UserRole.objects.create(user=other_admin, role=Role.ADMIN)
+        UserRole.objects.create(user=other_admin, role=Role.ADVISOR)
+        other_admin.active_role = ActiveRole.ADVISOR
+        other_admin.save(update_fields=["active_role"])
+
+        self.client.force_authenticate(self.admin)
+        self.revoke(other_admin.id, Role.ADMIN)
+
+        other_admin.refresh_from_db()
+        self.assertEqual(other_admin.active_role, ActiveRole.ADVISOR)
+
+    # --- 시스템 잠금 방지 --------------------------------------------------
+
+    def test_cannot_revoke_own_admin_role(self):
+        User.objects.create_user(
+            email="admin2@example.com", nickname="admin2", password="pw12345!"
+        )
+        UserRole.objects.create(
+            user=User.objects.get(email="admin2@example.com"), role=Role.ADMIN
+        )
+
+        self.client.force_authenticate(self.admin)
+        response = self.revoke(self.admin.id, Role.ADMIN)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(
+            UserRole.objects.filter(user=self.admin, role=Role.ADMIN).exists()
+        )
+
+    def test_cannot_revoke_the_last_admin(self):
+        other_admin = User.objects.create_user(
+            email="admin2@example.com", nickname="admin2", password="pw12345!"
+        )
+        UserRole.objects.create(user=other_admin, role=Role.ADMIN)
+        # self.admin 회수 -> 남는 관리자는 other_admin 하나.
+        self.client.force_authenticate(other_admin)
+        self.assertEqual(self.revoke(self.admin.id, Role.ADMIN).status_code, 204)
+
+        # 이제 other_admin이 마지막 관리자다. 제3의 관리자를 만들어 시도해도
+        # (여기서는 superuser) 마지막 UserRole ADMIN은 회수되지 않는다.
+        superuser = User.objects.create_user(
+            email="root@example.com", nickname="root", password="pw12345!"
+        )
+        superuser.is_superuser = True
+        superuser.save(update_fields=["is_superuser"])
+
+        self.client.force_authenticate(superuser)
+        response = self.revoke(other_admin.id, Role.ADMIN)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(
+            UserRole.objects.filter(user=other_admin, role=Role.ADMIN).exists()
+        )
+
+    def test_last_admin_guard_counts_user_role_rows_not_superusers(self):
+        """보수적 판정을 고정한다. IsAdmin은 superuser도 통과시키지만(ADR-003
+        §1), 회수 가드는 UserRole 행만 센다 — 잘못 막으면 한 번 더 호출하면
+        되지만, 잘못 허용하면 시스템이 잠긴다. 이 비대칭이 기준을 정한다."""
+        superuser = User.objects.create_user(
+            email="root@example.com", nickname="root", password="pw12345!"
+        )
+        superuser.is_superuser = True
+        superuser.save(update_fields=["is_superuser"])
+
+        # UserRole ADMIN은 self.admin 하나뿐.
+        self.client.force_authenticate(superuser)
+        response = self.revoke(self.admin.id, Role.ADMIN)
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_can_revoke_admin_while_another_admin_remains(self):
+        other_admin = User.objects.create_user(
+            email="admin2@example.com", nickname="admin2", password="pw12345!"
+        )
+        UserRole.objects.create(user=other_admin, role=Role.ADMIN)
+
+        self.client.force_authenticate(self.admin)
+        response = self.revoke(other_admin.id, Role.ADMIN)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(UserRole.objects.filter(role=Role.ADMIN).count(), 1)
+
+    def test_guard_reads_state_inside_its_own_transaction(self):
+        """A-1과 같은 형태의 회귀 방지. 호출자가 본 상태가 아니라 트랜잭션
+        안에서 다시 읽은 상태로 판정해야 한다 — 서비스가 user_id를 받고
+        객체를 받지 않는 이유다."""
+        other_admin = User.objects.create_user(
+            email="admin2@example.com", nickname="admin2", password="pw12345!"
+        )
+        UserRole.objects.create(user=other_admin, role=Role.ADMIN)
+
+        # 호출 직전에 다른 관리자가 사라진다 (관리자 2명 -> 1명).
+        UserRole.objects.filter(user=self.admin, role=Role.ADMIN).delete()
+
+        self.client.force_authenticate(self.admin)  # superuser 아님, 권한은 유지 X
+        # 권한을 잃었으므로 403이 정상. 판정 자체는 아래 서비스 호출로 확인한다.
+        from accounts import services
+        from common.exceptions import Conflict
+
+        with self.assertRaises(Conflict):
+            services.revoke_role(other_admin.id, role=Role.ADMIN, actor=self.plain)
+        self.assertTrue(
+            UserRole.objects.filter(user=other_admin, role=Role.ADMIN).exists()
+        )
+
+    # --- 미보유 / 잘못된 입력 ----------------------------------------------
+
+    def test_revoking_a_role_not_held_is_409(self):
+        self.client.force_authenticate(self.admin)
+        response = self.revoke(self.target.id, Role.ADVISOR)
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_revoking_admin_not_held_is_409_not_last_admin(self):
+        """관리자가 1명뿐일 때 ADMIN을 갖지도 않은 사용자를 회수 시도하면,
+        '마지막 관리자'가 아니라 '보유하지 않은 역할'로 판정되어야 한다 —
+        검사 순서가 뒤집히면 오류 메시지가 사실과 달라진다."""
+        self.client.force_authenticate(self.admin)
+        response = self.revoke(self.target.id, Role.ADMIN)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("보유", str(response.data))
+
+    def test_failed_revoke_leaves_no_partial_state(self):
+        self.client.force_authenticate(self.admin)
+        self.revoke(self.target.id, Role.ADVISOR)  # 409
+
+        self.assertFalse(RoleGrant.objects.exists())
+        self.target.refresh_from_db()
+        self.assertEqual(self.target.active_role, ActiveRole.USER)
+
+    def test_user_role_path_is_404(self):
+        """USER는 회수 대상이 아니다 (ADR-003 §2). api.md #43의 상태 집합에
+        400이 없으므로 URL 패턴 단계에서 매칭을 막아 404로 떨어뜨린다."""
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.revoke(self.target.id, "USER").status_code, 404)
+
+    def test_unknown_role_path_is_404(self):
+        self.client.force_authenticate(self.admin)
+        self.assertEqual(self.revoke(self.target.id, "SUPERADMIN").status_code, 404)
+        self.assertEqual(self.revoke(self.target.id, "advisor").status_code, 404)
+
+    def test_unknown_user_is_404(self):
+        self.client.force_authenticate(self.admin)
+        response = self.revoke(
+            "00000000-0000-0000-0000-000000000000", Role.ADVISOR
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_non_admin_is_403(self):
+        self.client.force_authenticate(self.plain)
+        response = self.revoke(self.advisor.id, Role.ADVISOR)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(
+            UserRole.objects.filter(user=self.advisor, role=Role.ADVISOR).exists()
+        )
+
+    def test_anonymous_is_401(self):
+        response = self.revoke(self.advisor.id, Role.ADVISOR)
+        self.assertEqual(response.status_code, 401)
+
+
+class ActiveRoleSwitchTests(AdminRoleTestBase):
+    """PATCH /api/v1/users/me/active-role (#10), from the A-3 angle.
+
+    #10 and #43 move the same two facts in opposite directions: one writes
+    `active_role`, the other deletes the `UserRole` that justifies it. If they
+    interleave unguarded, a switch that *read* a role the revoke then deleted
+    still writes it — leaving a user wearing ADVISOR without holding it, which
+    is exactly the state A-3 warns about, reached from the other side.
+    """
+
+    def setUp(self):
+        super().setUp()
+        UserRole.objects.create(user=self.target, role=Role.ADVISOR)
+
+    def test_switches_to_a_held_role(self):
+        self.client.force_authenticate(self.target)
+        response = self.client.patch(
+            "/api/v1/users/me/active-role", {"active_role": "ADVISOR"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.target.refresh_from_db()
+        self.assertEqual(self.target.active_role, ActiveRole.ADVISOR)
+
+    def test_cannot_switch_to_a_role_not_held(self):
+        self.client.force_authenticate(self.plain)
+        response = self.client.patch(
+            "/api/v1/users/me/active-role", {"active_role": "ADVISOR"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.plain.refresh_from_db()
+        self.assertEqual(self.plain.active_role, ActiveRole.USER)
+
+    def test_switch_reads_roles_under_a_row_lock(self):
+        """The guard that makes the interleaving above impossible. A switch must
+        re-read the role rows while holding the target's `User` row, so a
+        concurrent revoke either lands first (and the switch is refused) or
+        waits (and sees the ADVISOR still worn, so it demotes)."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from accounts import services
+
+        with CaptureQueriesContext(connection) as ctx:
+            services.set_active_role(self.target, "ADVISOR")
+
+        locking = [q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"]]
+        self.assertTrue(
+            locking, "set_active_role must lock the user row before reading roles"
+        )
+        self.assertIn("accounts_user", locking[0])
+
+    def test_switch_after_revoke_is_refused(self):
+        services_target = self.target
+        UserRole.objects.filter(user=services_target, role=Role.ADVISOR).delete()
+
+        self.client.force_authenticate(services_target)
+        response = self.client.patch(
+            "/api/v1/users/me/active-role", {"active_role": "ADVISOR"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+
+class StateTransitionLockingTests(AdminRoleTestBase):
+    """`.claude/rules/coding.md` 상태 전이 규칙을 리뷰가 아니라 테스트로 강제한다.
+
+    세 함수 모두 대상 행을 잠근 뒤에 판정해야 한다. 규칙을 문서로만 두면
+    다음 함수가 추가될 때 조용히 빠진다 — A-1이 그렇게 생겼다.
+    """
+
+    def capture(self, fn):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx:
+            fn()
+        return [q["sql"] for q in ctx.captured_queries]
+
+    def test_grant_locks_the_target_user_row(self):
+        sqls = self.capture(
+            lambda: __import__("accounts.services", fromlist=["x"]).grant_role(
+                self.target.id, role=Role.ADVISOR, actor=self.admin
+            )
+        )
+        self.assertTrue(any('FOR UPDATE OF "accounts_user"' in s for s in sqls))
+
+    def test_admin_revoke_locks_the_admin_role_rows_in_a_fixed_order(self):
+        other_admin = User.objects.create_user(
+            email="admin2@example.com", nickname="admin2", password="pw12345!"
+        )
+        UserRole.objects.create(user=other_admin, role=Role.ADMIN)
+
+        sqls = self.capture(
+            lambda: __import__("accounts.services", fromlist=["x"]).revoke_role(
+                other_admin.id, role=Role.ADMIN, actor=self.admin
+            )
+        )
+        locked_set = [s for s in sqls if "accounts_userrole" in s and "FOR UPDATE" in s]
+        self.assertTrue(locked_set, "last-admin check must lock the ADMIN role rows")
+        # 순서를 고정하지 않으면 두 회수가 반대 순서로 잠가 교착할 수 있다.
+        self.assertIn("ORDER BY", locked_set[0])
+
+    def test_revoke_writes_only_the_demoted_column(self):
+        advisor = User.objects.create_user(
+            email="adv@example.com", nickname="adv", password="pw12345!"
+        )
+        UserRole.objects.create(user=advisor, role=Role.ADVISOR)
+        advisor.active_role = ActiveRole.ADVISOR
+        advisor.save(update_fields=["active_role"])
+
+        sqls = self.capture(
+            lambda: __import__("accounts.services", fromlist=["x"]).revoke_role(
+                advisor.id, role=Role.ADVISOR, actor=self.admin
+            )
+        )
+        updates = [s for s in sqls if s.startswith("UPDATE \"accounts_user\"")]
+        self.assertEqual(len(updates), 1)
+        # update_fields는 권한 경계다 — 다른 컬럼이 함께 실리면 안 된다.
+        self.assertIn('"active_role"', updates[0])
+        self.assertIn('"updated_at"', updates[0])
+        self.assertNotIn('"email"', updates[0])
+        self.assertNotIn('"password"', updates[0])

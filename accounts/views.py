@@ -278,3 +278,23 @@ class AdminUserRolesView(APIView):
             },
             status=201,
         )
+
+
+class AdminUserRoleDetailView(APIView):
+    """DELETE /api/v1/admin/users/{user-id}/roles/{role} (#43) — revoke a role.
+
+    The grantable-role set is enforced by the URL converter, not here: `USER`
+    is not a revocable role (ADR-003 §2) and api.md #43 has no 400 in its status
+    set, so a request for it must not match a route at all.
+    """
+
+    permission_classes = [IsAdmin]
+
+    def delete(self, request, user_id, role):
+        services.revoke_role(
+            user_id,
+            role=role,
+            actor=request.user,
+            reason=request.query_params.get("reason", ""),
+        )
+        return Response(status=204)

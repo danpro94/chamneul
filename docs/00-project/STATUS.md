@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-15 (SPEC-003/TASK-003 커밋 기준. PR #3·#4·#5 머지 완료)
+> 마지막 실측: 2026-09-15 (SPEC-003/TASK-004 커밋 기준. PR #3·#4·#5 머지 완료)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | **M4-8 진행 중**(7/8 모듈 완료), **43/44 엔드포인트** — 남은 것: #43 역할 회수 |
+| M4 진행률 | **8/8 모듈 구현 완료, 44/44 엔드포인트** — SPEC-003 TASK-005(교차 검증·마무리) 후 M4 종료 |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (43 / 44)
+## 2. 구현된 엔드포인트 (44 / 44)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls`, `notifications.urls` 5개 include.
 
@@ -72,15 +72,12 @@
 | 40 | GET | `/api/v1/notifications/{notification-id}` | `NotificationDetailView.get` (SPEC-003/TASK-001) |
 | 41 | PATCH | `/api/v1/notifications/{notification-id}/read` | `NotificationReadView.patch` (SPEC-003/TASK-002) |
 | 42 | POST | `/api/v1/admin/users/{user-id}/roles` | [accounts/views.py](../../accounts/views.py) `AdminUserRolesView.post` (SPEC-003/TASK-003) |
+| 43 | DELETE | `/api/v1/admin/users/{user-id}/roles/{role}` | `AdminUserRoleDetailView.delete` (SPEC-003/TASK-004) |
 | 44 | GET | `/api/v1/csrf` | `CsrfView` |
 
-## 3. 미구현 엔드포인트 (1 / 44)
+## 3. 미구현 엔드포인트 (0 / 44)
 
-`notifications`(M4-7)는 전량 완료. M4-8은 부여(#42)만 구현됐고 회수(#43)가 남았다 — 회수는 점검 A-3(`active_role` 강등)을 포함하므로 SPEC-003에서 가장 위험한 구간이다.
-
-| 모듈 | 엔드포인트 | api.md 절 |
-| --- | --- | --- |
-| M4-8 admin roles | #43 역할 회수 (1개) | §4-43 |
+**없다.** api.md v1.1의 44개 엔드포인트가 전량 구현됐다(2026-09-15, SPEC-003/TASK-004). 남은 것은 구현이 아니라 검증·정리다 — SPEC-003 TASK-005(교차 검증 + AC 전수 대조 + 서브에이전트 리뷰), 그다음 M5(스모크 + 문서 부채).
 
 ## 4. Active SPEC
 
@@ -89,7 +86,13 @@
 * **TASK-001 완료** — #39 목록 + #40 상세. Mock-Up UI 4장으로 목록·필터·상세·404 확인.
 * **TASK-002 완료** — #41 읽음 처리(멱등, `read_at` 최초 값 보존). **M4-7 종료.** `notifications` 앱 테스트 28개(전체 **215개**). 검증 4종 통과.
 * **TASK-003 완료** — #42 역할 부여. `accounts` 앱 **첫 테스트 파일**(16개, 전체 **231개**). 검증 4종 통과. 부여가 `active_role`을 바꾸지 않음을 화면으로 확인.
-* 남은 TASK: 004(#43 회수 — A-3 포함), 005(교차 검증 + 마무리).
+* **TASK-004 완료** — #43 역할 회수. **A-3 양방향 해소.** accounts 앱 테스트 45개(전체 **260개**). 검증 4종 통과.
+  * 잠금: `User` 행 → ADMIN `UserRole` 집합(`order_by("pk")`). `grant_role`이 `User`만 잠그므로 교착 없음. 집계 위에는 `FOR UPDATE`를 걸 수 없어(PostgreSQL) 행을 잠그고 파이썬에서 센다.
+  * "마지막 ADMIN" 판정은 **`UserRole` 행 기준**이며 superuser는 세지 않는다 — 잘못 막으면 재시도로 끝나지만 잘못 허용하면 시스템이 잠긴다는 비대칭에 따른 보수적 선택(테스트로 고정).
+  * **AC-7을 앞당겨 실증**: 회수 전 #20·#29=200 → 회수 → #20·#29=403, 조언 데이터 보존, concern `ASSIGNED` 유지.
+  * **A-3의 나머지 절반**: STATUS.md §7 A-3는 `set_active_role`(#10)과 회수의 경합을 가리켰다. 회수 쪽만 고치면 "전환이 역할을 읽은 뒤 회수가 지우고, 전환이 그 뒤에 쓰는" 순서로 같은 상태에 도달한다. `set_active_role`에도 같은 행 잠금을 넣어 양쪽을 닫았다.
+  * **상태 전이 규칙을 테스트로 승격**: `StateTransitionLockingTests`가 발행 SQL의 `FOR UPDATE`·잠금 순서·`update_fields` 범위를 검사한다.
+* 남은 TASK: 005(교차 검증 `target_url` 왕복 + AC 전수 대조 + PR·서브에이전트 리뷰).
 
 **SPEC-002-advice-api — 완료·머지 (2026-09-14, PR #3 + 리뷰 반영 PR #4).** api.md #26~38 (M4-6) 13개 엔드포인트, AC-1~AC-11 전항 통과, advice 앱 테스트 118개(전체 **180개**). [PR #3](https://github.com/danpro94/chamneul/pull/3). 서브에이전트 리뷰 2종(`security-reviewer`·`api-architect`) 실행 후 **블로커 1·메이저 5 전부 반영** — 결론은 [docs/reviews/05-spec002-subagent-review.md](../reviews/05-spec002-subagent-review.md).
 
@@ -127,7 +130,7 @@ api.md #16~25 (M4-5 concerns) 10개 엔드포인트 전량 구현, AC-1~AC-10 �
 
 | # | 항목 | 상태 |
 | --- | --- | --- |
-| 신규 (2026-09-14 리뷰) | **M4-8 선행 조건** — 역할 회수(#43) 시 `active_role`을 강등하지 않으면 회수된 조언가가 #29~#31을 계속 통과한다(`IsActiveAdvisor`가 `active_role`만 확인). M4-8 SPEC의 AC로 못 박을 것 | 미결 — M4-8 착수 시 |
+| 신규 (2026-09-14 리뷰) | **M4-8 선행 조건** — 역할 회수(#43) 시 `active_role`을 강등하지 않으면 회수된 조언가가 #29~#31을 계속 통과한다(`IsActiveAdvisor`가 `active_role`만 확인) | **해소 완료** (2026-09-15, SPEC-003/TASK-004). 회수 시 강등 + #10의 경합까지 차단. end-to-end 실증: 회수 후 #20·#29 = 403 |
 | D-4 | Concern `ANSWERED → CLOSED` 사용자 API 도입 여부 | 미결 (권고: Phase 2는 Admin으로만 종료 처리, 신규 API 없음) |
 | D-6 | `domain_category`(advisor) 11종 확정 여부 | 확정됨(2026-07-08 D-6) — model.md §11에서 재확인 필요 |
 | 신규 (2026-09-10 TASK-003) | api.md #20의 query param `status?`("assignment 상태")가 `Assignment` 모델의 실제 필드와 불일치 | **종결됨** — Owner 승인(후보 B: `concern.status` 필터로 재해석) 후 TASK-006에서 구현 + api.md 문구 정정 완료. |
@@ -162,9 +165,9 @@ SPEC-002 리뷰의 M-1(잠금 없는 read-modify-write)이 다른 앱에도 있�
 | --- | --- | --- | --- |
 | A-1 | `advisors.review_application` | 동시 승인 시 `RoleGrant` 감사 행 2개 + 알림 2건 — ADR-003 §3의 감사 추적 오염 | **수정 완료** (2026-09-14). id를 받아 `select_for_update(of=("self",))`로 재조회. `advisors/tests.py` 신설(7건) |
 | A-2 | `concerns.soft_delete_concern` | 동시 삭제 2건이 둘 다 409 검사를 통과 → 결과는 멱등이나 409 가드가 신뢰 불가 | **기록만.** 실피해 없고 수정하려면 뷰-서비스 경계 변경 필요 |
-| A-3 | `accounts.set_active_role` | 역할 회수와 동시 실행 시 회수된 역할로 전환 가능 | **M4-8 선행 조건과 통합** (아래 §5 미결 항목) |
+| A-3 | `accounts.set_active_role` | 역할 회수와 동시 실행 시 회수된 역할로 전환 가능 | **수정 완료** (2026-09-15, SPEC-003/TASK-004). A-3는 두 방향이었다 — ① 회수가 `active_role`을 안 내리는 쪽(`revoke_role`에서 강등) ② 전환이 잠금 없이 역할을 읽는 쪽(`set_active_role`에 `select_for_update(of=("self",))` 추가). 둘 다 닫아야 "역할 없이 ADVISOR를 입은 상태"가 사라진다 |
 
-재발 방지: `.claude/rules/coding.md`에 **"상태 전이 함수는 예외 없이 `atomic` + `select_for_update` + `update_fields`"** 규칙을 신설했다.
+재발 방지: `.claude/rules/coding.md`에 **"상태 전이 함수는 예외 없이 `atomic` + `select_for_update` + `update_fields`"** 규칙을 신설했다. 2026-09-15부터는 이 규칙을 **문서가 아니라 테스트로** 강제한다 — `accounts.tests.StateTransitionLockingTests`가 발행 SQL에서 `FOR UPDATE`와 잠금 순서(`ORDER BY`), `UPDATE`가 지정 컬럼만 싣는지를 직접 검사한다. 규칙을 문서로만 두면 다음 함수가 추가될 때 조용히 빠진다(A-1이 그렇게 생겼다).
 
 ## 8. 참조
 
