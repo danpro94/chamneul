@@ -20,15 +20,16 @@
 * [x] Mock-Up UI: 목록 / 읽음필터 / 상세 / 타인 알림 404 — 4장
 * [x] 검증 4종 실행 결과 첨부 — check 0 issues / makemigrations No changes / ruff passed / **207 tests OK**
 
-## TASK-002 — 알림 읽음 처리 (#41)
+## TASK-002 — 알림 읽음 처리 (#41) — **완료 (2026-09-15)**
 
-* [ ] 미읽음 → PATCH → 200, `is_read=true`, `read_at` 기록 — 실패 테스트
-* [ ] 이미 읽은 알림 재요청 → **200(멱등)**, `read_at` 최초 값 유지 — 실패 테스트
-* [ ] 타인의 알림 → 404 / 비로그인 → 401 — 실패 테스트
-* [ ] 읽음 처리 후 #39의 `unread_count` 감소 — 실패 테스트
-* [ ] `mark_read` 서비스 구현 (`atomic` + `select_for_update(of=("self",))` + `update_fields`)
-* [ ] Mock-Up UI: 읽음 처리 전/후 `unread_count` 변화 스크린샷
-* [ ] 검증 4종 실행 결과 첨부
+* [x] 미읽음 → PATCH → 200, `is_read=true`, `read_at` 기록 — 실패 테스트
+* [x] 이미 읽은 알림 재요청 → **200(멱등)**, `read_at` 최초 값 유지 — 실패 테스트
+* [x] 타인의 알림 → 404(행 불변 확인) / 없는 id → 404 / 비로그인 → 401 — 실패 테스트
+* [x] 읽음 처리 후 #39의 `unread_count` 감소 + 다른 알림 불변 — 실패 테스트
+* [x] `mark_read` 서비스 구현 (`atomic` + `select_for_update(of=("self",))` + `update_fields`)
+* [x] **발행 SQL 실측 확인** — `FOR UPDATE OF "notifications_notification"` 실재, UPDATE는 `is_read`·`read_at` 2개 컬럼만
+* [x] Mock-Up UI: 읽음 전(3) / 후(2) / 상세 `read_at` — 3장. 실제 브라우저 CSRF PATCH로 왕복
+* [x] 검증 4종 실행 결과 첨부 — check 0 issues / makemigrations No changes / ruff passed / **215 tests OK**
 
 ## TASK-003 — 역할 부여 (#42)
 

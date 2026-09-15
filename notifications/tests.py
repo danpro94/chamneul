@@ -25,6 +25,10 @@ def notification_url(notification_id):
     return f"/api/v1/notifications/{notification_id}"
 
 
+def read_url(notification_id):
+    return f"/api/v1/notifications/{notification_id}/read"
+
+
 class NotificationTestBase(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -288,4 +292,96 @@ class NotificationDetailTests(NotificationTestBase):
     def test_requires_authentication(self):
         notification = self.make_notification(self.me)
         response = self.client.get(notification_url(notification.id))
+        self.assertEqual(response.status_code, 401)
+
+
+class NotificationReadTests(NotificationTestBase):
+    """PATCH /api/v1/notifications/{notification-id}/read (#41).
+
+    api.md #41's status set has no 409, so re-reading an already-read
+    notification is idempotent (200), not a conflict. The invariant that makes
+    it idempotent rather than merely tolerant: `read_at` keeps its *first*
+    value — "처음 읽은 시각"이 나중 호출로 덮어써지면 감사 정보가 사라진다.
+    """
+
+    def test_marking_unread_notification_sets_flag_and_timestamp(self):
+        notification = self.make_notification(self.me, is_read=False)
+
+        self.client.force_authenticate(self.me)
+        response = self.client.patch(read_url(notification.id))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["is_read"])
+        self.assertIsNotNone(response.data["read_at"])
+
+        notification.refresh_from_db()
+        self.assertTrue(notification.is_read)
+        self.assertIsNotNone(notification.read_at)
+
+    def test_response_fields(self):
+        # api.md #41 Response: notification_id / is_read / read_at 만.
+        notification = self.make_notification(self.me, is_read=False)
+
+        self.client.force_authenticate(self.me)
+        response = self.client.patch(read_url(notification.id))
+
+        self.assertEqual(set(response.data), {"notification_id", "is_read", "read_at"})
+        self.assertEqual(response.data["notification_id"], str(notification.id))
+
+    def test_rereading_is_idempotent_and_preserves_first_read_at(self):
+        notification = self.make_notification(self.me, is_read=True)
+        first_read_at = notification.read_at
+
+        self.client.force_authenticate(self.me)
+        response = self.client.patch(read_url(notification.id))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["is_read"])
+        notification.refresh_from_db()
+        self.assertEqual(notification.read_at, first_read_at)
+
+    def test_unread_count_drops_after_read(self):
+        first = self.make_notification(self.me, is_read=False)
+        self.make_notification(self.me, is_read=False)
+
+        self.client.force_authenticate(self.me)
+        self.assertEqual(self.client.get(NOTIFICATIONS_URL).data["unread_count"], 2)
+
+        self.client.patch(read_url(first.id))
+
+        self.assertEqual(self.client.get(NOTIFICATIONS_URL).data["unread_count"], 1)
+
+    def test_reading_one_does_not_touch_the_others(self):
+        target = self.make_notification(self.me, is_read=False)
+        untouched = self.make_notification(self.me, is_read=False)
+
+        self.client.force_authenticate(self.me)
+        self.client.patch(read_url(target.id))
+
+        untouched.refresh_from_db()
+        self.assertFalse(untouched.is_read)
+        self.assertIsNone(untouched.read_at)
+
+    def test_cannot_read_another_users_notification(self):
+        """404, and the row must stay unread — a failed call may not have
+        touched the other user's data."""
+        notification = self.make_notification(self.other, is_read=False)
+
+        self.client.force_authenticate(self.me)
+        response = self.client.patch(read_url(notification.id))
+
+        self.assertEqual(response.status_code, 404)
+        notification.refresh_from_db()
+        self.assertFalse(notification.is_read)
+
+    def test_unknown_id_is_404(self):
+        self.client.force_authenticate(self.me)
+        response = self.client.patch(
+            read_url("00000000-0000-0000-0000-000000000000")
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_requires_authentication(self):
+        notification = self.make_notification(self.me, is_read=False)
+        response = self.client.patch(read_url(notification.id))
         self.assertEqual(response.status_code, 401)

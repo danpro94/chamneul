@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-09-15 — SPEC-003/TASK-002: 알림 읽음 처리 (api.md #41) — M4-7 종료 [위임]
+
+### 작업
+
+`PATCH /api/v1/notifications/{notification-id}/read` 구현. 이로써 M4-7(알림 3개)이 끝나고 **42/44 엔드포인트**가 됐다. 남은 것은 M4-8 역할 부여·회수(#42·#43) 2개뿐이다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-002 진행 승인. 설계 결정은 SPEC-003 §4에서 이미 확정된 범위 내(멱등 200) — 신규 결정 없음.
+
+### 생성 산출물
+
+* `notifications/services.py` — `mark_read()` 추가
+* `notifications/serializers.py` — `NotificationReadResultSerializer`(3필드) 추가
+* `notifications/views.py` — `NotificationReadView` 추가 / `notifications/urls.py` — `/read` path 추가
+* `notifications/tests.py` — `NotificationReadTests` 8개 추가
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **215개 통과**(notifications 28개). 구현 전 8개 중 **5개가 실질 실패**함을 확인하고 착수 — 나머지 3개는 라우트 부재로 404가 우연히 기대값과 일치해 무의미 통과했고, 구현 후 재실행에서 비로소 의미를 갖는다(부정 테스트의 성질).
+* **발행 SQL 실측**: `.claude/rules/coding.md` 상태 전이 규칙의 3종 가드가 장식이 아닌지 직접 확인 — `FOR UPDATE OF "notifications_notification"` 실재, UPDATE는 `is_read`·`read_at` **2개 컬럼만** 기록.
+* Mock-Up UI 3장: 읽음 전(unread_count=3) → 후(2, 해당 알림만 `is_read=true`) → 상세 `read_at` 기록. **실제 브라우저에서 csrftoken 쿠키를 `X-CSRFToken` 헤더로 되돌려 보내는 왕복**으로 확인(CLAUDE.md §10). 같은 알림에 PATCH를 2회 보내 **200 + `read_at` 동일값**(멱등) 실측.
+
+### 잔여 리스크
+
+1. **읽음 처리의 멱등성이 `read_at` 보존에 의존한다.** api.md #41에 409가 없어 재호출은 성공해야 하는데, 성공시키려고 타임스탬프를 덮어쓰면 "처음 본 시각"이 조용히 사라진다. 가드를 응답이 아니라 **쓰기 쪽**에 둔 이유이며, 테스트로 고정했다.
+2. **일괄 읽음 API 없음.** api.md 비범위(UX §8-6), M5에서 재검토.
+3. **A-3 미해소.** TASK-004에서 구현·검증.
+4. **`accounts` 앱 테스트 여전히 0건.** TASK-003에서 첫 파일이 생긴다.
+
+---
+
 ## 2026-09-15 — SPEC-003 작성 + TASK-001: 알림 목록/상세 (api.md #39·#40) [위임]
 
 ### 작업

@@ -36,3 +36,17 @@ class NotificationDetailSerializer(NotificationListSerializer):
 
     class Meta(NotificationListSerializer.Meta):
         fields = NotificationListSerializer.Meta.fields + ("read_at",)
+
+
+class NotificationReadResultSerializer(serializers.ModelSerializer):
+    """#41 response — the three fields the client needs to update its badge.
+
+    Deliberately narrower than the detail serializer: a read acknowledgement
+    does not need to re-send the body (api.md #41 Response 주요 필드).
+    """
+
+    notification_id = serializers.UUIDField(source="id", read_only=True)
+
+    class Meta:
+        model = Notification
+        fields = ("notification_id", "is_read", "read_at")

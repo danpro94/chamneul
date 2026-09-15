@@ -7,7 +7,9 @@ notification addressed to someone else is never loaded and the view answers 404
 that produces 403/404 mix-ups, so it is deliberately not used here.
 """
 
+from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from .models import Notification
 
@@ -38,3 +40,28 @@ def get_my_notification(user, notification_id) -> Notification:
     return get_object_or_404(
         Notification.objects.filter(recipient=user), pk=notification_id
     )
+
+
+def mark_read(user, notification_id) -> Notification:
+    """Mark one of my notifications read, idempotently (#41).
+
+    Follows the state-transition rule in .claude/rules/coding.md: atomic +
+    select_for_update(of=("self",)) + save(update_fields=[...]).
+
+    `read_at` is written only on the first read. api.md #41 has no 409, so a
+    repeat call must succeed — but succeeding by overwriting the timestamp
+    would silently destroy "when the user first saw this", so the guard is on
+    the write, not on the response.
+    """
+    with transaction.atomic():
+        notification = get_object_or_404(
+            Notification.objects.select_for_update(of=("self",)).filter(
+                recipient=user
+            ),
+            pk=notification_id,
+        )
+        if not notification.is_read:
+            notification.is_read = True
+            notification.read_at = timezone.now()
+            notification.save(update_fields=["is_read", "read_at"])
+    return notification

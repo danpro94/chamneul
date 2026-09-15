@@ -12,7 +12,11 @@ from rest_framework.views import APIView
 from common.pagination import StandardPagination
 
 from . import services
-from .serializers import NotificationDetailSerializer, NotificationListSerializer
+from .serializers import (
+    NotificationDetailSerializer,
+    NotificationListSerializer,
+    NotificationReadResultSerializer,
+)
 
 # api.md §1.6 query flags are strings (mirrors concerns/views.py). `is_read` is
 # tri-state — absent means "no filter" — so it needs both spellings.
@@ -65,3 +69,17 @@ class NotificationDetailView(APIView):
     def get(self, request, notification_id):
         notification = services.get_my_notification(request.user, notification_id)
         return Response(NotificationDetailSerializer(notification).data)
+
+
+class NotificationReadView(APIView):
+    """PATCH (#41) — /api/v1/notifications/{notification-id}/read.
+
+    No request body: the resource is the read state and PATCH sets it. Re-reading
+    is a no-op that still answers 200 (services.mark_read).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, notification_id):
+        notification = services.mark_read(request.user, notification_id)
+        return Response(NotificationReadResultSerializer(notification).data)
