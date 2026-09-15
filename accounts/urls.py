@@ -22,4 +22,10 @@ urlpatterns = [
     path("users/me", views.UserMeView.as_view(), name="users-me"),
     path("users/me/roles", views.UserRolesView.as_view(), name="users-me-roles"),
     path("users/me/active-role", views.ActiveRoleView.as_view(), name="users-me-active-role"),
+    # M4-8 admin roles (#42). Revoke (#43) arrives in TASK-004.
+    path(
+        "admin/users/<uuid:user_id>/roles",
+        views.AdminUserRolesView.as_view(),
+        name="admin-user-roles",
+    ),
 ]

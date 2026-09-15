@@ -10,12 +10,13 @@ import re
 import secrets
 
 from django.db import IntegrityError, transaction
+from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import PermissionDenied
 
 from common.exceptions import Conflict
 from common.uuid7 import uuid7
 
-from .models import Role, UserRole
+from .models import Role, RoleGrant, RoleGrantAction, User, UserRole
 
 # advisor_status exposes only these (api.md #9). WITHDRAWN is unreachable in
 # Phase 2 and maps to NONE if it somehow appears.
@@ -127,3 +128,42 @@ def link_or_create_google_user(google_sub: str, email: str, name: str = ""):
         return existing
 
     return _create_with_nickname(email, google_sub, _derive_nickname_base(name, email))
+
+
+# --- admin role grant / revoke (ADR-003, api.md #42-#43) ------------------
+
+
+def grant_role(target_user_id, role, actor, reason=""):
+    """Grant ADMIN/ADVISOR to a user, writing one audit row (#42).
+
+    Returns `(target, grant)`. Raises 404 for an unknown user, 409 for a role
+    the target already holds.
+
+    The target's `User` row is locked first, which is what makes the
+    check-then-create below safe: two concurrent grants of the same role to the
+    same user serialize on that row, so the duplicate loses the race and gets a
+    409 instead of tripping the unique constraint. Locking `User` (not
+    `UserRole`) is deliberate — the row we must serialize on is the one that
+    exists before the decision, and it is the same row `revoke_role` takes, so
+    the two never deadlock against each other.
+
+    No notification is sent, by decision (ADR-003 §4).
+    """
+    with transaction.atomic():
+        target = get_object_or_404(
+            User.objects.select_for_update(of=("self",)), pk=target_user_id
+        )
+        if UserRole.objects.filter(user=target, role=role).exists():
+            raise Conflict("이미 보유한 역할입니다.")
+
+        UserRole.objects.create(user=target, role=role)
+        grant = RoleGrant.objects.create(
+            user=target,
+            role=role,
+            action=RoleGrantAction.GRANT,
+            acted_by=actor,
+            reason=reason,
+        )
+    # active_role is untouched on purpose: holding a role and wearing it are
+    # different facts (model.md §3.2). The user switches with #10.
+    return target, grant

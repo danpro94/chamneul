@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-09-15 — SPEC-003/TASK-003: 역할 부여 (api.md #42) [위임]
+
+### 작업
+
+`POST /api/v1/admin/users/{user-id}/roles` 구현. **`accounts` 앱의 첫 테스트 파일**이 생긴 지점이다 — M4-1~M4-3이 test-first 도입 전에 구현돼 이 앱만 테스트 0건이었다. 범위는 #42/#43으로 한정했고, 회원가입·로그인·OAuth·프로필의 소급 테스트는 문서 부채로 유지한다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-003 착수 승인. 설계는 ADR-003·SPEC-003 확정 범위 내 — 신규 결정 없음.
+
+### 생성 산출물
+
+* `accounts/tests.py` (**신규, 16개**) — `AdminRoleTestBase` + `RoleGrantTests`
+* `accounts/services.py` — `grant_role()` 추가 (`held_roles`·`set_active_role` 시그니처 불변)
+* `accounts/serializers.py` — `RoleGrantRequestSerializer` 추가
+* `accounts/views.py` — `AdminUserRolesView` 추가 / `accounts/urls.py` — path 추가
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **231개 통과**(accounts 16개 신규). 구현 전 16개 중 **12개 실질 실패** 확인 후 착수 — 나머지 4개는 부정 단언(알림 미생성·`active_role` 불변·중복 시 감사행 미생성·없는 user 404)이라 아무 일도 일어나지 않는 상태에서 자동 성립했고, 구현 후 재실행에서 의미를 갖는다.
+* **발행 SQL 실측**: `FOR UPDATE OF "accounts_user"`가 `exists()` 검사보다 **먼저** 걸린다. 대상 `User` 행을 잠근 뒤 검사·생성하므로 동시 부여가 직렬화되고, 중복은 유니크 제약(500)이 아니라 409로 떨어진다.
+* Mock-Up UI: 대상 본인 시점 `/api/v1/users/me/roles` 부여 전(`["USER"]`) / 후(`["USER","ADVISOR"]`) 2장. 실제 브라우저 왕복으로 **409**(중복 부여) · **400**(`role="USER"`) · **403**(비관리자) 동시 확인.
+
+### 잔여 리스크
+
+1. **`USER` 역할 차단을 serializer의 choices에 뒀다.** 서비스 레이어가 아니라 입력 검증 단계에서 막으므로, 앞으로 `grant_role()`을 API 밖에서(관리 커맨드·데이터 마이그레이션 등) 호출하면 이 가드를 우회한다. 모델의 `UserRole.clean()`이 남아 있지만 `create()`는 `full_clean()`을 부르지 않는다 — 호출부가 늘어나면 서비스 레이어로 옮겨야 한다.
+2. **`IsAdmin`은 superuser도 통과시킨다**(ADR-003 §1). #43의 "마지막 ADMIN" 판정과 기준이 어긋날 수 있어, TASK-004에서 보수적 판정(UserRole 행 기준)을 테스트로 고정한다.
+3. **A-3 미해소.** TASK-004에서 구현·검증.
+4. **부여는 `active_role`을 바꾸지 않는다** — 의도된 동작이나, 초청 조언가가 "역할은 받았는데 왜 활동이 안 되지"로 혼동할 여지가 있다. M5 스모크 문서에 안내 문구가 필요하다.
+
+---
+
 ## 2026-09-15 — SPEC-003/TASK-002: 알림 읽음 처리 (api.md #41) — M4-7 종료 [위임]
 
 ### 작업

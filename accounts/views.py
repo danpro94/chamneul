@@ -13,11 +13,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.exceptions import Conflict
+from common.permissions import IsAdmin
 
 from . import oauth, services
 from .serializers import (
     ActiveRoleSerializer,
     LoginSerializer,
+    RoleGrantRequestSerializer,
     SignupResultSerializer,
     SignupSerializer,
     UserCardSerializer,
@@ -244,4 +246,35 @@ class ActiveRoleView(APIView):
                 "active_role": user.active_role,
                 "roles": services.held_roles(user),
             }
+        )
+
+
+class AdminUserRolesView(APIView):
+    """POST /api/v1/admin/users/{user-id}/roles (#42) — grant a role.
+
+    ADVISOR is normally granted by the application flow (#15); this endpoint is
+    the exception path for invited advisors, and the audit row is what keeps
+    that exception accountable (ADR-003 §2-§3).
+    """
+
+    permission_classes = [IsAdmin]
+
+    def post(self, request, user_id):
+        serializer = RoleGrantRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target, grant = services.grant_role(
+            user_id,
+            role=serializer.validated_data["role"],
+            actor=request.user,
+            reason=serializer.validated_data["reason"],
+        )
+        return Response(
+            {
+                "user_id": str(target.id),
+                "roles": services.held_roles(target),
+                "granted_role": grant.role,
+                "granted_at": grant.acted_at,
+                "granted_by": str(grant.acted_by_id),
+            },
+            status=201,
         )

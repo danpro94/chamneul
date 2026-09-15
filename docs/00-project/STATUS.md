@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-15 (SPEC-003/TASK-002 커밋 기준. PR #3·#4·#5 머지 완료)
+> 마지막 실측: 2026-09-15 (SPEC-003/TASK-003 커밋 기준. PR #3·#4·#5 머지 완료)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | **M4-7 완료**(7/8 모듈), **42/44 엔드포인트** — 남은 모듈: M4-8 역할(#42·#43) |
+| M4 진행률 | **M4-8 진행 중**(7/8 모듈 완료), **43/44 엔드포인트** — 남은 것: #43 역할 회수 |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (42 / 44)
+## 2. 구현된 엔드포인트 (43 / 44)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls`, `notifications.urls` 5개 include.
 
@@ -71,15 +71,16 @@
 | 39 | GET | `/api/v1/notifications` | [notifications/views.py](../../notifications/views.py) `NotificationListView.get` (SPEC-003/TASK-001) |
 | 40 | GET | `/api/v1/notifications/{notification-id}` | `NotificationDetailView.get` (SPEC-003/TASK-001) |
 | 41 | PATCH | `/api/v1/notifications/{notification-id}/read` | `NotificationReadView.patch` (SPEC-003/TASK-002) |
-| 44 | GET | `/api/v1/csrf` | [accounts/views.py](../../accounts/views.py) `CsrfView` |
+| 42 | POST | `/api/v1/admin/users/{user-id}/roles` | [accounts/views.py](../../accounts/views.py) `AdminUserRolesView.post` (SPEC-003/TASK-003) |
+| 44 | GET | `/api/v1/csrf` | `CsrfView` |
 
-## 3. 미구현 엔드포인트 (2 / 44)
+## 3. 미구현 엔드포인트 (1 / 44)
 
-`notifications`(M4-7)는 SPEC-003/TASK-001~002로 전량 구현 완료. 남은 것은 `accounts`의 역할 부여·회수뿐이다.
+`notifications`(M4-7)는 전량 완료. M4-8은 부여(#42)만 구현됐고 회수(#43)가 남았다 — 회수는 점검 A-3(`active_role` 강등)을 포함하므로 SPEC-003에서 가장 위험한 구간이다.
 
 | 모듈 | 엔드포인트 | api.md 절 |
 | --- | --- | --- |
-| M4-8 admin roles | #42~43 (2개) | §4-42~43 |
+| M4-8 admin roles | #43 역할 회수 (1개) | §4-43 |
 
 ## 4. Active SPEC
 
@@ -87,7 +88,8 @@
 
 * **TASK-001 완료** — #39 목록 + #40 상세. Mock-Up UI 4장으로 목록·필터·상세·404 확인.
 * **TASK-002 완료** — #41 읽음 처리(멱등, `read_at` 최초 값 보존). **M4-7 종료.** `notifications` 앱 테스트 28개(전체 **215개**). 검증 4종 통과.
-* 남은 TASK: 003(#42 부여), 004(#43 회수 — A-3 포함), 005(교차 검증 + 마무리).
+* **TASK-003 완료** — #42 역할 부여. `accounts` 앱 **첫 테스트 파일**(16개, 전체 **231개**). 검증 4종 통과. 부여가 `active_role`을 바꾸지 않음을 화면으로 확인.
+* 남은 TASK: 004(#43 회수 — A-3 포함), 005(교차 검증 + 마무리).
 
 **SPEC-002-advice-api — 완료·머지 (2026-09-14, PR #3 + 리뷰 반영 PR #4).** api.md #26~38 (M4-6) 13개 엔드포인트, AC-1~AC-11 전항 통과, advice 앱 테스트 118개(전체 **180개**). [PR #3](https://github.com/danpro94/chamneul/pull/3). 서브에이전트 리뷰 2종(`security-reviewer`·`api-architect`) 실행 후 **블로커 1·메이저 5 전부 반영** — 결론은 [docs/reviews/05-spec002-subagent-review.md](../reviews/05-spec002-subagent-review.md).
 

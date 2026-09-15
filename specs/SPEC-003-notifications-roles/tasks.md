@@ -31,17 +31,18 @@
 * [x] Mock-Up UI: 읽음 전(3) / 후(2) / 상세 `read_at` — 3장. 실제 브라우저 CSRF PATCH로 왕복
 * [x] 검증 4종 실행 결과 첨부 — check 0 issues / makemigrations No changes / ruff passed / **215 tests OK**
 
-## TASK-003 — 역할 부여 (#42)
+## TASK-003 — 역할 부여 (#42) — **완료 (2026-09-15)**
 
-* [ ] ADVISOR 부여 → 201, `UserRole` 1행 + `RoleGrant(GRANT)` 1행 — 실패 테스트
-* [ ] 응답 `roles[]`가 **변경 후** 보유 역할 (`USER`, `ADVISOR`) — 실패 테스트
-* [ ] **알림이 생성되지 않는다**(ADR-003 §4) — 실패 테스트
-* [ ] 이미 보유한 역할 → 409 / `role="USER"` → 400 / 없는 user-id → 404 — 실패 테스트
-* [ ] Admin 아닌 사용자 → 403 / 비로그인 → 401 — 실패 테스트
-* [ ] 부여가 `active_role`을 바꾸지 않는다 — 실패 테스트
-* [ ] `accounts/tests.py` 신설(이 앱 첫 테스트) + `grant_role` 서비스 + 뷰·URL
-* [ ] Mock-Up UI: 부여 전/후 `/api/v1/users/me/roles` 비교 스크린샷
-* [ ] 검증 4종 실행 결과 첨부
+* [x] ADVISOR/ADMIN 부여 → 201, `UserRole` 1행 + `RoleGrant(GRANT)` 1행(`reason` 포함) — 실패 테스트
+* [x] 응답 `roles[]`가 **변경 후** 보유 역할 (`USER`, `ADVISOR`) + 응답 필드 5종 고정 — 실패 테스트
+* [x] **알림이 생성되지 않는다**(ADR-003 §4) — 실패 테스트
+* [x] 이미 보유한 역할 → 409, **그리고 감사행 미생성** / `role="USER"`·미지정·미정의값 → 400 / 없는 user-id → 404 — 실패 테스트
+* [x] Admin 아닌 사용자 → 403 / 비로그인 → 401 — 실패 테스트
+* [x] 부여가 `active_role`을 바꾸지 않는다 — 실패 테스트
+* [x] `accounts/tests.py` 신설(**이 앱 첫 테스트, 16개**) + `grant_role` 서비스 + 뷰·URL
+* [x] **발행 SQL 실측** — `FOR UPDATE OF "accounts_user"`가 `exists()` 검사보다 **먼저** 걸림(check-then-create 직렬화)
+* [x] Mock-Up UI: 부여 전/후 `/api/v1/users/me/roles` 비교 2장 + 409·400·403 실왕복 확인
+* [x] 검증 4종 실행 결과 첨부 — check 0 issues / makemigrations No changes / ruff passed / **231 tests OK**
 
 ## TASK-004 — 역할 회수 (#43) ★ 핵심 · A-3
 
