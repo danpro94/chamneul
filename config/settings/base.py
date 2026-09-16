@@ -112,7 +112,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# --- I18N / TZ (model.md §1.1: store UTC; serialize KST at the API edge) ---
+# --- I18N / TZ (model.md §1.1, Owner 결정 2026-09-16) ---
+# 백엔드는 전 구간 UTC다: DB도 UTC로 저장하고 API도 ISO 8601 UTC(…Z)로 내보낸다.
+# 현지 시각(KST 등) 변환은 전적으로 클라이언트 책임이므로, 여기서 TIME_ZONE을
+# 지역 시간대로 바꾸면 계약이 깨진다.
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True

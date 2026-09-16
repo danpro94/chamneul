@@ -18,13 +18,15 @@
 * [x] 실행 중 발견한 테스트 픽스처 오류 3곳 정정(`reflective_questions`는 배열이 아니라 `TextField`)
 * [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **283 tests OK**
 
-## TASK-002 — model.md 정합화
+## TASK-002 — model.md 정합화 — **완료 (2026-09-16)**
 
-* [ ] `data-modeler` 서브에이전트 재실행 → drift 목록 **재측정**(기록된 4건은 M3 시점)
-* [ ] 확정된 drift 반영 — **문서를 코드에 맞춘다**
-* [ ] 코드가 틀려 보이는 항목은 반영하지 말고 **분리해 보고**
-* [ ] model.md §1.1 시각 정책을 UTC로 교체 (결정 2)
-* [ ] 검증 4종 실행 결과 첨부
+* [x] `data-modeler` 재실행 → drift **22건 재측정** (기록된 6건보다 많음 — spec §7 리스크 3 적중). 기록된 4건은 전부 현존 + M4 신규 18건
+* [x] 22건 전부 반영 — **문서를 코드에 맞춤**. 스키마(필드·제약·인덱스·on_delete)는 원래 완전 일치했고 drift는 전부 **서술 계층**이었다
+* [x] 코드가 약해 보이는 **5건(B-01~B-05)은 반영하지 않고 분리** — 전부 Django Admin이 서비스 레이어를 우회하는 경로. Owner 판단 대기
+* [x] model.md §1.1 시각 정책을 UTC로 교체 (결정 2) + `config/settings/base.py`의 **잘못된 주석** 정정(코드는 옳았음)
+* [x] §10 체크리스트 12항 전항 `[x]` 처리 (M3·M4·스모크에서 검증 완료)
+* [x] §11 Open Question 5건(O-1·2·3·4·6) 종결 처리, 3건(O-5·7·8) 유지
+* [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **283 tests OK**
 
 ## TASK-003 — 이월 2건 + 문서 부채 청산
 

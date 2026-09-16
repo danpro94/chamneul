@@ -1,6 +1,6 @@
 # Data Model v1
 
-본 문서는 `chamneul` Phase 2 v1의 정식 데이터 모델 명세이다. `docs/api.md` v1 (43 엔드포인트)과 1:1 정합하며, Owner가 2026-06-26 정합 세션에서 확정한 8개 핵심 결정(M1~M8)과 4개 production-grade 보완사항(UUIDv7 / 부분 unique / 3단계 마이그레이션 / 읽기 replica)을 반영한다.
+본 문서는 `chamneul` Phase 2 v1의 정식 데이터 모델 명세이다. `docs/api.md` v1.1 (44 엔드포인트 — CSRF 부트스트랩 #44 포함, ADR-006)과 1:1 정합하며, Owner가 2026-06-26 정합 세션에서 확정한 8개 핵심 결정(M1~M8)과 4개 production-grade 보완사항(UUIDv7 / 부분 unique / 3단계 마이그레이션 / 읽기 replica)을 반영한다.
 
 본 문서의 출처:
 
@@ -22,7 +22,7 @@
 * **PostgreSQL 16+ 전용** (CLAUDE.md §4). SQLite는 어느 단계에서도 사용하지 않는다.
 * ORM: Django ORM (DRF는 직렬화 계층). 마이그레이션은 Django의 `makemigrations` / `migrate` 결과 파일을 단일 진실원천으로 삼는다.
 * 트랜잭션 격리 수준: PG 기본(`READ COMMITTED`). 단, 다중 쓰기 액션(역할 부여, advice 승인, 배정/취소 등)은 `@transaction.atomic`으로 묶는다.
-* Timezone: 서버 저장은 UTC (`USE_TZ = True`, `TIME_ZONE = "UTC"`), API 응답은 KST(`+09:00`)로 직렬화 (api.md §1.7).
+* Timezone (Owner 결정 2026-09-16): **백엔드는 전 구간 UTC**다. **DB** = UTC 저장(`USE_TZ = True`, `TIME_ZONE = "UTC"`) / **API** = 비즈니스 로직·네트워크 전송 모두 ISO 8601 UTC(`…Z`) / **클라이언트** = 사용자 기기 타임존을 감지해 현지 시각(KST 등)으로 변환. 백엔드는 현지 시각을 만들지 않는다 (api.md §1.7).
 
 ### 1.2 Primary Key Strategy — UUIDv7 (Owner 보완사항 #1)
 
@@ -59,6 +59,15 @@
           return self.get_queryset()
   ```
 * 기본 `objects` 매니저는 자동으로 deleted 를 제외한다 (Owner M3). 관리자/감사 목적의 조회는 `Concern.objects.with_deleted()`를 명시적으로 호출해야 한다.
+* **매니저 3종의 역할이 다르다** (실제 구현: `concerns/models.py`, `concerns/managers.py`):
+
+  | 매니저 | 대상 | 쓰이는 곳 |
+  | --- | --- | --- |
+  | `objects` (default_manager) | 살아 있는 행만 | 일반 조회 |
+  | `all_objects` (`Meta.base_manager_name`) | 전부 | **FK 역참조 traversal** |
+  | `objects.with_deleted()` | 전부 | 관리자·감사 조회 |
+
+* **`base_manager_name = "all_objects"`가 핵심이다.** Django는 FK를 따라갈 때 base manager를 쓰므로, `advice.concern`처럼 **역참조로 도달하면 소프트 삭제된 고민도 그대로 나온다.** 그래서 advice/feedback 조회는 `concern__deleted_at__isnull=True`를 매번 명시한다(`advice/services.py`). 소프트 삭제는 "기본 매니저로 조회했을 때만" 숨는 규약이지 전역 차단이 아니다.
 
 ### 1.5 Soft Delete + Unique 강제 패턴 (CLAUDE.md §6.6 / Owner 보완사항 #2)
 
@@ -104,16 +113,21 @@ GIN 인덱스는 검색 패턴이 확정되는 시점에 추가한다 (Phase 2 v
 chamneul/
 ├── manage.py
 ├── config/            ← settings, urls, /healthz
-├── common/            ← 공통 권한 / 페이지네이션 / 예외 핸들러 / uuid7 헬퍼 / DB router
+├── common/            ← permissions / pagination / exceptions / uuid7 / authentication
+│                      + taxonomy.py ← ConcernType 정본 (concerns·advisors 공용)
 ├── accounts/          ← User, UserRole, RoleGrant, GoogleIdentity
 ├── advisors/          ← AdvisorApplication
 ├── concerns/          ← Concern, Assignment
 ├── advice/            ← Advice, AdviceHistory, Feedback
 └── notifications/     ← Notification
+
+각 도메인 앱은 models / serializers / services / views / urls / admin / tests 로 구성한다.
+`common/db_router.py`는 **미구현**이다 (§8 읽기 replica 골격 — Phase 3).
 ```
 
 * 결합도 최소화를 위해 헌법 §3 의 5 도메인 앱 구조를 유지하되, Google OAuth / RoleGrant 는 `accounts/` 안에, Feedback 은 `advice/` 안에 둔다.
 * 앱 간 모델 참조는 항상 문자열 참조(`"accounts.User"`) 로 한다 (cyclic import 회피).
+* **`ConcernType`은 `concerns/`가 아니라 `common/taxonomy.py`에 있다.** `concerns`와 `advisors`(신청서의 `advisable_concern_types`)가 함께 쓰므로, 한쪽 앱에 두면 순환 import가 된다.
 
 ### 1.9 일관 컬럼 패턴
 
@@ -149,13 +163,17 @@ erDiagram
     Advice ||--o{ AdviceHistory   : "has versions"
     Advice ||--o| Feedback        : "has 1"
 
-    AdvisorApplication }o--|| User: "reviewed by"
+    AdvisorApplication }o--o| User: "reviewed by (nullable)"
+    Advice             }o--o| User: "reviewed by (nullable)"
+    Feedback           }o--o| User: "reviewed by (nullable)"
+    Notification       }o--o| User: "triggered by (SET_NULL)"
 
     User {
       uuid id PK
       string email UK
       string nickname UK
       string password
+      boolean is_superuser
       string active_role
       bool is_active
       bool is_staff
@@ -305,10 +323,11 @@ erDiagram
 | password | CharField(128) | N | – | – | `AbstractBaseUser`에서 PBKDF2 해싱 |
 | active_role | CharField(8) | N | "USER" | TextChoices `ActiveRole` | api.md 10 |
 | is_active | BooleanField | N | True | – | Django 표준 계정 활성 플래그 (정지/탈퇴는 Phase 3+) |
-| is_staff | BooleanField | N | False | – | Django Admin 접근 권한 (createsuperuser → True) |
-| job | CharField(50) | Y | "" | – | api.md 8 |
-| interest | CharField(200) | Y | "" | – | api.md 8 |
-| profile_image_url | URLField(500) | Y | "" | – | api.md 8 |
+| is_staff | BooleanField | N | False | – | Django Admin 접근 권한 (createsuperuser → True). **#42로 부여한 ADMIN은 `is_staff=False`** — 역할과 Admin 접근은 별개 |
+| is_superuser | BooleanField | N | False | – | `PermissionsMixin` 상속. **인가 판정에 직접 쓰인다** — `IsAdmin`이 `is_superuser` **또는** `UserRole(ADMIN)`로 통과시킨다(ADR-003 §1 부트스트랩). 단 #43의 "마지막 관리자" 판정은 **`UserRole` 행만** 센다 |
+| job | CharField(50) | **N** | "" | – | api.md 8. `blank=True`는 **폼 검증**이지 DB NULL이 아니다 — 컬럼은 NOT NULL, 빈 값은 `""` |
+| interest | CharField(200) | **N** | "" | – | 동일 |
+| profile_image_url | URLField(500) | **N** | "" | – | 동일 |
 | last_login | DateTimeField | Y | None | – | `AbstractBaseUser` 기본 |
 | created_at | DateTimeField | N | auto | – | – |
 | updated_at | DateTimeField | N | auto | – | – |
@@ -320,6 +339,7 @@ class ActiveRole(models.TextChoices):
     ADVISOR = "ADVISOR", "조언가"
 ```
 * `ADMIN` 은 active_role 후보가 아니다 (ADMIN은 권한 검사 시 항상 적용; api.md §2).
+* `PermissionsMixin`이 함께 들여오는 `groups` / `user_permissions`는 **Phase 2에서 사용하지 않는다.** 인가는 `UserRole` + `active_role` + `is_superuser`로만 판정한다.
 
 **Manager**:
 ```python
@@ -365,7 +385,13 @@ class Role(models.TextChoices):
     ADVISOR = "ADVISOR", "조언가"
     ADMIN = "ADMIN", "관리자"
 ```
-※ `UserRole`의 `role` 컬럼에는 `ADVISOR`/`ADMIN` 만 저장한다 (`USER` 저장 금지 — Service Layer + `clean()`에서 차단).
+※ `UserRole`의 `role` 컬럼에는 `ADVISOR`/`ADMIN` 만 저장한다 (`USER` 저장 금지). 실효 방어는 **3중**이다 (2026-09-16 정정):
+
+1. `accounts.services._GRANTABLE_ROLES` — 서비스 레이어 화이트리스트. API 밖(관리 커맨드 등) 호출도 막는다.
+2. #42 serializer의 `choices` — `USER` 요청은 400.
+3. #43 URL 컨버터(`ADMIN|ADVISOR`) — `/roles/USER`는 라우트가 매칭되지 않아 404.
+
+모델의 `clean()`은 잔존 안전망이지만 **실질적으로는 死코드**다 — `objects.create()`는 `full_clean()`을 부르지 않고, `UserRole` Admin이 view-only가 되면서 폼 검증 경로도 사라졌다.
 
 **Unique**: `(user, role)`.
 
@@ -388,7 +414,7 @@ class Role(models.TextChoices):
 | action | CharField(8) | N | – | TextChoices `RoleGrantAction` | GRANT / REVOKE |
 | acted_by | FK(User, PROTECT) | N | – | – | 수행 관리자, related_name="performed_role_events" |
 | acted_at | DateTimeField | N | auto_now_add | – | – |
-| reason | TextField | Y | "" | – | – |
+| reason | TextField | **N** | "" | – | `blank=True`는 폼 검증 — 컬럼은 NOT NULL |
 
 **Enum** — `RoleGrantAction`: `GRANT`, `REVOKE`.
 
@@ -426,8 +452,8 @@ class Role(models.TextChoices):
 | --- | --- | --- | --- | --- | --- |
 | id | UUIDField | N | uuid7() | PK | – |
 | applicant | FK(User, PROTECT) | N | – | – | related_name="advisor_applications" |
-| display_name | CharField(20) | N | – | partial unique on active | Q22, advisor 프로필명 |
-| domain_category | CharField(20) | N | – | TextChoices `DomainCategory` | O-1 |
+| display_name | CharField(20) | N | – | partial unique on active, **min_length=2** | Q22, advisor 프로필명 (api.md #11: 2~20자) |
+| domain_category | CharField(20) | N | – | TextChoices `DomainCategory` (11종 확정) | Owner 결정 2026-07-08 (O-1 종결) |
 | experience_band | CharField(8) | N | – | TextChoices `ExperienceBand` | `5-7` / `8-12` / `13+` |
 | current_status | CharField(10) | N | – | TextChoices `CurrentStatus` | 재직/프리랜서/휴직/휴식/은퇴 |
 | intended_lane | CharField(8) | N | – | TextChoices `IntendedLane` | expert/senior. **응답 노출 금지** (CLAUDE.md §6.1) |
@@ -438,11 +464,13 @@ class Role(models.TextChoices):
 | submitted_at | DateTimeField | N | auto_now_add | – | – |
 | reviewed_at | DateTimeField | Y | None | – | – |
 | reviewed_by | FK(User, PROTECT, null=True) | Y | None | – | related_name="reviewed_advisor_applications" |
-| reject_reason | TextField | Y | "" | – | – |
+| reject_reason | TextField | **N** | "" | – | `blank=True`는 폼 검증 — 컬럼은 NOT NULL |
 
 **Enums**:
 * `AdvisorApplicationStatus`: PENDING / REVIEWING / APPROVED / REJECTED / WITHDRAWN
-* `DomainCategory`: IT / 경영 / 인사 / 금융 / 의료 / 교육 / 기타 (O-1로 확정 필요)
+* `DomainCategory` (11종, **저장값은 한국어** — Owner 결정 2026-07-08, O-1 종결):
+  기획·전략 / 인사·조직 / 마케팅·PR / 재무·회계 / IT·데이터 / 영업·무역 / 상품기획·MD / R&D / 의료 / 교육 / 기타
+  *(채용 포털 직무 표준 8종 + 의료·교육 + 기타)*
 * `ExperienceBand`: `5-7` / `8-12` / `13+`
 * `CurrentStatus`: 재직 / 프리랜서 / 휴직 / 휴식 / 은퇴
 * `IntendedLane`: expert / senior
@@ -575,15 +603,15 @@ constraints = [
 | updated_at | DateTimeField | N | auto | – | – |
 | reviewed_at | DateTimeField | Y | None | – | – |
 | reviewed_by | FK(User, PROTECT, null=True) | Y | None | – | related_name="reviewed_advices" |
-| reject_reason | TextField | Y | "" | – | – |
+| reject_reason | TextField | **N** | "" | – | `blank=True`는 폼 검증 — 컬럼은 NOT NULL |
 
 **Enum** — `AdviceStatus`: PENDING / REVIEWING / APPROVED / REJECTED / DELETED (CLAUDE.md §6.2)
 
 **상태 전이**:
-* `PENDING ↔ REVIEWING` (관리자가 REVIEWING 으로 옮길 수 있음 — 단, 직접 전이 API는 33의 review action에서만)
 * `PENDING|REVIEWING → APPROVED|REJECTED` (33)
-* `PENDING|REVIEWING → DELETED` (30, advisor가 본인 advice 삭제)
-* `APPROVED → DELETED` 는 Django Admin 만 (Phase 2 v1 Public API 미제공)
+* `PENDING|REVIEWING|REJECTED → DELETED` (30, advisor가 본인 advice 삭제). **REJECTED를 포함하는 이유**: 반려 알림이 사유와 함께 해당 조언을 가리키는데 수정·재작성이 모두 막히면 조언가에게 후속 경로가 없다. 삭제하면 부분 유니크(`~Q(status="DELETED")`)가 (concern, advisor) 슬롯을 풀어 새로 쓸 수 있다 (Owner 결정 2026-09-13).
+* **`REVIEWING`은 Phase 2에서 도달 불가**다. enum과 "전이 **출발** 상태"로만 존재하고, 이 값을 **쓰는 코드 경로가 없다** — #33은 APPROVED/REJECTED만 쓰고 `AdviceAdmin`은 `status`가 readonly다. 진입 경로 도입은 Phase 3 과제 (2026-09-16 실측).
+* **`APPROVED → DELETED` 경로는 Phase 2 v1에 존재하지 않는다.** Public API는 409로 거부하고 Django Admin도 `status`가 readonly라 불가능하다. 승인된 조언의 철회 수단이 없다는 것이 현재 상태이며 Phase 3 과제다 (2026-09-16 실측 — 종전 문서의 "Django Admin 만"은 사실이 아니었다).
 
 **Unique** (Partial — Q10 + 재작성 가능성 고려 O-4):
 ```python
@@ -673,7 +701,7 @@ constraints = [
 | recipient | FK(User, CASCADE) | N | – | – | related_name="notifications". recipient 삭제 시 알림도 정리. |
 | type | CharField(40) | N | – | TextChoices `NotificationType` | – |
 | title | CharField(200) | N | – | – | – |
-| message | TextField | N | – | – | – |
+| message | TextField | N | – | – | **발송 시점에 확정된 고정 문구.** 원본 자원의 본문 사본을 담지 않는다 — 사본은 원본의 접근 규칙(소유권·소프트 삭제·역할)을 상속하지 않아, 배정 해제·역할 회수·고민 삭제 이후에도 계속 읽힌다. 본문은 `target_url`로 실시간 조회 (Owner 결정 2026-09-16) |
 | target_url | CharField(500) | N | "" | – | 상대 경로 (api.md §6) |
 | actor_user | FK(User, SET_NULL, null=True) | Y | None | – | 알림을 유발한 주체 (있을 때만). related_name="triggered_notifications" |
 | payload | JSONField | N | dict | – | 타입별 부가 정보 |
@@ -731,7 +759,7 @@ DB로 표현 불가하지만 정합성에 필수인 규칙. Service Layer에서 
 | APPROVED 시 부수효과: UserRole(ADVISOR) + RoleGrant + Notification | `AdvisorApplicationService.approve()` | api.md 15 |
 | Advice 작성 권한: 해당 concern에 active assignment 가진 advisor만 | `AdviceService.create()` | api.md 28 |
 | Advice 수정 권한: 작성자 + status ∈ {PENDING, REVIEWING} | `AdviceService.update()` | api.md 29 |
-| Advice version 증가 + AdviceHistory snapshot | `AdviceService.update()` | CLAUDE.md §6.7 |
+| Advice version 증가 + AdviceHistory snapshot — **본문 4필드(`directional_guidance`·`reflective_questions`·`considerations`·`out_of_scope_flag`)가 실제로 바뀔 때만.** `submit` 토글만으로는 증가하지 않는다 | `advice.services.update_advice()` | **ADR-007** (CLAUDE.md §6.7 supersede) |
 | Advice review 부수효과: concern.status 자동 전이 + Notification | `AdviceReviewService.approve()/reject()` | api.md 33 |
 | Concern 상태 자동 전이: ASSIGNED ↔ SUBMITTED on assignment activate/deactivate | `ConcernAssignmentService.assign()/unassign()` | CLAUDE.md §6.6 |
 | Concern 상태 자동 전이: ASSIGNED → ANSWERED on first APPROVED advice | `AdviceReviewService.approve()` | CLAUDE.md §6.6 |
@@ -741,6 +769,16 @@ DB로 표현 불가하지만 정합성에 필수인 규칙. Service Layer에서 
 | Assignment 비활성으로 인한 concern.status 되돌림 | `ConcernAssignmentService.unassign()` | api.md 25 |
 | `intended_lane` Public 응답 제거 | Serializer 분리 (admin용 vs public) | CLAUDE.md §6.1 |
 | `advisor_type` 응답 제거 | Serializer 정의 시 필드 자체 미포함 | Q15 |
+| **재신청 판정**: APPROVED 신청은 **ADVISOR 역할을 실제 보유한 동안에만** 중복으로 막는다. 회수된 사용자는 재신청 가능 | `advisors.services.create_application()` | Owner 결정 2026-09-16 |
+| **#32 리뷰 큐에서 초안(`is_submitted=False`)과 소프트 삭제된 고민의 advice 제외** | `advice.services` 목록 쿼리 | Owner 결정 2026-09-11·09-13 |
+| **#33 낙관적 잠금**: `expected_version` 불일치 시 412 | `advice.services.review_advice()` | api.md 33 |
+| **Advice 삭제 가능 상태 3종** (PENDING/REVIEWING/REJECTED) — 편집 가능 상태 2종과 다르다 | `advice.services._DELETABLE_STATUSES` | Owner 결정 2026-09-13 |
+| **배정 대상은 ADVISOR 역할 보유자만** (아니면 422) | `concerns.services.assign_advisor()` | api.md 24 |
+| **CLOSED·소프트 삭제된 고민에는 배정 불가** (409) | `concerns.services.assign_advisor()` | api.md 24 |
+| **ADVISOR 회수 시 `active_role`이 ADVISOR였다면 USER로 강등** | `accounts.services.revoke_role()` | 점검 A-3 |
+| **역할 회수가 활성 배정을 해제하지 않는다** — 관리자가 #25로 명시 해제 | (부수효과 없음이 규칙) | SPEC-003 §7 결정 3 |
+| **소프트 삭제된 고민의 advice는 소유자 경로에서도 비노출** (#26·#27·#34) | `advice.services` | Owner 결정 2026-09-13 |
+| **역할 부여/회수는 알림을 발송하지 않는다** | `accounts.services` | ADR-003 §4 |
 
 Service Layer의 표준 위치: 각 앱 내 `services.py`. 트랜잭션 경계는 `@transaction.atomic` (학습 문서 A.4 / api.md 매핑 참조).
 
@@ -901,56 +939,61 @@ class PrimaryReplicaRouter:
 
 | 모델 | list_display | list_filter | search_fields | 비고 |
 | --- | --- | --- | --- | --- |
-| User | email, nickname, is_active, is_staff, created_at | is_active, is_staff | email, nickname | password 직접 변경 금지 (form 분리) |
-| UserRole | user, role, created_at | role | user__email | – |
-| RoleGrant | user, role, action, acted_by, acted_at | action, role | user__email, acted_by__email | readonly_fields 전체 (audit) |
+| User | email, nickname, **active_role**, is_active, is_staff, created_at | is_active, is_staff, **active_role** | email, nickname | password 직접 변경 금지 (form 분리) |
+| UserRole | user, role, created_at | role | user__email | **view-only** (add/change/delete 전부 차단). 손편집은 `active_role` 강등과 `RoleGrant` 감사 행을 동시에 우회한다 — 역할 변경은 #42/#43 단일 경로 |
+| RoleGrant | user, role, action, acted_by, acted_at | action, role | user__email, acted_by__email | **view-only** (append-only audit, ADR-003 §3) |
 | GoogleIdentity | user, google_sub, email | – | user__email, google_sub | readonly except link/unlink action |
 | AdvisorApplication | applicant, display_name, status, submitted_at | status, domain_category | display_name, applicant__email | review action (approve/reject) |
-| Concern | author, concern_summary, status, deleted_at, created_at | status, concern_type, deleted_at | concern_summary, author__email | soft delete 토글 action |
-| Assignment | concern, advisor, is_active, assigned_at | is_active, priority | concern__id, advisor__email | – |
-| Advice | concern, advisor, status, version, created_at | status | concern__id, advisor__email | review action |
-| AdviceHistory | advice, version, edited_by, edited_at | – | advice__id | readonly (audit) |
-| Feedback | advice, author, score, status, created_at | status, score | advice__id, author__email | – |
-| Notification | recipient, type, is_read, created_at | type, is_read | recipient__email, title | – |
+| Concern | author, concern_summary, status, deleted_at, created_at | status, concern_type, deleted_at | concern_summary, author__email | soft delete 토글 action. ⚠️ `status` 자유 편집 — 코드 검토 필요 (B-04) |
+| Assignment | concern, advisor, is_active, **priority**, assigned_at | is_active, priority | **concern__concern_summary**, advisor__email | ⚠️ 코드 검토 필요 (B-01) |
+| Advice | concern, advisor, status, version, created_at | status | advisor__email, **concern__concern_summary** | `status`·`version`·`reviewed_*` readonly. ⚠️ 본문 4필드는 편집 가능 — 코드 검토 필요 (B-02) |
+| AdviceHistory | advice, version, edited_by, edited_at | – | **advice__advisor__email** | **view-only** (스냅샷 audit) |
+| Feedback | advice, author, score, status, created_at | status, score | **author__email** | ⚠️ `status` 편집 가능 — 코드 검토 필요 (B-03) |
+| Notification | recipient, type, is_read, created_at | type, is_read | recipient__email, title | **view-only**. `recipient` 변경은 타인 데이터 노출, `read_at` 변경은 #41의 "최초 열람 시각" 불변식 파괴 |
 
-Phase 2 v1 의 Owner 운영 시나리오:
-1. createsuperuser → 첫 ADMIN.
-2. Django Admin 으로 advisor 신청 검토 / 승인.
-3. Django Admin 으로 concern → advisor 배정.
-4. Django Admin 으로 advice 승인.
-5. 위 흐름이 Public API 와 1:1 정합함을 smoke test 로 검증.
+> **`search_fields`에 UUID 컬럼을 넣지 않는다.** Django Admin의 검색은 `icontains`를 쓰는데 PostgreSQL의 `uuid` 타입에는 적용할 수 없어 런타임 오류가 난다. 종전 문서의 `concern__id`/`advice__id` 표기는 그대로 구현하면 Admin이 깨지는 값이었다 (2026-09-16 정정).
+
+**Phase 2 v1 운영 동선은 Django Admin이 아니라 API다** (2026-09-16 정정). 종전 문서는 Admin으로 신청 승인·배정·조언 승인을 하라고 적었으나, 실제로는 `status`가 readonly라 **따라 하면 막힌다.** 또한 Admin에서 이뤄지는 변경은 서비스 레이어를 우회하므로 상태 전이·알림·감사 행 같은 부수효과가 돌지 않는다.
+
+1. `createsuperuser` → 첫 ADMIN (`UserRole(ADMIN)` 행까지 생성됨, ADR-003 §1).
+2. **API** `#15`로 조언가 신청 검토/승인.
+3. **API** `#24`로 concern → advisor 배정.
+4. **API** `#33`으로 조언 승인/반려.
+5. 위 흐름의 실제 통과 절차와 출력은 [docs/smoke-test.md](smoke-test.md) 참조.
+
+Django Admin은 **열람**과 고민 소프트 삭제 토글 전용이다.
 
 ---
 
 ## 10. Validation Checklist
 
-본 명세대로 모델 코드가 작성되었는지 확인하는 체크리스트.
+본 명세대로 모델 코드가 작성되었는지 확인하는 체크리스트. **전항 검증 완료 (2026-09-16, SPEC-004/TASK-002).**
 
-* [ ] `AUTH_USER_MODEL = "accounts.User"` 가 `settings.py` 에 첫 마이그레이션 전 선언됨.
-* [ ] 모든 모델의 PK 가 UUIDField(default=uuid7).
-* [ ] 모든 모델에 `created_at` 존재 (변경 가능 모델은 `updated_at` 도).
-* [ ] Concern 만 `deleted_at` 보유.
-* [ ] AdvisorApplication / Assignment / Advice 의 부분 unique 제약이 마이그레이션 SQL 에 `WHERE` 절로 등장.
-* [ ] 모든 enum 이 TextChoices 로 정의되어 있고, DB column type 이 VARCHAR.
-* [ ] FK on_delete 가 본 문서 §4 표와 일치 (PROTECT/CASCADE/SET_NULL).
-* [ ] `Concern.objects` 가 deleted 미포함, `Concern.objects.with_deleted()` 가 전체 반환.
-* [ ] Admin 등록이 §9 표와 일치.
-* [ ] `python manage.py makemigrations --check --dry-run` 깨끗.
-* [ ] `python manage.py migrate` 가 빈 PG DB 에서 성공.
-* [ ] `python manage.py createsuperuser` 후 ADMIN UserRole row 가 추가됨 (createsuperuser hook).
+* [x] `AUTH_USER_MODEL = "accounts.User"` 가 `settings.py` 에 첫 마이그레이션 전 선언됨.
+* [x] 모든 모델의 PK 가 UUIDField(default=uuid7).
+* [x] 모든 모델이 **생성 시각 컬럼 1개**를 보유 (변경 가능 모델은 `updated_at` 도). 감사 성격 모델은 도메인 의미를 담은 이름을 쓴다 — `RoleGrant.acted_at` / `AdvisorApplication.submitted_at` / `Assignment.assigned_at` / `AdviceHistory.edited_at`.
+* [x] Concern 만 `deleted_at` 보유.
+* [x] AdvisorApplication / Assignment / Advice 의 부분 unique 제약이 마이그레이션 SQL 에 `WHERE` 절로 등장.
+* [x] 모든 enum 이 TextChoices 로 정의되어 있고, DB column type 이 VARCHAR.
+* [x] FK on_delete 가 본 문서 §4 표와 일치 (PROTECT/CASCADE/SET_NULL).
+* [x] `Concern.objects` 가 deleted 미포함, `Concern.objects.with_deleted()` 가 전체 반환. **단 FK 역참조는 `all_objects`(base manager)를 경유하므로 각 쿼리가 직접 필터한다 (§1.4).**
+* [x] Admin 등록이 §9 표와 일치 (2026-09-16 §9 표를 실제 코드로 정정).
+* [x] `python manage.py makemigrations --check --dry-run` 깨끗.
+* [x] `python manage.py migrate` 가 빈 PG DB 에서 성공 — 볼륨을 비운 맨바닥에서 25건 적용 확인 ([smoke-test.md](smoke-test.md) §2-1).
+* [x] `python manage.py createsuperuser` 후 ADMIN UserRole row 가 추가됨 — 맨바닥에서 실측 ([smoke-test.md](smoke-test.md) §2-2).
 
 ---
 
 ## 11. Open Questions
 
-본 명세 작성 중 결정 보류한 항목. **차단 결정 아님** — 코드 작업 중 / 또는 첫 smoke test 전 확정.
+본 명세 작성 중 결정 보류한 항목. **차단 결정 아님** — 코드 작업 중 / 또는 첫 smoke test 전 확정. 종결된 항목은 취소선으로 남긴다(삭제하지 않는 이유: 왜 그렇게 정했는지가 이력으로 남아야 한다).
 
-* **O-1**. `AdvisorApplication.domain_category` 의 enum 정확한 값 목록. 본 문서 잠정안: `IT / 경영 / 인사 / 금융 / 의료 / 교육 / 기타`. 사업 도메인 검토 후 확정 필요.
-* **O-2**. `Concern.decision_context` 의 max_length. 본 문서 잠정안: 4000자. api.md §6 Open Question.
-* **O-3**. Concern `ANSWERED → CLOSED` 전이를 Public API 로 노출할지. 현재 model 은 enum 보유, API 는 미제공.
-* **O-4**. `Advice` `status=DELETED` 후 동일 advisor 의 재작성 허용 정책. 본 문서 잠정안: partial unique condition `~Q(status="DELETED")`로 허용. 부정 합의 시 unconditional unique로 좁히면 됨.
+* ~~**O-1**~~ **종결 (Owner 결정 2026-07-08, D-6)** — 한국어 11종 확정, §3.5 참조.
+* ~~**O-2**~~ **종결** — 4000자로 구현됨(`MaxLengthValidator(4000)`).
+* ~~**O-3**~~ **종결 (Owner 결정 2026-09-16, SPEC-004 §5 결정 5)** — Phase 2는 신규 API 없이 **Django Admin으로만** 종료 처리. CLAUDE.md §6.6 문구와의 긴장은 [smoke-test.md](smoke-test.md) §5 갭 4에 기록.
+* ~~**O-4**~~ **종결** — 부분 유니크 `~Q(status="DELETED")`로 구현·검증됨. REJECTED 삭제 허용(2026-09-13)과 맞물려 반려 후 재작성 경로가 실제로 동작한다.
 * **O-5**. ArrayField / JSONField GIN 인덱스 도입 시점 — 검색 쿼리 등장 시.
-* **O-6**. `Notification.target_url` 의 도메인 처리 — api.md §6에서 "상대 경로 통일" 권장. 클라이언트 환경별 URL 조합 정책 확정 필요.
+* ~~**O-6**~~ **종결 (C-10, 2026-07-08)** — **수신자 본인이 GET 가능한 API 상대 경로**를 저장한다(프론트 라우트 아님). 타입별 값은 api.md #39 C-10 표. 5종 전부 수신자 세션으로 200 왕복 검증 완료(SPEC-003 AC-8).
 * **O-7**. `User` 정지/탈퇴 흐름 (Phase 3+). 도입 시 `deleted_at` + email 부분 unique 패턴 자동 적용.
 * **O-8**. `pg_uuidv7` extension 채택 시점 — Phase 2 v1 은 앱 레벨 uuid7 생성. PG 17 GA 이후 재검토.
 
