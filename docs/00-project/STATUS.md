@@ -180,6 +180,7 @@ SPEC-002 리뷰의 M-1(잠금 없는 read-modify-write)이 다른 앱에도 있�
 
 ## 8. 참조
 
+* **설계 정합성 점검(M4 종료 시점, 비개발자용): [DESIGN-ALIGNMENT-M4.md](DESIGN-ALIGNMENT-M4.md)** — 서비스 소개 + 초기 설계 대비 달라진 것(개선 8건·보수화 8건·어긋남 0건)
 * 계획 문서(착수 시점 스냅샷, 낡을 수 있음): [docs/reviews/04-milestone4-definition.md](../reviews/04-milestone4-definition.md)
 * API 계약: [docs/api.md](../api.md)
 * 도메인 규칙: [CLAUDE.md](../../CLAUDE.md) §6
