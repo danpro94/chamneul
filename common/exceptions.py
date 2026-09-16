@@ -6,11 +6,21 @@ from rest_framework.views import exception_handler as drf_default_handler
 class Conflict(APIException):
     """409 — the request conflicts with the current resource state (api.md §1.8):
     duplicate nickname, already-held role, non-allowed state transition, etc.
+
+    `reason` is an optional machine-readable discriminator surfaced as
+    `error.details.reason`. One endpoint can answer 409 for several different
+    situations (#43: self-revoke / last admin / role not held), and an operator
+    tool cannot tell "this role was already gone" from "this would lock the
+    system" by reading Korean prose (CLAUDE.md §0 — operational explainability).
     """
 
     status_code = status.HTTP_409_CONFLICT
     default_detail = "요청이 현재 상태와 충돌합니다."
     default_code = "conflict"
+
+    def __init__(self, detail=None, code=None, reason=None):
+        super().__init__(detail, code)
+        self.reason = reason
 
 
 class UnprocessableEntity(APIException):
@@ -70,7 +80,9 @@ def api_exception_handler(exc, context):
         # Non-validation errors expose a single `detail` string.
         detail = response.data.get("detail") if isinstance(response.data, dict) else None
         message = str(detail) if detail is not None else "요청을 처리할 수 없습니다."
-        details = None
+        # Conflict may carry a machine-readable discriminator (see Conflict).
+        reason = getattr(exc, "reason", None)
+        details = {"reason": reason} if reason else None
 
     body = {"error": {"code": code, "message": message}}
     if details is not None:

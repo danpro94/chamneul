@@ -13,6 +13,7 @@ urlpatterns = [
     path("api/v1/", include("advisors.urls")),
     path("api/v1/", include("concerns.urls")),
     path("api/v1/", include("advice.urls")),
+    path("api/v1/", include("notifications.urls")),
 ]
 
 if settings.DEBUG:

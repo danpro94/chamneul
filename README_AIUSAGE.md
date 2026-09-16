@@ -6,6 +6,214 @@
 
 ---
 
+## 2026-09-16 — SPEC-003/TASK-005: 교차 검증 + 마무리 — M4 구현 종료 [위임]
+
+### 작업
+
+SPEC-003의 마지막 구간. 새 엔드포인트는 없고 **기능 사이의 틈**을 검증했다. SPEC-002가 AC 전항 통과 + 168개 테스트 상태에서 서브에이전트 리뷰에 데이터 유실 1건과 500 크래시 1건을 들킨 이유가 그 틈이었기 때문에, 이번에는 그 검증을 AC에 미리 넣어두고 여기서 실행했다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-005 진행 승인. 신규 결정 없음.
+
+### 생성 산출물
+
+* `notifications/tests.py` — `NotificationTargetUrlRoundTripTests`(6) 추가, 앱 누적 34개
+* `accounts/tests.py` — `RoleRevokeEndToEndTests`(6) 추가, 앱 누적 51개
+* `docs/api.md` — #40 `actor` 삭제, #40·#41 Status에서 403 제거 + #41 멱등 명시, #43 배정 잔존 명시, 개정 이력 1건
+* `docs/reviews/06-spec003-notifications-roles.md` (신규)
+* `specs/SPEC-003-notifications-roles/acceptance.md` — AC-1~AC-10 판정 완료 기록
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **272개 통과**
+* **AC-8 `target_url` 왕복**: 알림 5종을 실제 서비스 경로(`assign_advisor`·`review_advice`·`review_application`)로 발생시키고 각 `target_url`을 수신자 본인 세션으로 GET → **전부 200**. 경로가 전부 옳았다 — 다만 그동안 **아무도 호출해 본 적이 없었으므로** 옳다는 사실 자체가 미확인 상태였다.
+* **AC-7 end-to-end 자동화**: 대조군(회수 전 #20·#29=200)을 포함해 6개. 회수 후 403, 조언 데이터 보존, concern `ASSIGNED` 유지, 알림 미발생.
+* `RoleGrant` append-only 정적 확인: 프로덕션 코드에 `create` 3곳뿐, `update`/`delete` 없음.
+
+### 이번에 찾은 것 2건
+
+1. **AC 전수 대조에서 미커버 1건.** AC-8의 "payload에 C-10 표의 키가 들어 있다"가 5종 중 ASSIGNMENT_CREATED 하나에만 적용돼 있었다. 메우고 실행했더니 통과 — **코드는 이미 옳았고 검증이 비어 있었다.** 대조를 실제로 하지 않았으면 AC 문서에는 체크 표시가 남았을 항목이다. AC 전항 통과가 "검증했다"를 뜻하지 않는다는 사례를 하나 더 얻었다.
+2. **`force_authenticate`는 DB를 다시 읽지 않는다.** AC-7 테스트를 처음 돌렸을 때 회수 후에도 200이 나왔다. 제품 결함이 아니라 테스트 도구의 성질이었다 — 실제 요청은 세션에서 사용자를 매번 DB에서 읽지만 `force_authenticate`는 넘겨준 파이썬 객체를 그대로 `request.user`로 쓴다. 브라우저 실증에서는 이미 403이 나와 있었다. `refresh_from_db()`로 실제 동작을 모사하고, 지우면 이 클래스의 403 검사가 전부 무의미해진다는 주석을 남겼다.
+
+### 잔여 리스크
+
+1. **실제 경합은 여전히 미재현.** 발행 SQL로 잠금의 *존재*는 고정했지만 동시 실행은 `TestCase`(트랜잭션 내부)로 만들 수 없다. `TransactionTestCase` + 스레드로 "관리자 0명" 시나리오를 실제로 돌려보는 것이 M5 이후 과제다.
+2. **서브에이전트 리뷰 미실행.** SPEC-002의 교훈상 이것이 남은 가장 큰 미검증 구간이다. PR 직후 `security-reviewer`·`api-architect` 2종을 돌린다.
+3. **문서 부채 잔존**: M4-1~M4-4 AIUSAGE 소급, 리뷰 노트 2건(M3·M4 전반), model.md drift 6건. M5로 이월.
+4. **`accounts` 앱의 M4-1~M4-3 테스트 여전히 0건** — 이번 SPEC은 #10·#42·#43만 커버했다.
+
+---
+
+## 2026-09-15 — SPEC-003/TASK-004: 역할 회수 (api.md #43) — A-3 양방향 해소 [위임]
+
+### 작업
+
+`DELETE /api/v1/admin/users/{user-id}/roles/{role}` 구현. **44/44 엔드포인트**가 되어 M4의 구현 구간이 끝났다. Owner가 "가장 위험하니만큼 리더급 수준으로 신중히"를 요구한 구간이라, 구현보다 **판정 순서·잠금·실증**에 시간을 더 썼다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-004 착수 승인 + 최고 수준의 신중함 요구. 설계는 ADR-003·SPEC-003 확정 범위 내 — 신규 결정 없음.
+
+### 생성 산출물
+
+* `accounts/services.py` — `revoke_role()` 신규, **`set_active_role()` 잠금 추가**
+* `accounts/views.py` — `AdminUserRoleDetailView` / `accounts/urls.py` — `GrantableRoleConverter` + path
+* `accounts/tests.py` — `RoleRevokeTests`(22) + `ActiveRoleSwitchTests`(4) + `StateTransitionLockingTests`(3) 추가, 앱 누적 45개
+* `docs/00-project/STATUS.md` — A-3 2개 행 및 §5 미결 항목을 해소 완료로 갱신
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **260개 통과**. 회수 22개 중 구현 전 **14개 실질 실패** 확인 후 착수.
+* **발행 SQL 실측**: ADMIN 회수 = `FOR UPDATE OF "accounts_user"` → `role='ADMIN' ORDER BY id ASC FOR UPDATE` → DELETE → INSERT. ADVISOR 회수 = User 잠금 → DELETE → INSERT → `UPDATE accounts_user SET active_role='USER', updated_at=...`(2개 컬럼만).
+* **AC-7(A-3 end-to-end)을 TASK-005에서 앞당겨 실증**: 회수 전 #20=200·#29=200 → 회수(204) → 회수 후 #20=403·#29=403, 조언 데이터는 #27=200으로 보존, concern은 `ASSIGNED` + 배정 1건 유지(결정 3 의도대로). `/roles/USER`는 404(URL 미매칭), 재회수는 409.
+
+### 설계 판단 4건 (기록 목적)
+
+1. **판정 순서 = 자기회수 → 미보유 → 마지막관리자.** 순서를 바꾸면 관리자가 1명일 때 ADMIN을 갖지도 않은 사용자를 회수 시도했을 때 "마지막 관리자"라는 **사실이 아닌** 오류가 나간다. 테스트로 고정했다.
+2. **`count()` 대신 `list()`.** PostgreSQL은 집계 위의 `FOR UPDATE`를 거부한다. 잠기지 않은 count가 바로 이 가드가 막으려는 경합이므로, 행을 실제로 잠그고 파이썬에서 센다.
+3. **잠금 순서 고정.** `User` → ADMIN `UserRole`(`order_by("pk")`). `grant_role`·`set_active_role`은 `User`만 잠그므로 순환이 없다. 순서를 고정하지 않으면 두 회수가 반대 순서로 잠가 교착(500)할 수 있다.
+4. **"마지막 ADMIN"은 `UserRole` 행 기준, superuser 미포함.** `IsAdmin`은 superuser도 통과시키지만(ADR-003 §1), 잘못 막으면 재시도로 끝나고 잘못 허용하면 시스템이 잠긴다. 이 비대칭이 보수적 판정의 근거다.
+
+### 범위를 한 항목 넘어선 부분 (명시)
+
+TASK-004 체크리스트에는 없었으나 **`set_active_role`(#10)도 수정했다.** STATUS.md §7의 A-3 정의가 원래 이 함수의 경합을 가리키고 있었고, 회수 쪽만 고치면 *"전환이 역할을 읽음 → 회수가 지움 → 전환이 씀"* 순서로 동일한 위험 상태(역할 없이 ADVISOR 착용)에 그대로 도달한다. 한쪽만 닫고 "A-3 해소"로 보고하면 사실과 다르므로 양쪽을 닫았다. 시그니처는 불변이며, 이 함수의 첫 테스트 4개를 함께 추가했다.
+
+### 잔여 리스크
+
+1. **동시성은 단일 스레드 테스트로 증명할 수 없다.** Django `TestCase`가 트랜잭션 안에서 돌기 때문이다. 대신 **발행 SQL을 검사하는 테스트**(`StateTransitionLockingTests`)로 잠금·순서·`update_fields` 범위를 고정했다 — 규칙을 문서가 아니라 기계가 지킨다. 실제 경합 재현(`TransactionTestCase` + 스레드)은 M5 이후 과제.
+2. **ADMIN 집합 전체를 잠근다.** Phase 2의 관리자 수가 한 자리라 비용이 무시할 수준이고 ADMIN 회수끼리만 막지만, 관리자가 수백 명이 되면 advisory lock 등으로 재검토해야 한다.
+3. **회수 후에도 `advisor_status`는 `APPROVED`로 남는다**(#9). 신청이 승인됐던 것은 사실이므로 거짓은 아니나, 화면에서 "역할 없음 + 승인됨"이 함께 보이면 혼동될 수 있다. 현재 동작을 유지하되 M5 UX 검토 항목으로 남긴다.
+4. **회수된 조언가의 배정이 남는다** — 결정 3(a)에 따른 의도된 동작. #23 admin 상세에서 식별 가능함을 실증했고, M5 스모크 항목으로 남긴다.
+
+---
+
+## 2026-09-15 — SPEC-003/TASK-003: 역할 부여 (api.md #42) [위임]
+
+### 작업
+
+`POST /api/v1/admin/users/{user-id}/roles` 구현. **`accounts` 앱의 첫 테스트 파일**이 생긴 지점이다 — M4-1~M4-3이 test-first 도입 전에 구현돼 이 앱만 테스트 0건이었다. 범위는 #42/#43으로 한정했고, 회원가입·로그인·OAuth·프로필의 소급 테스트는 문서 부채로 유지한다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-003 착수 승인. 설계는 ADR-003·SPEC-003 확정 범위 내 — 신규 결정 없음.
+
+### 생성 산출물
+
+* `accounts/tests.py` (**신규, 16개**) — `AdminRoleTestBase` + `RoleGrantTests`
+* `accounts/services.py` — `grant_role()` 추가 (`held_roles`·`set_active_role` 시그니처 불변)
+* `accounts/serializers.py` — `RoleGrantRequestSerializer` 추가
+* `accounts/views.py` — `AdminUserRolesView` 추가 / `accounts/urls.py` — path 추가
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **231개 통과**(accounts 16개 신규). 구현 전 16개 중 **12개 실질 실패** 확인 후 착수 — 나머지 4개는 부정 단언(알림 미생성·`active_role` 불변·중복 시 감사행 미생성·없는 user 404)이라 아무 일도 일어나지 않는 상태에서 자동 성립했고, 구현 후 재실행에서 의미를 갖는다.
+* **발행 SQL 실측**: `FOR UPDATE OF "accounts_user"`가 `exists()` 검사보다 **먼저** 걸린다. 대상 `User` 행을 잠근 뒤 검사·생성하므로 동시 부여가 직렬화되고, 중복은 유니크 제약(500)이 아니라 409로 떨어진다.
+* Mock-Up UI: 대상 본인 시점 `/api/v1/users/me/roles` 부여 전(`["USER"]`) / 후(`["USER","ADVISOR"]`) 2장. 실제 브라우저 왕복으로 **409**(중복 부여) · **400**(`role="USER"`) · **403**(비관리자) 동시 확인.
+
+### 잔여 리스크
+
+1. **`USER` 역할 차단을 serializer의 choices에 뒀다.** 서비스 레이어가 아니라 입력 검증 단계에서 막으므로, 앞으로 `grant_role()`을 API 밖에서(관리 커맨드·데이터 마이그레이션 등) 호출하면 이 가드를 우회한다. 모델의 `UserRole.clean()`이 남아 있지만 `create()`는 `full_clean()`을 부르지 않는다 — 호출부가 늘어나면 서비스 레이어로 옮겨야 한다.
+2. **`IsAdmin`은 superuser도 통과시킨다**(ADR-003 §1). #43의 "마지막 ADMIN" 판정과 기준이 어긋날 수 있어, TASK-004에서 보수적 판정(UserRole 행 기준)을 테스트로 고정한다.
+3. **A-3 미해소.** TASK-004에서 구현·검증.
+4. **부여는 `active_role`을 바꾸지 않는다** — 의도된 동작이나, 초청 조언가가 "역할은 받았는데 왜 활동이 안 되지"로 혼동할 여지가 있다. M5 스모크 문서에 안내 문구가 필요하다.
+
+---
+
+## 2026-09-15 — SPEC-003/TASK-002: 알림 읽음 처리 (api.md #41) — M4-7 종료 [위임]
+
+### 작업
+
+`PATCH /api/v1/notifications/{notification-id}/read` 구현. 이로써 M4-7(알림 3개)이 끝나고 **42/44 엔드포인트**가 됐다. 남은 것은 M4-8 역할 부여·회수(#42·#43) 2개뿐이다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-002 진행 승인. 설계 결정은 SPEC-003 §4에서 이미 확정된 범위 내(멱등 200) — 신규 결정 없음.
+
+### 생성 산출물
+
+* `notifications/services.py` — `mark_read()` 추가
+* `notifications/serializers.py` — `NotificationReadResultSerializer`(3필드) 추가
+* `notifications/views.py` — `NotificationReadView` 추가 / `notifications/urls.py` — `/read` path 추가
+* `notifications/tests.py` — `NotificationReadTests` 8개 추가
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **215개 통과**(notifications 28개). 구현 전 8개 중 **5개가 실질 실패**함을 확인하고 착수 — 나머지 3개는 라우트 부재로 404가 우연히 기대값과 일치해 무의미 통과했고, 구현 후 재실행에서 비로소 의미를 갖는다(부정 테스트의 성질).
+* **발행 SQL 실측**: `.claude/rules/coding.md` 상태 전이 규칙의 3종 가드가 장식이 아닌지 직접 확인 — `FOR UPDATE OF "notifications_notification"` 실재, UPDATE는 `is_read`·`read_at` **2개 컬럼만** 기록.
+* Mock-Up UI 3장: 읽음 전(unread_count=3) → 후(2, 해당 알림만 `is_read=true`) → 상세 `read_at` 기록. **실제 브라우저에서 csrftoken 쿠키를 `X-CSRFToken` 헤더로 되돌려 보내는 왕복**으로 확인(CLAUDE.md §10). 같은 알림에 PATCH를 2회 보내 **200 + `read_at` 동일값**(멱등) 실측.
+
+### 잔여 리스크
+
+1. **읽음 처리의 멱등성이 `read_at` 보존에 의존한다.** api.md #41에 409가 없어 재호출은 성공해야 하는데, 성공시키려고 타임스탬프를 덮어쓰면 "처음 본 시각"이 조용히 사라진다. 가드를 응답이 아니라 **쓰기 쪽**에 둔 이유이며, 테스트로 고정했다.
+2. **일괄 읽음 API 없음.** api.md 비범위(UX §8-6), M5에서 재검토.
+3. **A-3 미해소.** TASK-004에서 구현·검증.
+4. **`accounts` 앱 테스트 여전히 0건.** TASK-003에서 첫 파일이 생긴다.
+
+---
+
+## 2026-09-15 — SPEC-003 작성 + TASK-001: 알림 목록/상세 (api.md #39·#40) [위임]
+
+### 작업
+
+M4-7(알림 3개)과 M4-8(역할 2개)을 **SPEC-003 하나로 묶어** 명세 4종을 작성하고, TASK-001(#39 목록 + #40 상세)을 프롬프트 3 루프로 구현했다. `notifications` 앱은 M3 이후 `models.py`·`admin.py`만 있는 껍데기였다 — SPEC-001/002/M4-4가 알림 행을 **쓰기만** 하고 읽는 코드가 없었으므로, 이번이 알림 필드 설계의 첫 소비자 검증이다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+**§7 결정 3건 전부 승인 (권고안대로):**
+
+1. **알림 응답에 `actor`(관리자 신원) 미노출.** api.md #40은 `actor?: {user_id?, display_name?}`를 명세했으나, Phase 2 알림 5종의 actor가 전부 관리자여서 그대로 구현하면 일반 사용자에게 관리자 계정 id가 샌다. SPEC-002 보안 리뷰가 "SPEC-003 응답 필드 설계 시 재검토"로 지목했던 지점.
+2. **타인 알림 조회는 404(403 아님).** Owner 근거: *"애초에 이 앱 서비스는 개인화 앱이므로 남의 알림을 열 수 없어야 함. 알림은 나에게만."* 이에 따라 구현은 쿼리셋을 `recipient=user`로 좁히는 형태만 쓴다 — 객체를 꺼낸 뒤 소유자를 비교하는 형태는 403/404 분기 실수를 낳으므로 배제.
+3. **ADVISOR 회수 시 활성 배정은 자동 해제하지 않음.** 관리자가 #25로 명시 해제한다. 역할 회수 한 번이 배정 해제·상태 전이·알림까지 연쇄하면 부수효과가 과도하게 숨는다.
+
+세 결정 모두 CLAUDE.md 조항과 충돌하지 않아 **ADR 불필요**(§16, ADR-007 교훈 적용 확인).
+
+### 생성 산출물
+
+* `specs/SPEC-003-notifications-roles/{spec,plan,tasks,acceptance}.md` — 결정 3건, `revoke_role` 잠금 설계, TASK-001~005, AC-1~AC-10
+* `notifications/{serializers,services,views,urls,tests}.py` (신규 5종), `config/urls.py` include 추가
+* `docs/00-project/STATUS.md` 갱신 (41/44)
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **207개 통과**(notifications 20개 신규). 구현 전 20개 전부 실패(404) 확인 후 착수 — TDD 순서 준수
+* `assertNumQueries`는 **추정하지 않고 실측**했다(3건: 페이지 COUNT + 페이지 행 + unread_count 집계). SPEC-001·002에서 추정으로 쓴 3회가 전부 틀렸던 항목
+* Mock-Up UI 4장(DRF Browsable API): 목록(3건·unread_count=2) / `?is_read=true` 필터(total=1인데 unread_count는 2 유지) / 상세(read_at 있음·관리자 신원 없음) / 타인 알림 → 404
+
+### 잔여 리스크
+
+1. **`target_url` 규약(C-10)이 아직 실제로 호출되지 않았다.** 5개 타입의 경로가 urlconf에 실재함은 확인했으나, 수신자 세션으로 GET → 200 왕복은 TASK-005의 AC-8에서 검증한다.
+2. **#41 미구현.** 목록·상세만 있어 사용자가 알림을 읽음 처리할 수단이 아직 없다(TASK-002).
+3. **A-3 미해소.** 역할 회수 시 `active_role` 강등은 TASK-004에서 구현하며, 권한이 실제로 닫히는지는 AC-7 end-to-end로 판정한다.
+4. **`accounts` 앱 테스트 여전히 0건.** TASK-003에서 #42/#43 경로에 한해 첫 테스트 파일이 생긴다. M4-1~M4-3(회원가입·로그인·OAuth·프로필)의 소급 테스트는 이번 SPEC 범위가 아니다.
+
+---
+
 ## 2026-09-14 — 동일 유형 결함 전수 점검 (A-1 수정, A-2·A-3 기록) [위임]
 
 ### 작업

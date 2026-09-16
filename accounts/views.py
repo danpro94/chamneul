@@ -13,11 +13,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.exceptions import Conflict
+from common.permissions import IsAdmin
 
 from . import oauth, services
 from .serializers import (
     ActiveRoleSerializer,
     LoginSerializer,
+    RoleGrantRequestSerializer,
     SignupResultSerializer,
     SignupSerializer,
     UserCardSerializer,
@@ -245,3 +247,54 @@ class ActiveRoleView(APIView):
                 "roles": services.held_roles(user),
             }
         )
+
+
+class AdminUserRolesView(APIView):
+    """POST /api/v1/admin/users/{user-id}/roles (#42) — grant a role.
+
+    ADVISOR is normally granted by the application flow (#15); this endpoint is
+    the exception path for invited advisors, and the audit row is what keeps
+    that exception accountable (ADR-003 §2-§3).
+    """
+
+    permission_classes = [IsAdmin]
+
+    def post(self, request, user_id):
+        serializer = RoleGrantRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target, grant = services.grant_role(
+            user_id,
+            role=serializer.validated_data["role"],
+            actor=request.user,
+            reason=serializer.validated_data["reason"],
+        )
+        return Response(
+            {
+                "user_id": str(target.id),
+                "roles": services.held_roles(target),
+                "granted_role": grant.role,
+                "granted_at": grant.acted_at,
+                "granted_by": str(grant.acted_by_id),
+            },
+            status=201,
+        )
+
+
+class AdminUserRoleDetailView(APIView):
+    """DELETE /api/v1/admin/users/{user-id}/roles/{role} (#43) — revoke a role.
+
+    The grantable-role set is enforced by the URL converter, not here: `USER`
+    is not a revocable role (ADR-003 §2) and api.md #43 has no 400 in its status
+    set, so a request for it must not match a route at all.
+    """
+
+    permission_classes = [IsAdmin]
+
+    def delete(self, request, user_id, role):
+        services.revoke_role(
+            user_id,
+            role=role,
+            actor=request.user,
+            reason=request.query_params.get("reason", ""),
+        )
+        return Response(status=204)

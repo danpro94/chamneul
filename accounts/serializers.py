@@ -5,7 +5,7 @@ from rest_framework import serializers
 from common.exceptions import Conflict
 
 from . import services
-from .models import User
+from .models import Role, User
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -125,3 +125,16 @@ class ActiveRoleSerializer(serializers.Serializer):
     """
 
     active_role = serializers.ChoiceField(choices=["USER", "ADVISOR"])
+
+
+class RoleGrantRequestSerializer(serializers.Serializer):
+    """POST /api/v1/admin/users/{user-id}/roles (#42) request body.
+
+    `USER` is absent from the choices on purpose, so a request to grant it is a
+    400 rather than something the service layer has to reject: USER is the
+    implicit default every account holds and is never stored as a row
+    (model.md §3.2, ADR-003 §2).
+    """
+
+    role = serializers.ChoiceField(choices=[Role.ADVISOR, Role.ADMIN])
+    reason = serializers.CharField(required=False, allow_blank=True, default="")

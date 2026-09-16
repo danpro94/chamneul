@@ -35,10 +35,24 @@ _ALLOWED_TRANSITIONS = {
 
 def create_application(applicant, validated_data) -> AdvisorApplication:
     """Create an application, rejecting a second in-progress one (409) and a
-    display_name already taken by an active application (409, partial-unique)."""
-    if AdvisorApplication.objects.filter(
+    display_name already taken by an active application (409, partial-unique).
+
+    An APPROVED application blocks re-application only while the applicant still
+    holds the ADVISOR role (Owner decision 2026-09-16, SPEC-003 리뷰 AR-01).
+    Before #43 existed the role could never be lost, so "approved forever" was
+    harmless; now a revoked advisor would be refused here permanently, and
+    Phase 2 has no user-side withdrawal API (CLAUDE.md §5) — the dead end had no
+    exit but an admin re-grant. Holding the role, not having once been approved,
+    is what makes a new application redundant.
+    """
+    from accounts.models import Role, UserRole
+
+    blocking = AdvisorApplication.objects.filter(
         applicant=applicant, status__in=_ACTIVE_STATUSES
-    ).exists():
+    )
+    if not UserRole.objects.filter(user=applicant, role=Role.ADVISOR).exists():
+        blocking = blocking.exclude(status=AdvisorApplicationStatus.APPROVED)
+    if blocking.exists():
         raise Conflict("이미 진행 중인 조언가 신청이 있습니다.")
     try:
         return AdvisorApplication.objects.create(applicant=applicant, **validated_data)
