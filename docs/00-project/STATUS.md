@@ -81,7 +81,15 @@
 
 ## 4. Active SPEC
 
-**SPEC-004-phase2-closeout — 진행 중 (2026-09-16).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. TASK-001(스모크 테스트) 착수.
+**SPEC-004-phase2-closeout — 진행 중 (2026-09-16).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. 
+
+* **TASK-001 완료 (2026-09-16)** — 볼륨을 비운 **맨바닥에서 사용자 여정 12단계 전항 통과**. [docs/smoke-test.md](../smoke-test.md) 신규.
+  * `depends_on: service_healthy` 동작 확인(`db Waiting → Healthy → app Starting`), 마이그레이션 25건, `createsuperuser`가 ADMIN `UserRole` 행 생성(ADR-003 §1).
+  * **DB 장애 실측**: `/healthz`는 DB가 죽어도 200(설계된 liveness 프로브) / DB 쓰기 요청은 500 + `OperationalError` / **DB 재기동 시 앱 재시작 불필요**(`StartedAt` 불변, 여정 전체 재통과).
+  * 마이그레이션 미적용 상태 판별 요령 확보: `/healthz` 초록 + 쓰기 500 + 로그에 `relation ... does not exist`.
+  * 갭 9건 문서화(브루트포스 방어, 정적파일, prod 경로 미검증, `CLOSED` API 부재, 배정 잔존, 경합 미재현, readiness 프로브 부재 등).
+  * 실행 중 테스트 픽스처 오류 3곳 발견·정정(`reflective_questions`는 배열이 아니라 `TextField`).
+* 남은 TASK: 002(model.md 정합화), 003(이월 2건 + 문서 부채), 004(Phase 2 종료 판정).
 
 **SPEC-003-notifications-roles — 완료·머지 (2026-09-16, PR #6).** api.md #39~43 (M4-7 + M4-8) 5개 엔드포인트. §7 결정 3건 Owner 승인 완료: **(1) 알림 응답에 `actor`(관리자 신원) 미노출 (2) 타인 알림 조회는 404 — 쿼리셋을 `recipient=user`로 좁혀 존재 자체를 숨김 (3) ADVISOR 회수 시 활성 배정은 자동 해제하지 않음(관리자가 #25로 명시 해제)**. 셋 다 CLAUDE.md 조항과 충돌하지 않아 ADR 불필요.
 

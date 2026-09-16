@@ -4,17 +4,19 @@
 
 검증 4종 = `manage.py check` / `makemigrations --check` / `ruff check` / `manage.py test`.
 
-## TASK-001 — 스모크 테스트 실행 + 문서화 ★
+## TASK-001 — 스모크 테스트 실행 + 문서화 ★ — **완료 (2026-09-16)**
 
-* [ ] **Owner 고지 후** `docker compose down -v` — 로컬 볼륨(합성 데모 데이터) 삭제
-* [ ] `docker compose up -d --build` → `ps`로 두 서비스 상태 확인
-* [ ] `migrate` → `createsuperuser` → ADMIN `UserRole` 행 생성 확인
-* [ ] `curl /healthz` → 200
-* [ ] 사용자 여정 11단계를 `curl`로 통과 (spec §3) — **실제 출력 수집**
-* [ ] 비정상 경로 4종 (plan §2-3) — DB 정지/회복, 마이그레이션 미적용
-* [ ] `docs/smoke-test.md` 작성 — 절차 + 실제 출력 + 갭 6건 + 운영 체크리스트
-* [ ] `README.md`에 스모크 절차 링크
-* [ ] 검증 4종 실행 결과 첨부
+* [x] **Owner 승인 후 볼륨 백업**(`pg_dump` 92K, 20테이블, 정상 종료 마커 확인) → `down -v`. 덤프는 프로젝트 밖(scratchpad)에 둠 — CLAUDE.md §10
+* [x] `docker compose up -d --build` → `db Waiting → Healthy → app Starting` 순서 확인(`depends_on: service_healthy` 동작 증거)
+* [x] `migrate` 25건 적용 → `createsuperuser` → **ADMIN `UserRole` 행 자동 생성 확인**(ADR-003 §1)
+* [x] `curl /healthz` → 200 (0.0075s)
+* [x] **사용자 여정 12단계 전항 통과** — 세 배우 세션 동시 유지, 실제 출력 수집
+* [x] 비정상 경로 3종 — 마이그레이션 미적용 / DB 정지 / DB 재기동
+* [x] **DB 재기동 시 앱 재시작 불필요** 확인(`StartedAt` 불변 + 여정 전체 재통과)
+* [x] `docs/smoke-test.md` 작성 — 절차 + 실제 출력 + **갭 9건** + 운영 체크리스트
+* [x] `README.md`에 스모크 절차 링크 + 문서 지도 2행 추가
+* [x] 실행 중 발견한 테스트 픽스처 오류 3곳 정정(`reflective_questions`는 배열이 아니라 `TextField`)
+* [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **283 tests OK**
 
 ## TASK-002 — model.md 정합화
 

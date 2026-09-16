@@ -522,7 +522,7 @@ class NotificationTargetUrlRoundTripTests(TestCase):
             self.advisor,
             {
                 "directional_guidance": "두 선택지의 5년 후를 적어보세요.",
-                "reflective_questions": ["무엇이 두려운가요?"],
+                "reflective_questions": "무엇이 두려운가요?",
                 "considerations": "연봉 외 요소",
                 "submit": True,
             },
@@ -557,7 +557,7 @@ class NotificationTargetUrlRoundTripTests(TestCase):
             self.advisor,
             {
                 "directional_guidance": "두 선택지의 5년 후를 적어보세요.",
-                "reflective_questions": ["무엇이 두려운가요?"],
+                "reflective_questions": "무엇이 두려운가요?",
                 "considerations": "연봉 외 요소",
                 "submit": True,
             },

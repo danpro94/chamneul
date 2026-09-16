@@ -43,6 +43,8 @@ curl http://localhost:8000/healthz   # {"status": "ok"} 기대
 
 리셋: `docker compose down -v` (named volume `pgdata` 포함 삭제 — DB 초기화).
 
+맨바닥에서 사용자 여정 전체를 통과시키는 절차, DB 장애 시 거동, 운영 체크리스트(로그·백업·복원·포트)는 **[docs/smoke-test.md](docs/smoke-test.md)** 를 본다. 자동 테스트(283개)는 테스트 전용 DB에서 돌아 "코드가 의도대로 동작하는가"를 답하고, 스모크 테스트는 실제 볼륨 위에서 **"시스템이 맨바닥에서 일어서는가"** 를 답한다.
+
 ## 문서 지도
 
 | 알고 싶은 것 | 여기로 |
@@ -53,6 +55,8 @@ curl http://localhost:8000/healthz   # {"status": "ok"} 기대
 | 데이터 모델 | [docs/model.md](docs/model.md) |
 | 왜 이렇게 결정했는가 | [docs/adr/](docs/adr/) |
 | 완료 판정 기준 | [docs/testing/TEST_CRITERIA.md](docs/testing/TEST_CRITERIA.md) |
+| 로컬에서 직접 돌려보고 싶다 | [docs/smoke-test.md](docs/smoke-test.md) |
+| 이 앱이 사용자에게 무엇인가 / 설계 의도와 어긋난 게 있나 | [docs/00-project/DESIGN-ALIGNMENT-M4.md](docs/00-project/DESIGN-ALIGNMENT-M4.md) |
 | AI 활용 이력 | [README_AIUSAGE.md](README_AIUSAGE.md) |
 | 지금 진행 중인 작업 단위 | [specs/](specs/) |
 
