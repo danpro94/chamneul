@@ -993,3 +993,103 @@ class AssignmentTests(TestCase):
         self.client.force_authenticate(self.admin)
         response = self.client.delete(self.assignment_url(other_concern.id, assignment.id))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class AdminBypassGuardTests(TestCase):
+    """Django Admin이 서비스 레이어를 우회하지 못하게 막았는지 고정한다.
+
+    2026-09-16 `data-modeler` 리뷰(B-01~B-04)에서 드러난 문제다. 배정·조언·
+    피드백·고민 상태가 Admin 화면에서 자유 편집 가능했고, 그 경로로는 상태
+    전이·알림·감사 행·히스토리 스냅샷이 전부 돌지 않았다.
+
+    **가장 빠른 길에 기록이 없으면 감사 기록이 아니다** — SPEC-003에서 역할
+    변경에 대해 한 번 내린 것과 같은 판단을, 나머지 모델에도 적용했다.
+    """
+
+    def model_admin(self, model):
+        from django.contrib import admin as django_admin
+
+        return django_admin.site._registry[model]
+
+    def assert_view_only(self, model, label):
+        ma = self.model_admin(model)
+        self.assertFalse(ma.has_add_permission(None), f"{label}: add가 열려 있다")
+        self.assertFalse(ma.has_change_permission(None), f"{label}: change가 열려 있다")
+        self.assertFalse(ma.has_delete_permission(None), f"{label}: delete가 열려 있다")
+
+    def test_assignment_admin_is_view_only(self):
+        """B-01. 배정은 행 + concern 상태 전이 + 알림이 함께 일어나야 성립한다.
+        Admin에서 행만 추가하면 반쪽 상태가 되고, 지우면 '비활성 보존'이어야 할
+        감사 기록이 물리적으로 사라진다."""
+        from .models import Assignment
+
+        self.assert_view_only(Assignment, "AssignmentAdmin")
+
+    def test_concern_admin_status_is_readonly(self):
+        """B-04. 자유 편집을 열어두면 ANSWERED→SUBMITTED 같은 역전이도 함께
+        열린다 — §6.6 상태 머신에 그 간선이 없다."""
+        from .models import Concern
+
+        ma = self.model_admin(Concern)
+        self.assertIn("status", ma.readonly_fields)
+
+    def test_concern_admin_has_a_close_only_action(self):
+        """결정 5(Phase 2는 Admin으로만 종료)를 자유 편집이 아니라 **한 방향만
+        여는 action**으로 감당한다."""
+        from .models import Concern
+
+        ma = self.model_admin(Concern)
+        self.assertIn("close_selected", ma.actions)
+
+    def test_close_action_only_moves_answered_concerns(self):
+        from common.taxonomy import ConcernType
+
+        from .models import Concern, ConcernStatus
+
+        author = get_user_model().objects.create_user(
+            email="closer@example.com", nickname="closer", password="pw12345!"
+        )
+        answered = Concern.objects.create(
+            author=author, concern_summary="답변 받은 고민",
+            concern_type=ConcernType.BURNOUT, status=ConcernStatus.ANSWERED,
+        )
+        submitted = Concern.objects.create(
+            author=author, concern_summary="아직 배정 전",
+            concern_type=ConcernType.BURNOUT, status=ConcernStatus.SUBMITTED,
+        )
+
+        ma = self.model_admin(Concern)
+        request = type("Req", (), {"_messages": None})()
+        ma.message_user = lambda *a, **kw: None  # 메시지 프레임워크 우회
+        ma.close_selected(request, Concern.objects.filter(author=author))
+
+        answered.refresh_from_db()
+        submitted.refresh_from_db()
+        self.assertEqual(answered.status, ConcernStatus.CLOSED)
+        self.assertEqual(submitted.status, ConcernStatus.SUBMITTED)
+
+    def test_advice_admin_body_fields_are_readonly(self):
+        """B-02. 본문이 열려 있으면 이 화면에서 조언을 고쳐도 AdviceHistory
+        스냅샷과 version 증가가 없다 — "버전마다 직전 본문 보존"이 깨진다."""
+        from advice.models import Advice
+
+        ma = self.model_admin(Advice)
+        for field in (
+            "directional_guidance",
+            "reflective_questions",
+            "considerations",
+            "out_of_scope_flag",
+            "status",
+            "version",
+        ):
+            self.assertIn(field, ma.readonly_fields, f"Advice.{field}가 편집 가능하다")
+
+    def test_feedback_admin_status_is_readonly_but_memo_is_not(self):
+        """B-03. 전이는 #38로만. 단 `memo`는 관리자 자신의 작업 메모라 도메인
+        부수효과가 없으므로 편집 가능하게 남긴다."""
+        from advice.models import Feedback
+
+        ma = self.model_admin(Feedback)
+        for field in ("status", "reviewed_by", "reviewed_at", "score", "content"):
+            self.assertIn(field, ma.readonly_fields)
+        self.assertNotIn("memo", ma.readonly_fields)
