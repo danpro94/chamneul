@@ -14,6 +14,21 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from accounts.models import ActiveRole, Role, UserRole
+from advice import services as advice_services
+from advisors import services as advisor_services
+from advisors.models import (
+    AdvisorApplication,
+    AdvisorApplicationStatus,
+    CurrentStatus,
+    DomainCategory,
+    ExperienceBand,
+    IntendedLane,
+)
+from common.taxonomy import ConcernType
+from concerns import services as concern_services
+from concerns.models import AssignmentPriority, Concern, TriageDecision
+
 from .models import Notification, NotificationType
 
 User = get_user_model()
@@ -385,3 +400,216 @@ class NotificationReadTests(NotificationTestBase):
         notification = self.make_notification(self.me, is_read=False)
         response = self.client.patch(read_url(notification.id))
         self.assertEqual(response.status_code, 401)
+
+
+class NotificationTargetUrlRoundTripTests(TestCase):
+    """AC-8 — C-10 `target_url` 규약이 실제로 동작하는가 (api.md #39).
+
+    이 프로젝트에서 알림은 SPEC-001·002·M4-4가 **쓰기만** 해 온 데이터다.
+    다섯 개 서비스가 `target_url`에 상대 경로를 문자열로 박아 넣었지만,
+    읽는 코드가 없었으므로 **그 경로를 실제로 호출해 본 적이 한 번도 없다.**
+    여기서 5종을 전부 실제 서비스 경로로 발생시키고, 각 `target_url`을
+    수신자 본인 세션으로 GET해 200이 나오는지 확인한다.
+
+    이것이 잡아내는 결함: 오타, 라우트 개편으로 깨진 경로, 수신자가 접근할
+    수 없는 경로(예: 신청 결과 알림이 admin 전용 #14를 가리키는 경우).
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            email="rt.admin@example.com", nickname="rtadmin", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.admin, role=Role.ADMIN)
+        self.owner = User.objects.create_user(
+            email="rt.owner@example.com", nickname="rtowner", password="pw12345!"
+        )
+        self.advisor = User.objects.create_user(
+            email="rt.advisor@example.com", nickname="rtadvisor", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.advisor, role=Role.ADVISOR)
+        self.advisor.active_role = ActiveRole.ADVISOR
+        self.advisor.save(update_fields=["active_role"])
+
+    def make_concern(self):
+        return Concern.objects.create(
+            author=self.owner,
+            concern_summary="이직을 할지 남을지 결정해야 합니다",
+            concern_type=ConcernType.JOB_CHANGE,
+            decision_context="3년차, 제안 2건",
+        )
+
+    def make_application(self, status):
+        return AdvisorApplication.objects.create(
+            applicant=self.owner,
+            display_name=f"신청자-{status}",
+            domain_category=DomainCategory.HR_ORG,
+            experience_band=ExperienceBand.BAND_5_7,
+            current_status=CurrentStatus.EMPLOYED,
+            intended_lane=IntendedLane.EXPERT,
+            career_narrative="경력 서술",
+            advisable_concern_types=[ConcernType.BURNOUT],
+            sample_advice_response="샘플 답변",
+            status=status,
+        )
+
+    def assert_reachable(self, notification, viewer, payload_keys):
+        """수신자 본인 세션으로 target_url을 GET해 200인지 확인한다.
+
+        `payload_keys`는 api.md C-10 표가 타입별로 요구하는 부가 식별자다.
+        클라이언트 리졸버가 `(type, target_url)`로 목적지를 정하고 나머지
+        식별자는 payload에서 꺼내므로, 키가 빠지면 화면 이동이 불완전해진다.
+        """
+        self.assertTrue(
+            notification.target_url.startswith("/api/v1/"),
+            f"{notification.type}: target_url은 /api/v1/로 시작해야 한다",
+        )
+        self.assertNotIn("?", notification.target_url)
+        self.assertFalse(notification.target_url.endswith("/"))
+
+        missing = payload_keys - set(notification.payload)
+        self.assertFalse(
+            missing, f"{notification.type}: payload에 {missing}가 없다 (C-10)"
+        )
+
+        self.client.force_authenticate(viewer)
+        response = self.client.get(notification.target_url)
+        self.assertEqual(
+            response.status_code,
+            200,
+            f"{notification.type}: 수신자가 {notification.target_url}를 열 수 없다",
+        )
+
+    def test_assignment_created_target_url_is_reachable_by_the_advisor(self):
+        concern = self.make_concern()
+        concern_services.assign_advisor(
+            concern.id,
+            actor=self.admin,
+            validated_data={
+                "advisor_user_id": str(self.advisor.id),
+                "triage_decision": TriageDecision.SUITABLE,
+                "priority": AssignmentPriority.NORMAL,
+            },
+        )
+
+        notification = Notification.objects.get(
+            type=NotificationType.ASSIGNMENT_CREATED
+        )
+        self.assertEqual(notification.recipient_id, self.advisor.id)
+        self.assertEqual(notification.payload.get("concern_id"), str(concern.id))
+        self.assert_reachable(
+            notification, self.advisor, {"concern_id", "assignment_id"}
+        )
+
+    def test_advice_approved_target_url_is_reachable_by_the_concern_owner(self):
+        concern = self.make_concern()
+        concern_services.assign_advisor(
+            concern.id,
+            actor=self.admin,
+            validated_data={
+                "advisor_user_id": str(self.advisor.id),
+                "triage_decision": TriageDecision.SUITABLE,
+                "priority": AssignmentPriority.NORMAL,
+            },
+        )
+        advice = advice_services.create_advice(
+            concern.id,
+            self.advisor,
+            {
+                "directional_guidance": "두 선택지의 5년 후를 적어보세요.",
+                "reflective_questions": ["무엇이 두려운가요?"],
+                "considerations": "연봉 외 요소",
+                "submit": True,
+            },
+        )
+        advice_services.review_advice(
+            advice.id,
+            actor=self.admin,
+            decision=advice_services.DECISION_APPROVED,
+            reason="",
+            expected_version=advice.version,
+        )
+
+        notification = Notification.objects.get(type=NotificationType.ADVICE_APPROVED)
+        self.assertEqual(notification.recipient_id, self.owner.id)
+        self.assert_reachable(
+            notification, self.owner, {"advice_id", "concern_id"}
+        )
+
+    def test_advice_rejected_target_url_is_reachable_by_the_advisor(self):
+        concern = self.make_concern()
+        concern_services.assign_advisor(
+            concern.id,
+            actor=self.admin,
+            validated_data={
+                "advisor_user_id": str(self.advisor.id),
+                "triage_decision": TriageDecision.SUITABLE,
+                "priority": AssignmentPriority.NORMAL,
+            },
+        )
+        advice = advice_services.create_advice(
+            concern.id,
+            self.advisor,
+            {
+                "directional_guidance": "두 선택지의 5년 후를 적어보세요.",
+                "reflective_questions": ["무엇이 두려운가요?"],
+                "considerations": "연봉 외 요소",
+                "submit": True,
+            },
+        )
+        advice_services.review_advice(
+            advice.id,
+            actor=self.admin,
+            decision=advice_services.DECISION_REJECTED,
+            reason="근거가 부족합니다",
+            expected_version=advice.version,
+        )
+
+        notification = Notification.objects.get(type=NotificationType.ADVICE_REJECTED)
+        self.assertEqual(notification.recipient_id, self.advisor.id)
+        self.assert_reachable(
+            notification, self.advisor, {"advice_id", "concern_id"}
+        )
+
+    def test_application_approved_target_url_is_reachable_by_the_applicant(self):
+        application = self.make_application(AdvisorApplicationStatus.REVIEWING)
+        advisor_services.review_application(
+            application.id,
+            actor=self.admin,
+            target_status=AdvisorApplicationStatus.APPROVED,
+        )
+
+        notification = Notification.objects.get(
+            type=NotificationType.ADVISOR_APPLICATION_APPROVED
+        )
+        self.assertEqual(notification.recipient_id, self.owner.id)
+        # 신청자가 열 수 있는 #12를 가리켜야 한다 (admin 전용 #14가 아니라).
+        self.assertEqual(notification.target_url, "/api/v1/advisor-applications/me")
+        self.assert_reachable(notification, self.owner, {"application_id"})
+
+    def test_application_rejected_target_url_is_reachable_by_the_applicant(self):
+        application = self.make_application(AdvisorApplicationStatus.REVIEWING)
+        advisor_services.review_application(
+            application.id,
+            actor=self.admin,
+            target_status=AdvisorApplicationStatus.REJECTED,
+            reject_reason="경력 서술이 부족합니다",
+        )
+
+        notification = Notification.objects.get(
+            type=NotificationType.ADVISOR_APPLICATION_REJECTED
+        )
+        self.assertEqual(notification.recipient_id, self.owner.id)
+        self.assert_reachable(notification, self.owner, {"application_id"})
+
+    def test_every_notification_type_is_covered_by_this_class(self):
+        """5종 중 하나라도 빠지면 이 테스트가 알려준다 — 타입이 추가되면
+        왕복 검증도 함께 추가하라는 신호다 (CLAUDE.md §6.4는 5종 고정)."""
+        covered = {
+            NotificationType.ASSIGNMENT_CREATED,
+            NotificationType.ADVICE_APPROVED,
+            NotificationType.ADVICE_REJECTED,
+            NotificationType.ADVISOR_APPLICATION_APPROVED,
+            NotificationType.ADVISOR_APPLICATION_REJECTED,
+        }
+        self.assertEqual(covered, set(NotificationType.values))

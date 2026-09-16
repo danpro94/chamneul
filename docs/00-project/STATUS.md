@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-15 (SPEC-003/TASK-004 커밋 기준. PR #3·#4·#5 머지 완료)
+> 마지막 실측: 2026-09-16 (SPEC-003/TASK-005 커밋 기준. PR #3·#4·#5 머지 완료)
 
 ---
 
@@ -11,7 +11,7 @@
 | --- | --- |
 | Phase | Phase 2 — 로컬 컨테이너 MVP |
 | 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
-| M4 진행률 | **8/8 모듈 구현 완료, 44/44 엔드포인트** — SPEC-003 TASK-005(교차 검증·마무리) 후 M4 종료 |
+| M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
 | 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
 
 | MS | 내용 | 상태 |
@@ -92,7 +92,11 @@
   * **AC-7을 앞당겨 실증**: 회수 전 #20·#29=200 → 회수 → #20·#29=403, 조언 데이터 보존, concern `ASSIGNED` 유지.
   * **A-3의 나머지 절반**: STATUS.md §7 A-3는 `set_active_role`(#10)과 회수의 경합을 가리켰다. 회수 쪽만 고치면 "전환이 역할을 읽은 뒤 회수가 지우고, 전환이 그 뒤에 쓰는" 순서로 같은 상태에 도달한다. `set_active_role`에도 같은 행 잠금을 넣어 양쪽을 닫았다.
   * **상태 전이 규칙을 테스트로 승격**: `StateTransitionLockingTests`가 발행 SQL의 `FOR UPDATE`·잠금 순서·`update_fields` 범위를 검사한다.
-* 남은 TASK: 005(교차 검증 `target_url` 왕복 + AC 전수 대조 + PR·서브에이전트 리뷰).
+* **TASK-005 완료** — 교차 검증 + 마무리. 전체 **272개** 테스트 통과.
+  * **AC-8 `target_url` 왕복**: 알림 5종을 실제 서비스 경로로 발생시켜 수신자 세션으로 GET → 전부 200. 이 문자열들은 그동안 아무도 호출해 본 적이 없었다.
+  * **AC 전수 대조에서 미커버 1건 발견**: AC-8의 `payload` 키 검증이 5종 중 1종에만 적용돼 있었다. **코드는 옳았고 검증이 비어 있었다** — 대조를 실제로 하지 않았으면 체크 표시만 남았을 항목이다.
+  * api.md 갱신(#40 `actor` 삭제, #40·#41 403 제거 + 멱등 명시, #43 배정 잔존), 리뷰 노트 [06](../reviews/06-spec003-notifications-roles.md) 작성.
+* 남은 것: PR → 서브에이전트 리뷰(`security-reviewer`·`api-architect`) → 머지.
 
 **SPEC-002-advice-api — 완료·머지 (2026-09-14, PR #3 + 리뷰 반영 PR #4).** api.md #26~38 (M4-6) 13개 엔드포인트, AC-1~AC-11 전항 통과, advice 앱 테스트 118개(전체 **180개**). [PR #3](https://github.com/danpro94/chamneul/pull/3). 서브에이전트 리뷰 2종(`security-reviewer`·`api-architect`) 실행 후 **블로커 1·메이저 5 전부 반영** — 결론은 [docs/reviews/05-spec002-subagent-review.md](../reviews/05-spec002-subagent-review.md).
 

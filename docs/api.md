@@ -4,6 +4,8 @@
 
 > 2026-07-08 M4 착수 전 Owner 결정 반영 (D-1~D-8, C-10·C-11): §3 요약표 #44 추가, §1.2 CSRF 부트스트랩, 응답 필드 3건 보강(`is_submitted`·작성자 한정 `reject_reason`·`expected_version`, D-3), 알림 `target_url` 규약(C-10), Google nickname 자동 산정(C-11), `domain_category` 11종 확정(D-6), `is_deleted` 표기 정리(C-1). 기존 #1~43 번호는 ux/01 등 상호참조 안정성을 위해 유지하고 신규 엔드포인트만 #44로 덧붙인다.
 >
+> 2026-09-16 SPEC-003(M4-7 알림 + M4-8 역할) 구현 중 Owner 결정 3건 반영(2026-09-15 승인, 상세는 `specs/SPEC-003-notifications-roles/spec.md` §7): (1) **#40** — `actor?: { user_id?, display_name? }` **삭제**. Phase 2 알림 5종의 actor가 전부 관리자여서 그대로 노출하면 고민 작성자·조언가에게 관리자 계정 id가 샌다(CLAUDE.md §8, SPEC-002 보안 리뷰 지적 사항). (2) **#40·#41** — Status 집합에서 **403 제거**. 조회를 `recipient=user`로 좁힌 쿼리셋으로 판정하므로 타인의 알림은 404이며, 알림은 전적으로 사적인 자원이라 id의 존재조차 알리지 않는다. 아울러 #41의 멱등성(재요청 200 + `read_at` 최초 값 유지)을 Side Effect에 명시. (3) **#43** — 회수가 **활성 배정을 해제하지 않음**을 Side Effect에 명시. 경로·메서드는 변경 없음.
+>
 > 2026-09-14 SPEC-002 서브에이전트 리뷰(`security-reviewer`·`api-architect`, 2026-09-13) 반영 + Owner 결정 4건(2026-09-13): (1) **#33** — 소프트 삭제된 고민의 조언 리뷰는 409(기존 500 크래시 수정), **#32** 큐에서도 제외. (2) **#30** — REJECTED 조언의 삭제 허용(반려 후 재작성 경로 확보). (3) **#26·#27·#34** — 소프트 삭제한 고민의 조언은 작성자 화면에서도 함께 감춤(조언가·관리자 경로는 불변). (4) **#29** Side Effect 행을 Description과 일치시킴(본문 변경 시에만 version 증가 — **ADR-007**이 CLAUDE.md §6.7을 supersede). 부수적으로 #29/#30에 `active_role=ADVISOR` 게이트 명시, #26/#31 Status에 400 추가, #32 `status` enum 검증 명시.
 >
 > 2026-09-13 SPEC-002(M4-6 advice + feedback) 구현 중 Owner 결정 4건 반영(전부 2026-09-11 승인, 상세는 `specs/SPEC-002-advice-api/spec.md` §7): (1) #32/#33 — 제출되지 않은 초안은 리뷰 목록에서 항상 제외되고 직접 리뷰 시도도 409. (2) #29 — `submit` 플래그만 토글하면 `version`을 올리지 않는다(본문 변경 시에만). (3) #33 — 승인 시 concern 전이는 `ASSIGNED`에서만 발생하고 `CLOSED`/`ANSWERED`는 불변. (4) #27 — 주체 판정 우선순위(작성자→ADMIN→고민 작성자)와 비-APPROVED 조회 시 403(404 아님) 명시. 엔드포인트 계약(경로·메서드·상태 코드 집합)은 변경 없음.
@@ -806,9 +808,9 @@ URI 변경 요약 (Notion v0 → v1):
 | Permission | Authenticated (수신자) |
 | Description | 알림 상세. |
 | Request 주요 필드 | Path: `notification-id` |
-| Response 주요 필드 | `notification_id`, `type`, `title`, `message`, `target_url`, `is_read`, `read_at?`, `created_at`, `actor?`: { `user_id?`, `display_name?` } |
-| Status | 200 / 401 / 403 / 404 / 500 |
-| 접근 제어 조건 | 수신자 본인만. |
+| Response 주요 필드 | `notification_id`, `type`, `title`, `message`, `target_url`, `is_read`, `read_at`, `created_at` |
+| Status | 200 / 401 / 404 / 500 |
+| 접근 제어 조건 | 수신자 본인만. 쿼리셋을 `recipient=user`로 좁혀 판정하므로 **타인의 알림은 403이 아니라 404**다. |
 | Side Effect | 없음(읽음 처리는 별도 API). |
 | MVP 여부 | ✓ |
 
@@ -822,9 +824,9 @@ URI 변경 요약 (Notion v0 → v1):
 | Description | 알림 읽음 처리. |
 | Request 주요 필드 | 없음 |
 | Response 주요 필드 | `notification_id`, `is_read` (true), `read_at` |
-| Status | 200 / 401 / 403 / 404 / 500 |
-| 접근 제어 조건 | 수신자 본인만. |
-| Side Effect | `is_read=true`, `read_at=now()`. |
+| Status | 200 / 401 / 404 / 500 |
+| 접근 제어 조건 | 수신자 본인만. 타인의 알림은 **404**(#40과 동일). |
+| Side Effect | `is_read=true`, `read_at=now()`. **멱등** — 이미 읽은 알림에 재요청해도 200이며, `read_at`은 **최초 값을 유지**한다(덮어쓰면 "처음 본 시각"이 사라진다). |
 | MVP 여부 | ✓ |
 
 ### 42. POST /api/v1/admin/users/{user-id}/roles
@@ -854,7 +856,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Response 주요 필드 | 본문 없음(204) 또는 `{ user_id, roles[] }` (200). 본 명세는 204. |
 | Status | 204 / 401 / 403 / 404 / 409(자기 자신 ADMIN 회수, 마지막 ADMIN 회수, 보유하지 않은 역할) / 500 |
 | 접근 제어 조건 | ADMIN. 자기 자신의 ADMIN 회수 불가. 마지막 ADMIN 회수 불가. `USER`는 회수 대상이 아니다. |
-| Side Effect | UserRole 삭제, RoleGrant(action=REVOKE) audit 레코드 추가. ADVISOR 회수 시 active_role이 ADVISOR였다면 USER로 강제 전환. |
+| Side Effect | UserRole 삭제, RoleGrant(action=REVOKE) audit 레코드 추가. ADVISOR 회수 시 active_role이 ADVISOR였다면 USER로 강제 전환. **활성 배정(Assignment)은 해제하지 않는다** — 회수된 조언가의 배정은 남고 concern도 `ASSIGNED`를 유지하며, 관리자가 #25로 명시 해제한다(SPEC-003 §7 결정 3). 해당 상태는 #23 admin 고민 상세에서 식별 가능하다. |
 | MVP 여부 | ✓ |
 
 ### 44. GET /api/v1/csrf

@@ -66,13 +66,14 @@
 * [x] `ActiveRoleSwitchTests`(#10 최초 테스트) + `StateTransitionLockingTests`(상태 전이 규칙을 SQL 수준에서 강제) 신설
 * [x] 검증 4종 실행 결과 첨부 — check 0 issues / makemigrations No changes / ruff passed / **260 tests OK**
 
-## TASK-005 — 교차 검증 + 마무리
+## TASK-005 — 교차 검증 + 마무리 — **완료 (2026-09-16)**
 
-* [ ] **A-3 end-to-end**: 조언 작성 → ADVISOR 회수 → 같은 조언가가 #29 수정 시도 → **403** — 실패 테스트
-* [ ] **C-10 `target_url` 왕복**: 5개 타입 알림을 실제 서비스 경로로 발생시키고 각 `target_url`을 수신자 세션으로 GET → 200 (`subTest`로 타입 구분) — 실패 테스트
-* [ ] SPEC-003 전체 AC(acceptance.md) 재실행 + 테스트 목록과 1:1 대조
-* [ ] `docs/api.md` 갱신 — 결정 1~3 확정 내용, #43의 "배정 잔존" 명시(결정 3(a))
-* [ ] STATUS.md 갱신 (**44/44 엔드포인트, M4 종료**) + README_AIUSAGE.md 항목 추가
-* [ ] `docs/reviews/`에 SPEC-003 리뷰 노트 1건
-* [ ] Mock-Up UI: 회수된 조언가의 수정 시도 403 화면 스크린샷 (A-3의 시각적 증거)
-* [ ] PR 생성 → 서브에이전트 리뷰(security-reviewer + api-architect) → 머지
+* [x] **A-3 end-to-end**: `RoleRevokeEndToEndTests` 6개 — 회수 전 #20·#29=200(대조군) → 회수 → 403, 조언 데이터 보존, concern `ASSIGNED` 유지, 알림 미발생
+* [x] **C-10 `target_url` 왕복**: `NotificationTargetUrlRoundTripTests` 6개 — 5종을 실제 서비스 경로로 발생시켜 수신자 세션으로 GET → 전부 200. 경로 형식(`/api/v1/` 시작, 쿼리·trailing slash 없음)과 `payload` 키까지 검증. 타입이 늘면 알려주는 커버리지 테스트 1개 포함
+* [x] SPEC-003 전체 AC 재실행 + 테스트 1:1 대조 — **미커버 1건 발견·보완**(AC-8 `payload` 키 검증이 5종 중 1종에만 적용돼 있었음. 코드는 옳았고 검증이 비어 있었다)
+* [x] `RoleGrant` append-only 정적 확인 (프로덕션 코드에 `create` 3곳뿐, `update`/`delete` 없음)
+* [x] `docs/api.md` 갱신 — #40 `actor` 삭제, #40·#41 Status에서 403 제거 + 멱등 명시, #43 배정 잔존 명시, 개정 이력 추가
+* [x] STATUS.md 갱신 (**44/44, M4 구현 종료**) + README_AIUSAGE.md 항목 추가
+* [x] `docs/reviews/06-spec003-notifications-roles.md` 작성
+* [x] Mock-Up UI 총 13장 (TASK-001~004에 걸쳐 첨부)
+* [ ] PR 생성 → 서브에이전트 리뷰(security-reviewer + api-architect) → 머지  ← 진행 중

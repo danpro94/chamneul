@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-09-16 — SPEC-003/TASK-005: 교차 검증 + 마무리 — M4 구현 종료 [위임]
+
+### 작업
+
+SPEC-003의 마지막 구간. 새 엔드포인트는 없고 **기능 사이의 틈**을 검증했다. SPEC-002가 AC 전항 통과 + 168개 테스트 상태에서 서브에이전트 리뷰에 데이터 유실 1건과 500 크래시 1건을 들킨 이유가 그 틈이었기 때문에, 이번에는 그 검증을 AC에 미리 넣어두고 여기서 실행했다.
+
+### AI 도구
+
+Claude Opus 5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-005 진행 승인. 신규 결정 없음.
+
+### 생성 산출물
+
+* `notifications/tests.py` — `NotificationTargetUrlRoundTripTests`(6) 추가, 앱 누적 34개
+* `accounts/tests.py` — `RoleRevokeEndToEndTests`(6) 추가, 앱 누적 51개
+* `docs/api.md` — #40 `actor` 삭제, #40·#41 Status에서 403 제거 + #41 멱등 명시, #43 배정 잔존 명시, 개정 이력 1건
+* `docs/reviews/06-spec003-notifications-roles.md` (신규)
+* `specs/SPEC-003-notifications-roles/acceptance.md` — AC-1~AC-10 판정 완료 기록
+
+### 검증 결과
+
+* `manage.py check` → 0 issues / `makemigrations --check` → No changes / `ruff check` → All checks passed
+* `manage.py test` → **272개 통과**
+* **AC-8 `target_url` 왕복**: 알림 5종을 실제 서비스 경로(`assign_advisor`·`review_advice`·`review_application`)로 발생시키고 각 `target_url`을 수신자 본인 세션으로 GET → **전부 200**. 경로가 전부 옳았다 — 다만 그동안 **아무도 호출해 본 적이 없었으므로** 옳다는 사실 자체가 미확인 상태였다.
+* **AC-7 end-to-end 자동화**: 대조군(회수 전 #20·#29=200)을 포함해 6개. 회수 후 403, 조언 데이터 보존, concern `ASSIGNED` 유지, 알림 미발생.
+* `RoleGrant` append-only 정적 확인: 프로덕션 코드에 `create` 3곳뿐, `update`/`delete` 없음.
+
+### 이번에 찾은 것 2건
+
+1. **AC 전수 대조에서 미커버 1건.** AC-8의 "payload에 C-10 표의 키가 들어 있다"가 5종 중 ASSIGNMENT_CREATED 하나에만 적용돼 있었다. 메우고 실행했더니 통과 — **코드는 이미 옳았고 검증이 비어 있었다.** 대조를 실제로 하지 않았으면 AC 문서에는 체크 표시가 남았을 항목이다. AC 전항 통과가 "검증했다"를 뜻하지 않는다는 사례를 하나 더 얻었다.
+2. **`force_authenticate`는 DB를 다시 읽지 않는다.** AC-7 테스트를 처음 돌렸을 때 회수 후에도 200이 나왔다. 제품 결함이 아니라 테스트 도구의 성질이었다 — 실제 요청은 세션에서 사용자를 매번 DB에서 읽지만 `force_authenticate`는 넘겨준 파이썬 객체를 그대로 `request.user`로 쓴다. 브라우저 실증에서는 이미 403이 나와 있었다. `refresh_from_db()`로 실제 동작을 모사하고, 지우면 이 클래스의 403 검사가 전부 무의미해진다는 주석을 남겼다.
+
+### 잔여 리스크
+
+1. **실제 경합은 여전히 미재현.** 발행 SQL로 잠금의 *존재*는 고정했지만 동시 실행은 `TestCase`(트랜잭션 내부)로 만들 수 없다. `TransactionTestCase` + 스레드로 "관리자 0명" 시나리오를 실제로 돌려보는 것이 M5 이후 과제다.
+2. **서브에이전트 리뷰 미실행.** SPEC-002의 교훈상 이것이 남은 가장 큰 미검증 구간이다. PR 직후 `security-reviewer`·`api-architect` 2종을 돌린다.
+3. **문서 부채 잔존**: M4-1~M4-4 AIUSAGE 소급, 리뷰 노트 2건(M3·M4 전반), model.md drift 6건. M5로 이월.
+4. **`accounts` 앱의 M4-1~M4-3 테스트 여전히 0건** — 이번 SPEC은 #10·#42·#43만 커버했다.
+
+---
+
 ## 2026-09-15 — SPEC-003/TASK-004: 역할 회수 (api.md #43) — A-3 양방향 해소 [위임]
 
 ### 작업

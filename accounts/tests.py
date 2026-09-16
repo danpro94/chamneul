@@ -15,7 +15,17 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from notifications.models import Notification
+from advice import services as advice_services
+from common.taxonomy import ConcernType
+from concerns import services as concern_services
+from concerns.models import (
+    Assignment,
+    AssignmentPriority,
+    Concern,
+    ConcernStatus,
+    TriageDecision,
+)
+from notifications.models import Notification, NotificationType
 
 from .models import ActiveRole, Role, RoleGrant, RoleGrantAction, UserRole
 
@@ -606,3 +616,142 @@ class StateTransitionLockingTests(AdminRoleTestBase):
         self.assertIn('"updated_at"', updates[0])
         self.assertNotIn('"email"', updates[0])
         self.assertNotIn('"password"', updates[0])
+
+
+class RoleRevokeEndToEndTests(TestCase):
+    """AC-7 — 회수가 실제로 권한을 닫는가 (SPEC-003 acceptance.md).
+
+    단위 테스트는 `active_role`이 USER로 바뀌었다는 것까지만 증명한다. 정작
+    중요한 질문은 그 다음이다: **그래서 조언가가 실제로 막히는가?** 권한은
+    `IsActiveAdvisor` -> 뷰 -> 서비스를 거쳐 판정되므로, 그 사슬 전체를
+    통과시켜 봐야 A-3가 닫혔다고 말할 수 있다.
+
+    SPEC-002가 AC 전항 통과 + 168개 테스트 상태에서 서브에이전트 리뷰에
+    데이터 유실 1건과 500 크래시 1건을 들킨 이유가 이것이었다 — 결함은 개별
+    기능이 아니라 **기능 사이**에 있었다.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_user(
+            email="e2e.admin@example.com", nickname="e2eadmin", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.admin, role=Role.ADMIN)
+        self.owner = User.objects.create_user(
+            email="e2e.owner@example.com", nickname="e2eowner", password="pw12345!"
+        )
+        self.advisor = User.objects.create_user(
+            email="e2e.advisor@example.com", nickname="e2eadvisor", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.advisor, role=Role.ADVISOR)
+        self.advisor.active_role = ActiveRole.ADVISOR
+        self.advisor.save(update_fields=["active_role"])
+
+        self.concern = Concern.objects.create(
+            author=self.owner,
+            concern_summary="이직을 할지 남을지 결정해야 합니다",
+            concern_type=ConcernType.JOB_CHANGE,
+            decision_context="3년차, 제안 2건",
+        )
+        concern_services.assign_advisor(
+            self.concern.id,
+            actor=self.admin,
+            validated_data={
+                "advisor_user_id": str(self.advisor.id),
+                "triage_decision": TriageDecision.SUITABLE,
+                "priority": AssignmentPriority.NORMAL,
+            },
+        )
+        self.advice = advice_services.create_advice(
+            self.concern.id,
+            self.advisor,
+            {
+                "directional_guidance": "두 선택지의 5년 후를 적어보세요.",
+                "reflective_questions": ["무엇이 두려운가요?"],
+                "considerations": "연봉 외 요소",
+                "submit": False,
+            },
+        )
+
+    def revoke_advisor(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.delete(
+            f"{roles_url(self.advisor.id)}/{Role.ADVISOR}"
+        )
+        self.assertEqual(response.status_code, 204)
+        # 실제 요청은 세션에서 사용자를 매번 DB에서 다시 읽는다. 반면
+        # force_authenticate는 넘겨준 파이썬 객체를 그대로 request.user로
+        # 쓰므로, 갱신하지 않으면 강등 전의 active_role이 남아 뒤따르는
+        # 검사가 통과해 버린다 — 제품 동작이 아니라 테스트 도구의 성질이다.
+        # (지우지 말 것: 지우면 이 클래스의 403 검사가 전부 무의미해진다.)
+        self.advisor.refresh_from_db()
+
+    def test_advisor_can_act_before_the_revoke(self):
+        """대조군. 회수 후의 403이 '원래부터 막혀 있었다'가 아님을 보장한다."""
+        self.client.force_authenticate(self.advisor)
+        self.assertEqual(
+            self.client.get("/api/v1/users/me/assigned-concerns").status_code, 200
+        )
+        self.assertEqual(
+            self.client.patch(
+                f"/api/v1/advices/{self.advice.id}",
+                {"considerations": "회수 전 수정"},
+                format="json",
+            ).status_code,
+            200,
+        )
+
+    def test_assigned_concern_list_closes_after_the_revoke(self):
+        self.revoke_advisor()
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get("/api/v1/users/me/assigned-concerns")
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_advice_edit_closes_after_the_revoke(self):
+        self.revoke_advisor()
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.patch(
+            f"/api/v1/advices/{self.advice.id}",
+            {"considerations": "회수 후 수정 — 막혀야 한다"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.advice.refresh_from_db()
+        self.assertEqual(self.advice.considerations, "연봉 외 요소")
+
+    def test_revoke_does_not_delete_the_advice_the_advisor_wrote(self):
+        """회수는 권한 회수지 데이터 삭제가 아니다. 이미 쓴 조언은 남고,
+        작성자 본인은 여전히 읽을 수 있다."""
+        self.revoke_advisor()
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(f"/api/v1/advices/{self.advice.id}")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_concern_stays_assigned_after_the_revoke(self):
+        """결정 3(a) — 회수는 배정을 자동 해제하지 않는다. 관리자가 #25로
+        명시 해제한다. 여기서 고정해 두지 않으면 '자동 해제가 누락된 버그'로
+        오인될 수 있는 **의도된** 동작이다."""
+        self.revoke_advisor()
+
+        self.concern.refresh_from_db()
+        self.assertEqual(self.concern.status, ConcernStatus.ASSIGNED)
+        self.assertTrue(
+            Assignment.objects.filter(
+                concern=self.concern, advisor=self.advisor, is_active=True
+            ).exists()
+        )
+
+    def test_revoke_leaves_no_notification(self):
+        self.revoke_advisor()
+
+        # 배정 시 발생한 ASSIGNMENT_CREATED 1건 외에 새 알림이 없어야 한다.
+        self.assertEqual(Notification.objects.count(), 1)
+        self.assertEqual(
+            Notification.objects.get().type, NotificationType.ASSIGNMENT_CREATED
+        )
