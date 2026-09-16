@@ -11,7 +11,7 @@ import secrets
 
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from common.exceptions import Conflict
 from common.uuid7 import uuid7
@@ -21,6 +21,13 @@ from .models import ActiveRole, Role, RoleGrant, RoleGrantAction, User, UserRole
 # advisor_status exposes only these (api.md #9). WITHDRAWN is unreachable in
 # Phase 2 and maps to NONE if it somehow appears.
 _ADVISOR_STATUSES = {"PENDING", "REVIEWING", "APPROVED", "REJECTED"}
+
+# Roles that may be granted or revoked (ADR-003 §2). USER is the implicit
+# default every account holds and is never stored as a row (model.md §3.2).
+# The API already blocks it twice (serializer choices for #42, URL converter
+# for #43); this is the service-layer copy, so a management command or a future
+# admin action cannot write a row the whole authorization model ignores.
+_GRANTABLE_ROLES = frozenset({Role.ADVISOR, Role.ADMIN})
 
 
 def held_roles(user) -> list[str]:
@@ -163,12 +170,15 @@ def grant_role(target_user_id, role, actor, reason=""):
 
     No notification is sent, by decision (ADR-003 §4).
     """
+    if role not in _GRANTABLE_ROLES:
+        raise ValidationError({"role": "부여할 수 없는 역할입니다."})
+
     with transaction.atomic():
         target = get_object_or_404(
             User.objects.select_for_update(of=("self",)), pk=target_user_id
         )
         if UserRole.objects.filter(user=target, role=role).exists():
-            raise Conflict("이미 보유한 역할입니다.")
+            raise Conflict("이미 보유한 역할입니다.", reason="ALREADY_HELD")
 
         UserRole.objects.create(user=target, role=role)
         grant = RoleGrant.objects.create(
@@ -206,6 +216,9 @@ def revoke_role(target_user_id, role, actor, reason=""):
     `.count()` because PostgreSQL rejects `FOR UPDATE` on an aggregate, and an
     unlocked count is exactly the race this guard exists to prevent.
     """
+    if role not in _GRANTABLE_ROLES:
+        raise ValidationError({"role": "회수할 수 없는 역할입니다."})
+
     with transaction.atomic():
         target = get_object_or_404(
             User.objects.select_for_update(of=("self",)), pk=target_user_id
@@ -213,27 +226,37 @@ def revoke_role(target_user_id, role, actor, reason=""):
 
         if role == Role.ADMIN:
             if target.id == actor.id:
-                raise Conflict("자기 자신의 ADMIN 역할은 회수할 수 없습니다.")
+                raise Conflict(
+                    "자기 자신의 ADMIN 역할은 회수할 수 없습니다.",
+                    reason="SELF_REVOKE",
+                )
 
+            # `user__is_active=True`: a deactivated account cannot authenticate
+            # (Django's ModelBackend refuses it), so counting it as a surviving
+            # administrator would leave nobody able to log in and grant the role
+            # back. The filter only ever makes the guard refuse more, which is
+            # the safe direction.
             admin_roles = list(
                 UserRole.objects.select_for_update()
-                .filter(role=Role.ADMIN)
+                .filter(role=Role.ADMIN, user__is_active=True)
                 .order_by("pk")
             )
             if not any(row.user_id == target.id for row in admin_roles):
-                raise Conflict("보유하지 않은 역할입니다.")
+                raise Conflict("보유하지 않은 역할입니다.", reason="NOT_HELD")
             # Counted from UserRole rows only: IsAdmin also accepts a superuser
             # (ADR-003 §1), but blocking one revoke too many costs a retry while
             # allowing one too few locks everyone out. The asymmetry decides.
             if len(admin_roles) <= 1:
-                raise Conflict("마지막 관리자는 회수할 수 없습니다.")
+                raise Conflict(
+                    "마지막 관리자는 회수할 수 없습니다.", reason="LAST_ADMIN"
+                )
 
         # The delete's own return value is the not-held check for ADVISOR:
         # splitting it into exists() + delete() would reopen the race the User
         # row lock just closed.
         deleted, _ = UserRole.objects.filter(user=target, role=role).delete()
         if not deleted:
-            raise Conflict("보유하지 않은 역할입니다.")
+            raise Conflict("보유하지 않은 역할입니다.", reason="NOT_HELD")
 
         RoleGrant.objects.create(
             user=target,

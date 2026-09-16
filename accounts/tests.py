@@ -755,3 +755,83 @@ class RoleRevokeEndToEndTests(TestCase):
         self.assertEqual(
             Notification.objects.get().type, NotificationType.ASSIGNMENT_CREATED
         )
+
+
+class RoleGuardHardeningTests(AdminRoleTestBase):
+    """2026-09-16 서브에이전트 리뷰 반영분 (S-5·S-6/AR-12·AR-06)."""
+
+    def test_last_admin_guard_ignores_deactivated_administrators(self):
+        """S-5. 비활성 계정은 로그인할 수 없으므로(Django ModelBackend), 살아있는
+        관리자로 세면 '남은 관리자가 있다'는 판정이 거짓이 된다 — 아무도 역할을
+        되돌릴 수 없는 상태가 만들어진다."""
+        sleeping_admin = User.objects.create_user(
+            email="sleeping@example.com", nickname="sleeping", password="pw12345!"
+        )
+        UserRole.objects.create(user=sleeping_admin, role=Role.ADMIN)
+        sleeping_admin.is_active = False
+        sleeping_admin.save(update_fields=["is_active"])
+
+        superuser = User.objects.create_user(
+            email="root@example.com", nickname="root", password="pw12345!"
+        )
+        superuser.is_superuser = True
+        superuser.save(update_fields=["is_superuser"])
+
+        # UserRole ADMIN은 2개지만 살아있는 것은 self.admin 하나뿐이다.
+        self.client.force_authenticate(superuser)
+        response = self.client.delete(f"{roles_url(self.admin.id)}/{Role.ADMIN}")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["error"]["details"]["reason"], "LAST_ADMIN")
+
+    def test_service_layer_rejects_user_role_directly(self):
+        """S-6/AR-12. API는 serializer choices와 URL 컨버터로 두 번 막지만,
+        관리 커맨드나 향후 admin action은 그 둘을 거치지 않는다."""
+        from rest_framework.exceptions import ValidationError
+
+        from accounts import services
+
+        with self.assertRaises(ValidationError):
+            services.grant_role(self.target.id, role=Role.USER, actor=self.admin)
+        with self.assertRaises(ValidationError):
+            services.revoke_role(self.target.id, role=Role.USER, actor=self.admin)
+        self.assertFalse(UserRole.objects.filter(role=Role.USER).exists())
+        self.assertFalse(RoleGrant.objects.exists())
+
+    def test_conflict_reasons_are_distinguishable(self):
+        """AR-06. #43은 세 가지 다른 상황에 409를 준다. 운영 도구가 '이미 없는
+        역할'과 '시스템 잠금 방지'를 한국어 문장으로 구분할 수는 없다."""
+        other_admin = User.objects.create_user(
+            email="admin2@example.com", nickname="admin2", password="pw12345!"
+        )
+        UserRole.objects.create(user=other_admin, role=Role.ADMIN)
+
+        self.client.force_authenticate(self.admin)
+
+        self_revoke = self.client.delete(f"{roles_url(self.admin.id)}/{Role.ADMIN}")
+        self.assertEqual(self_revoke.status_code, 409)
+        self.assertEqual(self_revoke.data["error"]["details"]["reason"], "SELF_REVOKE")
+
+        not_held = self.client.delete(f"{roles_url(self.target.id)}/{Role.ADVISOR}")
+        self.assertEqual(not_held.status_code, 409)
+        self.assertEqual(not_held.data["error"]["details"]["reason"], "NOT_HELD")
+
+        already_held = self.client.post(
+            roles_url(other_admin.id), {"role": Role.ADMIN}, format="json"
+        )
+        self.assertEqual(already_held.status_code, 409)
+        self.assertEqual(
+            already_held.data["error"]["details"]["reason"], "ALREADY_HELD"
+        )
+
+    def test_admin_role_screen_is_view_only(self):
+        """결정 A. Django Admin에서 UserRole을 손으로 고치면 강등도 감사 행도
+        없이 역할이 사라진다 — API가 보장하는 두 가지가 동시에 무너진다."""
+        from django.contrib import admin as django_admin
+
+        from .models import UserRole as UserRoleModel
+
+        model_admin = django_admin.site._registry[UserRoleModel]
+        self.assertFalse(model_admin.has_add_permission(None))
+        self.assertFalse(model_admin.has_change_permission(None))
+        self.assertFalse(model_admin.has_delete_permission(None))

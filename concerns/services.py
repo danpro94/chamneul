@@ -337,7 +337,15 @@ def assign_advisor(concern_id, actor, validated_data) -> tuple[Assignment, Conce
             recipient_id=advisor_user_id,
             type=NotificationType.ASSIGNMENT_CREATED,
             title="새로운 고민이 배정되었습니다",
-            message=concern.concern_summary,
+            # Fixed text, not concern.concern_summary (Owner decision
+            # 2026-09-16, SPEC-003 리뷰 S-2/AR-08). A copy of the summary here
+            # would be a second place the user's words live, and it does not
+            # inherit the original's access rules: after an unassignment, an
+            # ADVISOR revocation, or a soft delete (#19), the ex-advisor would
+            # still read it through #39/#40 forever. The body is fetched live
+            # through target_url, so permission and lifecycle are checked once,
+            # at the source.
+            message="배정된 고민의 내용은 배정 상세에서 확인할 수 있습니다.",
             target_url=f"/api/v1/users/me/assigned-concerns/{concern.id}",
             actor_user=actor,
             payload={"concern_id": str(concern.id), "assignment_id": str(assignment.id)},

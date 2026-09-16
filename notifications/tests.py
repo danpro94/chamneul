@@ -497,6 +497,11 @@ class NotificationTargetUrlRoundTripTests(TestCase):
         )
         self.assertEqual(notification.recipient_id, self.advisor.id)
         self.assertEqual(notification.payload.get("concern_id"), str(concern.id))
+        # 결정 2026-09-16 — 알림 본문은 고민 요약의 사본을 담지 않는다. 사본은
+        # 원본의 접근 규칙을 상속하지 않아 배정 해제·역할 회수·소프트 삭제
+        # 이후에도 계속 읽히기 때문이다 (리뷰 S-2/AR-08).
+        self.assertNotIn(concern.concern_summary, notification.message)
+        self.assertNotIn(concern.concern_summary, notification.title)
         self.assert_reachable(
             notification, self.advisor, {"concern_id", "assignment_id"}
         )
@@ -613,3 +618,51 @@ class NotificationTargetUrlRoundTripTests(TestCase):
             NotificationType.ADVISOR_APPLICATION_REJECTED,
         }
         self.assertEqual(covered, set(NotificationType.values))
+
+
+class NotificationQueryValidationTests(NotificationTestBase):
+    """#39 쿼리 파라미터 검증 (Owner 결정 2026-09-16, 리뷰 AR-02).
+
+    이전 구현은 알 수 없는 값을 조용히 무시했다. 그 결과 `?is_read=banana`는
+    "안 읽은 것만 보여줘"라는 요청에 **읽은 것까지 전부** 돌려줬고, 필터가
+    버려졌다는 신호도 없었다. SPEC-002가 이틀 전 #26·#31·#32에 세운 선례와도
+    반대 방향이었다.
+    """
+
+    def test_unparseable_is_read_is_400(self):
+        self.make_notification(self.me, is_read=True)
+
+        self.client.force_authenticate(self.me)
+        response = self.client.get(NOTIFICATIONS_URL, {"is_read": "banana"})
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_unknown_type_is_400(self):
+        self.client.force_authenticate(self.me)
+        response = self.client.get(NOTIFICATIONS_URL, {"type": "NOPE"})
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_absent_filters_still_return_everything(self):
+        self.make_notification(self.me, is_read=True)
+        self.make_notification(self.me, is_read=False)
+
+        self.client.force_authenticate(self.me)
+        response = self.client.get(NOTIFICATIONS_URL)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["items"]), 2)
+
+    def test_state_changing_request_requires_csrf(self):
+        """`force_authenticate`는 인증기를 통째로 건너뛰므로 다른 테스트에서는
+        `CsrfSessionAuthentication.enforce_csrf`가 한 번도 실행되지 않는다.
+        실제 세션 로그인으로 그 경로를 한 번은 지나가게 한다 (리뷰 S-8)."""
+        notification = self.make_notification(self.me, is_read=False)
+        client = APIClient(enforce_csrf_checks=True)
+        client.login(email="me@example.com", password="pw12345!")
+
+        response = client.patch(read_url(notification.id))
+
+        self.assertEqual(response.status_code, 403)
+        notification.refresh_from_db()
+        self.assertFalse(notification.is_read)

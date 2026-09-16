@@ -15,26 +15,9 @@ from . import services
 from .serializers import (
     NotificationDetailSerializer,
     NotificationListSerializer,
+    NotificationQuerySerializer,
     NotificationReadResultSerializer,
 )
-
-# api.md §1.6 query flags are strings (mirrors concerns/views.py). `is_read` is
-# tri-state — absent means "no filter" — so it needs both spellings.
-_TRUE_VALUES = {"true", "1", "yes", "on"}
-_FALSE_VALUES = {"false", "0", "no", "off"}
-
-
-def _parse_is_read(raw):
-    """None when absent or unrecognised. #39's status set has no 400, so an
-    unparseable value is treated as "no filter" rather than an error."""
-    if raw is None:
-        return None
-    lowered = raw.strip().lower()
-    if lowered in _TRUE_VALUES:
-        return True
-    if lowered in _FALSE_VALUES:
-        return False
-    return None
 
 
 class NotificationListView(APIView):
@@ -44,10 +27,12 @@ class NotificationListView(APIView):
     pagination_class = StandardPagination
 
     def get(self, request):
+        query = NotificationQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)  # 400 on an unusable filter
         queryset = services.list_my_notifications(
             request.user,
-            is_read=_parse_is_read(request.query_params.get("is_read")),
-            notification_type=request.query_params.get("type"),
+            is_read=query.validated_data["is_read"],
+            notification_type=query.validated_data["type"],
         )
 
         paginator = self.pagination_class()

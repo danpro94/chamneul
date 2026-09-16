@@ -45,12 +45,33 @@ class UserAdmin(DjangoUserAdmin):
 
 @admin.register(UserRole)
 class UserRoleAdmin(admin.ModelAdmin):
+    """View-only (Owner decision 2026-09-16, SPEC-003 리뷰 S-1/S-3).
+
+    Role changes go through #42/#43 only. Editing rows here bypassed two things
+    the API guarantees: the `active_role` demotion that keeps a revoked advisor
+    from passing IsActiveAdvisor (A-3), and the `RoleGrant` audit row ADR-003 §3
+    requires for every grant and revocation. An audit trail that is missing the
+    fastest path is not an audit trail.
+
+    Bootstrap is unaffected: `createsuperuser` writes the ADMIN row through the
+    manager (accounts/managers.py), not through this screen.
+    """
+
     list_display = ("user", "role", "created_at")
     list_filter = ("role",)
     search_fields = ("user__email",)
     # list_display renders user per row — join it in one query (no N+1).
     list_select_related = ("user",)
-    readonly_fields = ("id", "created_at")
+    readonly_fields = ("id", "user", "role", "created_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(RoleGrant)

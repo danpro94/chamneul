@@ -10,7 +10,7 @@ likewise internal: the client resolves a destination from (type, target_url).
 
 from rest_framework import serializers
 
-from .models import Notification
+from .models import Notification, NotificationType
 
 
 class NotificationListSerializer(serializers.ModelSerializer):
@@ -50,3 +50,19 @@ class NotificationReadResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ("notification_id", "is_read", "read_at")
+
+
+class NotificationQuerySerializer(serializers.Serializer):
+    """#39 query parameters.
+
+    Validated rather than best-effort parsed (Owner decision 2026-09-16,
+    SPEC-003 리뷰 AR-02; same shape SPEC-002 gave #26/#31/#32 on 2026-09-14).
+    Silently ignoring `?is_read=banana` is the worst of the options available:
+    the caller asked to narrow the list and got **every** notification back,
+    read ones included, with no indication the filter was dropped.
+    """
+
+    is_read = serializers.BooleanField(required=False, allow_null=True, default=None)
+    type = serializers.ChoiceField(
+        choices=NotificationType.choices, required=False, allow_null=True, default=None
+    )

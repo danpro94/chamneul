@@ -96,7 +96,12 @@
   * **AC-8 `target_url` 왕복**: 알림 5종을 실제 서비스 경로로 발생시켜 수신자 세션으로 GET → 전부 200. 이 문자열들은 그동안 아무도 호출해 본 적이 없었다.
   * **AC 전수 대조에서 미커버 1건 발견**: AC-8의 `payload` 키 검증이 5종 중 1종에만 적용돼 있었다. **코드는 옳았고 검증이 비어 있었다** — 대조를 실제로 하지 않았으면 체크 표시만 남았을 항목이다.
   * api.md 갱신(#40 `actor` 삭제, #40·#41 403 제거 + 멱등 명시, #43 배정 잔존), 리뷰 노트 [06](../reviews/06-spec003-notifications-roles.md) 작성.
-* 남은 것: PR → 서브에이전트 리뷰(`security-reviewer`·`api-architect`) → 머지.
+* **서브에이전트 리뷰 완료 (2026-09-16)** — 블로커 0건. 두 리뷰가 독립적으로 같은 결함 1건(알림 본문의 고민 요약 사본)을 찾았다. Owner 결정 4건 + 하드닝 4건 + 문서 정정 6건 반영, 전체 **283개** 테스트 통과. 상세는 [리뷰 노트 06](../reviews/06-spec003-notifications-roles.md).
+  * **A** Django Admin `UserRole`/`Notification` view-only — 역할 변경은 #42/#43로만(강등·감사 행 우회 차단)
+  * **B** 배정 알림 본문에서 고민 요약 사본 제거 — 사본은 원본의 접근 규칙을 상속하지 않아 소프트 삭제 후에도 읽혔다
+  * **C** 회수 후 재신청 영구 409 해소 — SPEC-003이 만든 막다른 길이었다
+  * **D** #39 쿼리 무검증 → 400
+* 남은 것: PR #6 머지.
 
 **SPEC-002-advice-api — 완료·머지 (2026-09-14, PR #3 + 리뷰 반영 PR #4).** api.md #26~38 (M4-6) 13개 엔드포인트, AC-1~AC-11 전항 통과, advice 앱 테스트 118개(전체 **180개**). [PR #3](https://github.com/danpro94/chamneul/pull/3). 서브에이전트 리뷰 2종(`security-reviewer`·`api-architect`) 실행 후 **블로커 1·메이저 5 전부 반영** — 결론은 [docs/reviews/05-spec002-subagent-review.md](../reviews/05-spec002-subagent-review.md).
 

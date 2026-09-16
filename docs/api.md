@@ -4,6 +4,8 @@
 
 > 2026-07-08 M4 착수 전 Owner 결정 반영 (D-1~D-8, C-10·C-11): §3 요약표 #44 추가, §1.2 CSRF 부트스트랩, 응답 필드 3건 보강(`is_submitted`·작성자 한정 `reject_reason`·`expected_version`, D-3), 알림 `target_url` 규약(C-10), Google nickname 자동 산정(C-11), `domain_category` 11종 확정(D-6), `is_deleted` 표기 정리(C-1). 기존 #1~43 번호는 ux/01 등 상호참조 안정성을 위해 유지하고 신규 엔드포인트만 #44로 덧붙인다.
 >
+> 2026-09-16 **SPEC-003 서브에이전트 리뷰(`security-reviewer`·`api-architect`) 반영 + Owner 결정 4건**: (1) **#39** — 쿼리 파라미터 무검증을 폐기하고 해석 불가 값은 **400**(`?is_read=banana`가 조용히 무시되어 읽은 알림까지 전부 반환되던 문제. #26·#31·#32와 동일 정책). (2) **#39** — 알림 `message`가 고민 요약의 **사본을 담지 않는다**. 사본은 원본의 접근 규칙을 상속하지 않아 배정 해제·역할 회수·소프트 삭제(#19) 이후에도 계속 읽혔다. (3) **#43·#11·#9** — 회수 후 `AdvisorApplication`이 `APPROVED`로 남아 **재신청이 영구 409**가 되던 막다른 길을 해소(#11은 역할을 실제 보유한 동안에만 중복 판정). (4) **#43** — 409 3종을 `details.reason`으로 구분. 부수적으로 **§1.4** 봉투 예외표, **§1.8** 403/404 판정 규칙과 "이미 목표 상태인 재요청" 규칙 신설, **C-10** `payload` 미노출 명시와 #21 접근 전제 각주, **#42** 도달 불가 422 제거.
+>
 > 2026-09-16 SPEC-003(M4-7 알림 + M4-8 역할) 구현 중 Owner 결정 3건 반영(2026-09-15 승인, 상세는 `specs/SPEC-003-notifications-roles/spec.md` §7): (1) **#40** — `actor?: { user_id?, display_name? }` **삭제**. Phase 2 알림 5종의 actor가 전부 관리자여서 그대로 노출하면 고민 작성자·조언가에게 관리자 계정 id가 샌다(CLAUDE.md §8, SPEC-002 보안 리뷰 지적 사항). (2) **#40·#41** — Status 집합에서 **403 제거**. 조회를 `recipient=user`로 좁힌 쿼리셋으로 판정하므로 타인의 알림은 404이며, 알림은 전적으로 사적인 자원이라 id의 존재조차 알리지 않는다. 아울러 #41의 멱등성(재요청 200 + `read_at` 최초 값 유지)을 Side Effect에 명시. (3) **#43** — 회수가 **활성 배정을 해제하지 않음**을 Side Effect에 명시. 경로·메서드는 변경 없음.
 >
 > 2026-09-14 SPEC-002 서브에이전트 리뷰(`security-reviewer`·`api-architect`, 2026-09-13) 반영 + Owner 결정 4건(2026-09-13): (1) **#33** — 소프트 삭제된 고민의 조언 리뷰는 409(기존 500 크래시 수정), **#32** 큐에서도 제외. (2) **#30** — REJECTED 조언의 삭제 허용(반려 후 재작성 경로 확보). (3) **#26·#27·#34** — 소프트 삭제한 고민의 조언은 작성자 화면에서도 함께 감춤(조언가·관리자 경로는 불변). (4) **#29** Side Effect 행을 Description과 일치시킴(본문 변경 시에만 version 증가 — **ADR-007**이 CLAUDE.md §6.7을 supersede). 부수적으로 #29/#30에 `active_role=ADVISOR` 게이트 명시, #26/#31 Status에 400 추가, #32 `status` enum 검증 명시.
@@ -61,6 +63,12 @@
 }
 ```
 
+**예외 목록 (2026-09-16 신설, SPEC-003 리뷰 AR-04)**: 목록 응답이 봉투에 필드를 **추가**하는 경우는 아래가 전부다. 목록별 집계가 더 필요해지면 이 표에 행을 늘리고, 공용 페이지네이션 클래스는 건드리지 않는다(10개 이상의 목록 API가 공유한다).
+
+| 엔드포인트 | 추가 필드 | 이유 |
+| --- | --- | --- |
+| #39 알림 목록 | `unread_count` | 뱃지 숫자. 필터와 무관한 전체 미읽음 수이므로 `page_info.total`로 대체할 수 없다 |
+
 ### 1.5 공통 에러 형태
 
 ```json
@@ -101,6 +109,27 @@
 | 자원 없음 | 404 |
 | 의미 검증 실패(필드 형식은 맞으나 값 부적합) | 422 |
 | 서버 오류 | 500 |
+
+**403 vs 404 판정 규칙 (2026-09-16 신설, SPEC-003 리뷰 AR-05).** 타인 소유 자원 접근 시 어느 쪽을 쓸지는 취향이 아니라 "존재를 알려도 되는가"로 정한다.
+
+| 판정 | 기준 | 적용 |
+| --- | --- | --- |
+| **403** | 요청자가 그 자원의 **존재를 이미 아는 위치**에 있다 | #27(고민 작성자는 자기 고민에 조언이 달린 것을 안다), #34 |
+| **404** | **전적으로 사적인 자원** — id의 존재 자체를 알려줄 이유가 없다 | #18(내 고민), **#39·#40·#41(알림)** |
+| **403** | 자원은 공유되나 **권한 계층이 미달** | #22·#23·#32·#36·#42·#43(ADMIN 전용), #20·#21(ADVISOR 전용) |
+
+구현 규약: 404 판정 엔드포인트는 **쿼리셋을 소유자로 좁혀서** 조회한다(`filter(recipient=user)`). 객체를 먼저 꺼낸 뒤 소유자를 비교하는 형태는 403/404 분기를 매번 판단하게 만들므로 쓰지 않는다.
+
+**미해결 예외**: #21(배정 고민 상세)은 미배정 조언가에게 403을 준다. 그 조언가는 concern id를 알 수 없으므로 위 첫 번째 기준이 성립하지 않는다 — 404가 맞는지 M5에서 재검토한다.
+
+**"이미 목표 상태인 재요청" 규칙 (2026-09-16 신설, SPEC-003 리뷰 AR-07).**
+
+| 동작 유형 | 재요청 응답 | 적용 |
+| --- | --- | --- |
+| 플래그를 **설정**하는 PATCH | **200(멱등)** — 부수효과만 생략 | #41(읽음 처리, `read_at`은 최초 값 유지) |
+| 자원을 **제거**하는 DELETE | **409** | #19·#25·#43 |
+
+DELETE의 멱등성은 *서버 상태에 대한 효과*의 동일성이지 응답 코드의 동일성이 아니므로(RFC 9110) 두 정책은 공존한다.
 
 ### 1.9 URI 컨벤션
 
@@ -780,14 +809,14 @@ URI 변경 요약 (Notion v0 → v1):
 | Endpoint | `/api/v1/notifications` |
 | Permission | Authenticated |
 | Description | 내 알림 목록. |
-| Request 주요 필드 | Query: `is_read?`, `type?`, `page?`, `size?` |
-| Response 주요 필드 | `items[]`: { `notification_id`, `type`, `title`, `message`, `target_url`, `is_read`, `created_at` }, `page_info`, `unread_count` |
-| Status | 200 / 401 / 500 |
-| 접근 제어 조건 | 본인 수신 알림만. |
+| Request 주요 필드 | Query: `is_read?`(bool), `type?`(알림 타입 5종), `page?`, `size?` — 값이 해석 불가하면 무시하지 않고 **400**(2026-09-16 결정, #26·#31·#32와 동일 정책) |
+| Response 주요 필드 | `items[]`: { `notification_id`, `type`, `title`, `message`, `target_url`, `is_read`, `created_at` }, `page_info`, `unread_count`. **`unread_count`는 `is_read`/`type` 필터와 무관한 전체 미읽음 수**다(뱃지 숫자가 필터 토글로 흔들리면 안 된다). `items[].message`는 **발송 시점에 확정된 고정 문구**이며 원본 자원의 본문 사본을 담지 않는다(2026-09-16 결정, 리뷰 S-2/AR-08) |
+| Status | 200 / 400 / 401 / 500 |
+| 접근 제어 조건 | 본인 수신 알림만. 타인의 알림은 조회 경로 자체가 없다(§1.8 404 규칙). |
 | Side Effect | 없음. |
 | MVP 여부 | ✓ |
 
-**`target_url` 규약 (C-10 확정 2026-07-08)**: `target_url`에는 **수신자 본인이 GET 가능한 상세 API의 상대 경로**(`/api/v1/...` 포함, 쿼리·trailing slash 없음)를 저장한다. 프론트 라우트를 저장하지 않는다(라우트 개편에 알림이 깨지는 것 방지). 화면 이동은 클라이언트 리졸버가 `(type, target_url)` 조합으로 결정하며, 부가 식별자는 `Notification.payload`(JSONField)에 id로 담는다. 대상 리소스가 404/403이면 클라이언트는 `/notifications`로 폴백. M4 서비스가 타입별로 채우는 값:
+**`target_url` 규약 (C-10 확정 2026-07-08)**: `target_url`에는 **수신자 본인이 GET 가능한 상세 API의 상대 경로**(`/api/v1/...` 포함, 쿼리·trailing slash 없음)를 저장한다. 프론트 라우트를 저장하지 않는다(라우트 개편에 알림이 깨지는 것 방지). 화면 이동은 클라이언트 리졸버가 `(type, target_url)` 조합으로 결정한다. 부가 식별자는 `Notification.payload`(JSONField)에 id로 저장하되 **Phase 2 응답에는 노출하지 않는다**(2026-09-16 정정, SPEC-003 리뷰 AR-03) — 열람 권한이 없는 자원의 id 존재를 알려주는 값이라, 알림을 404로 판정하는 §1.8 규칙과 같은 논리로 닫아 둔다. `target_url` 하나로 리졸브가 가능하므로 클라이언트 동작에는 지장이 없다. 대상 리소스가 404/403이면 클라이언트는 `/notifications`로 폴백. M4 서비스가 타입별로 채우는 값:
 
 | type | 수신자 | target_url (저장값) | payload 키 |
 | --- | --- | --- | --- |
@@ -798,6 +827,8 @@ URI 변경 요약 (Notion v0 → v1):
 | ASSIGNMENT_CREATED | 조언가 | `/api/v1/users/me/assigned-concerns/{concern-id}` | `concern_id`, `assignment_id` |
 
 같은 `target_url`이라도 `type`이 수신자·목적지를 구분한다(ADVICE_APPROVED=사용자 vs ADVICE_REJECTED=조언가). 신청 결과 2종은 신청자가 GET 가능한 `/advisor-applications/me`(#12)를 가리킨다(#14 admin 경로 아님).
+
+> **`ASSIGNMENT_CREATED`의 접근 전제 (AR-09)**: `#21`은 `active_role=ADVISOR`를 요구하므로 이 알림의 `target_url`은 **역할 전환 상태에서만** 200이다. 역할 부여 직후(#42는 `active_role`을 바꾸지 않는다)나 ADVISOR 회수 후(#43은 배정을 남긴다)에는 403이며, 이때 클라이언트는 `/notifications`로 폴백한다.
 
 ### 40. GET /api/v1/notifications/{notification-id}
 
@@ -839,7 +870,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Description | 대상 사용자에게 역할(`ADMIN` 또는 `ADVISOR`)을 부여. 자세한 규칙은 ADR-003. |
 | Request 주요 필드 | `role` (enum: `ADMIN`/`ADVISOR`), `reason?` |
 | Response 주요 필드 | `user_id`, `roles[]` (변경 후 보유 역할), `granted_role`, `granted_at`, `granted_by` |
-| Status | 201 / 400 / 401 / 403 / 404 / 409(이미 보유 중) / 422 / 500 |
+| Status | 201 / 400 / 401 / 403 / 404 / 409(이미 보유 중, `details.reason=ALREADY_HELD`) / 500 | *(422 제거 2026-09-16 — 발생 조건이 없다. 형식 오류는 400, 중복은 409, 대상 없음은 404로 전부 흡수된다. 리뷰 AR-11)*
 | 접근 제어 조건 | ADMIN. `USER`는 부여 대상이 아니다. |
 | Side Effect | UserRole 추가, RoleGrant audit 레코드 추가. 알림 없음. |
 | MVP 여부 | ✓ |
@@ -854,9 +885,9 @@ URI 변경 요약 (Notion v0 → v1):
 | Description | 대상 사용자에게서 역할을 회수. |
 | Request 주요 필드 | Path: `user-id`, `role` (`ADMIN`/`ADVISOR`). Query: `reason?` |
 | Response 주요 필드 | 본문 없음(204) 또는 `{ user_id, roles[] }` (200). 본 명세는 204. |
-| Status | 204 / 401 / 403 / 404 / 409(자기 자신 ADMIN 회수, 마지막 ADMIN 회수, 보유하지 않은 역할) / 500 |
+| Status | 204 / 401 / 403 / 404 / 409 / 500. 409는 `error.details.reason`으로 원인을 구분한다 — `SELF_REVOKE`(자기 자신 ADMIN 회수) / `LAST_ADMIN`(마지막 ADMIN 회수) / `NOT_HELD`(보유하지 않은 역할). 잘못된 `{role}` 경로값(`USER` 포함)은 라우트가 매칭되지 않아 **404**다(§1.8 — URI가 자원을 식별하지 못하면 400이 아니라 404). |
 | 접근 제어 조건 | ADMIN. 자기 자신의 ADMIN 회수 불가. 마지막 ADMIN 회수 불가. `USER`는 회수 대상이 아니다. |
-| Side Effect | UserRole 삭제, RoleGrant(action=REVOKE) audit 레코드 추가. ADVISOR 회수 시 active_role이 ADVISOR였다면 USER로 강제 전환. **활성 배정(Assignment)은 해제하지 않는다** — 회수된 조언가의 배정은 남고 concern도 `ASSIGNED`를 유지하며, 관리자가 #25로 명시 해제한다(SPEC-003 §7 결정 3). 해당 상태는 #23 admin 고민 상세에서 식별 가능하다. |
+| Side Effect | UserRole 삭제, RoleGrant(action=REVOKE) audit 레코드 추가. ADVISOR 회수 시 active_role이 ADVISOR였다면 USER로 강제 전환. **활성 배정(Assignment)은 해제하지 않는다** — 회수된 조언가의 배정은 남고 concern도 `ASSIGNED`를 유지하며, 관리자가 #25로 명시 해제한다(SPEC-003 §7 결정 3). 해당 상태는 #23 admin 고민 상세에서 식별 가능하다. **`AdvisorApplication`도 `APPROVED`로 남는다** — 신청이 승인됐던 것은 사실이므로 되돌리지 않는다. 그 결과 #9는 `roles=["USER"]`와 `advisor_status="APPROVED"`를 함께 반환한다(모순처럼 보이나 각각 "현재 보유 역할"과 "과거 심사 결과"로 다른 것을 가리킨다). 재신청 경로는 열려 있다: **#11은 ADVISOR 역할을 실제로 보유한 동안에만 APPROVED를 중복으로 판정**하므로, 회수된 사용자는 다시 신청할 수 있다(2026-09-16 결정, 리뷰 AR-01). |
 | MVP 여부 | ✓ |
 
 ### 44. GET /api/v1/csrf

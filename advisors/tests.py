@@ -11,6 +11,7 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from accounts import services as accounts_services
 from accounts.models import Role, RoleGrant, UserRole
 from common.exceptions import Conflict
 from common.taxonomy import ConcernType
@@ -166,3 +167,86 @@ class AdvisorApplicationReviewTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class ReapplyAfterRevokeTests(TestCase):
+    """회수된 조언가의 재신청 (Owner 결정 2026-09-16, 리뷰 AR-01).
+
+    #43이 생기기 전에는 ADVISOR 역할을 잃을 방법이 없었으므로 "한 번 승인되면
+    영원히 APPROVED"가 무해했다. 회수가 가능해진 순간 그 상태는 막다른 길이
+    된다 — Phase 2에는 사용자측 신청 취소 API가 없어서(CLAUDE.md §5) 관리자가
+    #42로 역할을 다시 주는 것 외에 빠져나올 방법이 없었다.
+    """
+
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            email="reapply.admin@example.com", nickname="reapplyadmin", password="pw12345!"
+        )
+        UserRole.objects.create(user=self.admin, role=Role.ADMIN)
+        self.applicant = User.objects.create_user(
+            email="reapply@example.com", nickname="reapply", password="pw12345!"
+        )
+
+    def payload(self, display_name):
+        return {
+            "display_name": display_name,
+            "domain_category": DomainCategory.HR_ORG,
+            "experience_band": ExperienceBand.BAND_5_7,
+            "current_status": CurrentStatus.EMPLOYED,
+            "intended_lane": IntendedLane.EXPERT,
+            "career_narrative": "경력 서술",
+            "advisable_concern_types": [ConcernType.BURNOUT],
+            "sample_advice_response": "샘플 답변",
+        }
+
+    def approve_and_revoke(self):
+        application = services.create_application(
+            self.applicant, self.payload("최초 신청")
+        )
+        AdvisorApplication.objects.filter(pk=application.pk).update(
+            status=AdvisorApplicationStatus.REVIEWING
+        )
+        services.review_application(
+            application.pk,
+            actor=self.admin,
+            target_status=AdvisorApplicationStatus.APPROVED,
+        )
+        accounts_services.revoke_role(
+            self.applicant.id, role=Role.ADVISOR, actor=self.admin
+        )
+
+    def test_approved_application_blocks_reapply_while_the_role_is_held(self):
+        """대조군 — 역할을 보유한 동안에는 재신청이 여전히 막힌다."""
+        application = services.create_application(
+            self.applicant, self.payload("최초 신청")
+        )
+        AdvisorApplication.objects.filter(pk=application.pk).update(
+            status=AdvisorApplicationStatus.REVIEWING
+        )
+        services.review_application(
+            application.pk,
+            actor=self.admin,
+            target_status=AdvisorApplicationStatus.APPROVED,
+        )
+
+        with self.assertRaises(Conflict):
+            services.create_application(self.applicant, self.payload("중복 신청"))
+
+    def test_can_reapply_after_the_advisor_role_is_revoked(self):
+        self.approve_and_revoke()
+
+        reapplied = services.create_application(self.applicant, self.payload("재신청"))
+
+        self.assertEqual(reapplied.status, AdvisorApplicationStatus.PENDING)
+        self.assertEqual(
+            AdvisorApplication.objects.filter(applicant=self.applicant).count(), 2
+        )
+
+    def test_pending_application_still_blocks_a_second_one_after_revoke(self):
+        """회수가 '무제한 신청'을 열어주는 것은 아니다 — 새로 낸 신청이
+        진행 중이면 그다음은 여전히 409."""
+        self.approve_and_revoke()
+        services.create_application(self.applicant, self.payload("재신청"))
+
+        with self.assertRaises(Conflict):
+            services.create_application(self.applicant, self.payload("세 번째"))
