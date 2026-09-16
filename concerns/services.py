@@ -6,7 +6,6 @@ concern (#18/#19), the soft-delete transition (#19, CLAUDE.md §6.6), and the
 advisor-side assigned-concern queries (#20/#21).
 """
 
-from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Exists, OuterRef, Q, Subquery
 from django.shortcuts import get_object_or_404
@@ -133,19 +132,30 @@ def list_assigned_concerns(advisor):
 
 
 def get_assigned_concern(advisor, concern_id):
-    """Fetch the target concern for #21 — 404 if the concern doesn't exist
-    (or is soft-deleted), 403 if it exists but isn't assigned to this advisor
-    (api.md #21: existence is not hidden the way an unrelated user's concern
-    is — CLAUDE.md §10's "don't reveal existence" applies to *ownership*,
-    not to an advisor's assignment queue).
+    """Fetch the target concern for #21 — **404 unless it is in this advisor's
+    active queue** (Owner decision 2026-09-16; previously 403).
+
+    An advisor with no assignment has no way to learn the concern's id, so a
+    403 would tell them "such a concern exists" — api.md §1.8 puts that case in
+    the 404 row (a resource that is entirely private to someone else). This was
+    the last exception to that rule.
+
+    The scope *is* the access control, as in the notifications API: a concern
+    outside the queue never loads, so there is no in-between state where the
+    404/403 choice has to be made again.
+
+    `concern__deleted_at__isnull=True` is not redundant. `Concern` sets
+    `base_manager_name = "all_objects"`, and Django traverses FKs through the
+    base manager — reaching a concern via `Assignment` therefore bypasses the
+    soft-delete filter (model.md §1.4).
     """
-    concern = get_object_or_404(Concern.objects, pk=concern_id)
-    assignment = Assignment.objects.filter(
-        concern=concern, advisor=advisor, is_active=True
-    ).first()
-    if assignment is None:
-        raise PermissionDenied("배정되지 않은 고민입니다.")
-    return concern, assignment
+    assignment = get_object_or_404(
+        Assignment.objects.select_related("concern").filter(
+            advisor=advisor, is_active=True, concern__deleted_at__isnull=True
+        ),
+        concern_id=concern_id,
+    )
+    return assignment.concern, assignment
 
 
 def requester_display_name(concern: Concern) -> str:

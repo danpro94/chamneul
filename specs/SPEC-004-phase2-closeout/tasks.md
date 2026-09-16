@@ -28,17 +28,20 @@
 * [x] §11 Open Question 5건(O-1·2·3·4·6) 종결 처리, 3건(O-5·7·8) 유지
 * [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **283 tests OK**
 
-## TASK-003 — 이월 2건 + 문서 부채 청산
+## TASK-003 — 이월 2건 + 문서 부채 청산 — **완료 (2026-09-17)**
 
-* [ ] **결정 3**: #21이 미배정 조언가에게 **404** — 실패 테스트 먼저
-* [ ] `get_assigned_concern()`을 쿼리셋 스코프 판정으로 변경 (알림 3종과 같은 형태)
-* [ ] 기존 403 단언을 404로 수정 — 커밋 메시지에 **"결정 변경이 원인"** 명시
-* [ ] api.md #21 Status 집합·접근 제어 조건 정정 + §1.8 "미해결 예외" 문단 제거
-* [ ] **결정 2**: api.md §1.7 + model.md §1.1을 UTC 정책으로 교체, 예시 문자열도 함께
-* [ ] `README_AIUSAGE.md`에 M4-1~M4-4 소급 4건 (git log 기준, 추측 금지)
-* [ ] `docs/reviews/03-milestone3-review.md` 신규
-* [ ] `docs/reviews/04-milestone4-review.md` 신규
-* [ ] 검증 4종 실행 결과 첨부
+* [x] **B-01~B-05 함께 처리** (Owner 승인) — Admin 우회 경로 5건 차단, `AdminBypassGuardTests` 6개로 고정
+* [x] **결정 3**: #21이 미배정 조언가에게 **404** — 실패 테스트 먼저(403≠404 2건 확인 후 착수)
+* [x] `get_assigned_concern()`을 쿼리셋 스코프 판정으로 변경. `concern__deleted_at__isnull=True` 명시 — FK 역참조는 base manager를 타서 소프트 삭제를 우회한다(TASK-002에서 문서화한 D-08 함정)
+* [x] 배정 해제 시에도 404 / `active_role≠ADVISOR`는 **403 유지**(§1.8 3행) — 대조군 테스트 추가
+* [x] api.md #21 정정 + **§1.8 "미해결 예외" 문단 제거** — 404 규칙의 예외가 사라졌다
+* [x] **결정 2**: api.md §1.7 전면 교체(3계층 표) + model.md §1.1 + `config/settings/base.py` 주석. 예시 문자열도 UTC로
+* [x] **AR-01 잔여**: api.md #11 접근 제어 조건을 신규 규칙으로 정정 (#43과 어긋나 있던 것)
+* [x] `README_AIUSAGE.md`에 M4-1~M4-4 소급 — **git 이력 실측**, 근거가 없는 항목은 "미기록"으로 명시
+* [x] `docs/reviews/03-milestone3-review.md` 신규 (소급 — 사후에 드러난 것을 구분 표기)
+* [x] `docs/reviews/04-milestone4-review.md` 신규 (M4 전체를 가로지르는 관점)
+* [x] STATUS.md 문서 부채 3건 종결 + **학습 부채 14건 폐기**(결정 4)
+* [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **291 tests OK**
 
 ## TASK-004 — Phase 2 종료 판정 + Phase 3 인수인계
 

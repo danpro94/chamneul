@@ -962,6 +962,51 @@ CLAUDE.md는 **수정하지 않음** — ADR-006이 Owner 승인으로 Accepted 
 
 ---
 
+## 2026-07-09 — M4-1~M4-4: 인증·프로필·OAuth·조언가 신청 (api.md #2~#15) [위임] *(2026-09-17 소급 기록)*
+
+> **소급 기록임을 밝힌다.** 이 4개 모듈은 프로젝트가 test-first 루프(ADR-006, 2026-09-10)를 도입하기 **전에** 구현됐고, 당시 AIUSAGE 항목이 누락됐다. 아래 내용은 **git 이력(`git log`·`git show --stat`)에서 실측한 사실**이며, 당시의 판단 근거를 사후에 지어내지 않았다 — 기록에 남아 있지 않은 것은 "미기록"으로 표시한다.
+
+### 작업
+
+api.md #2~#15의 14개 엔드포인트를 4개 모듈로 나눠 구현했다. 커밋 7건이 하루에 몰려 있다.
+
+| 커밋 | 모듈 | 엔드포인트 |
+| --- | --- | --- |
+| `9dc8df1` | M4-1 auth 최초 | #2 signup / #3 login / #4 logout / #44 csrf + DRF 공통(예외 핸들러·페이지네이션) |
+| `855d1bf` | M4-1 정합 수정 | 응답 형태를 api.md에 맞춤 |
+| `91ad8ff` | M4-2 users/me | #7 조회 / #8 수정 / #9 역할 목록 / #10 활성 역할 전환 |
+| `0d355d2` | M4-3 Google OAuth | #5 authorize / #6 callback |
+| `c89b263` | M4-3 하드닝 | OAuth 계정 연결 충돌 409 + 보안 리뷰 지적 3건(S1/S2/S8) |
+| `b2eaf90` | M4-4 advisor applications | #11~#15 + `IsAdmin` 권한 클래스 |
+| `8817ea8` | (부수) | ADR-005(google-auth 라이브러리) 폐기, ADR-002 세션 단일 전략 유지 |
+
+### AI 도구
+
+Claude (당시 세션 — 정확한 모델명 미기록).
+
+### Owner 결정
+
+* **D-5 번복**: Google OAuth에 `google-auth` 라이브러리를 쓰지 않고 **표준 라이브러리 `urllib` + Google `tokeninfo` 엔드포인트**로 구현. ADR-005를 작성했다가 폐기하고 ADR-002(세션 단일 전략)를 유지했다 — 서드파티 패키지 추가는 §16 승인 게이트이고, 검증 한 번에 라이브러리 하나를 들이는 것이 과했다.
+* 나머지 판단 근거는 **미기록**.
+
+### 생성 산출물
+
+`accounts/`(views·serializers·services·urls·oauth), `advisors/`(전체), `common/`(exceptions·pagination·permissions·authentication), `config/settings`·`config/urls`.
+
+### 검증 결과
+
+* 당시 검증 기록이 **남아 있지 않다.** `check`/`ruff` 실행 여부 확인 불가.
+* **자동 테스트 0건**으로 구현됐다 — `accounts` 앱의 첫 테스트 파일은 2026-09-15 SPEC-003/TASK-003에서야 생겼고, `advisors`는 2026-09-14 A-1 수정 때 생겼다.
+* 사후 검증: 이 코드는 2026-09-17 현재 **291개 테스트가 도는 코드베이스의 일부**이며, 맨바닥 스모크 테스트에서 회원가입·로그인·로그아웃 경로가 실제로 통과했다([docs/smoke-test.md](docs/smoke-test.md) §3).
+
+### 잔여 리스크
+
+1. **M4-1~M4-3의 자동 테스트가 여전히 0건이다.** 회원가입·로그인·OAuth·프로필 수정은 스모크 테스트가 실환경에서 한 번 덮었을 뿐, 회귀 방어가 없다. Phase 3 과제.
+2. **당시 보안 리뷰(S1/S2/S8)의 내용이 기록에 없다.** 커밋 메시지의 식별자만 남아 있고 무엇을 고쳤는지는 diff로만 확인 가능하다.
+3. 소급 기록의 한계 — 위 내용은 git 이력에서 복원한 것이고, **왜 그렇게 결정했는지**는 D-5 외에는 남아 있지 않다. 이것이 ADR-006이 STATUS.md와 AIUSAGE 갱신을 구현 커밋의 의무로 못 박은 이유다.
+
+---
+
 ## 2026-07-08 — M3: 도메인 앱 모델 4종 [위임] + UX 사양
 
 * **작업**: advisors/concerns/advice/notifications 4개 앱 모델 7종 + Admin 등록 + 마이그레이션 생성(앱 단위 커밋 분할). 병렬로 Phase 2 화면 흐름·API-to-screen 매핑 UX 사양 작성

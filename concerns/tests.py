@@ -439,9 +439,38 @@ class AssignedConcernTests(TestCase):
         response = self.client.get(self.detail_url(self.assigned_concern.id))
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_detail_not_assigned_returns_403(self):
+    def test_detail_not_assigned_returns_404(self):
+        """Owner 결정 2026-09-16 (종전 403).
+
+        배정되지 않은 조언가는 그 고민의 id를 알 방법이 없다. 403은 "그런
+        고민이 존재하기는 한다"를 알려주므로, api.md §1.8의 404 규칙(전적으로
+        사적인 자원)이 적용되는 자리다. 이 변경으로 그 규칙의 마지막 예외가
+        사라진다.
+
+        구분되어야 하는 것: `active_role≠ADVISOR`는 여전히 **403**이다 —
+        권한 계층 미달은 자원의 존재와 무관하다(§1.8 3행).
+        """
         self.client.force_authenticate(self.advisor)
         response = self.client.get(self.detail_url(self.unassigned_concern.id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_detail_inactive_assignment_returns_404(self):
+        """해제된 배정도 마찬가지다 — 더 이상 내 큐가 아니다."""
+        Assignment.objects.filter(
+            concern=self.assigned_concern, advisor=self.advisor
+        ).update(is_active=False)
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(self.detail_url(self.assigned_concern.id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_detail_without_advisor_active_role_is_still_403(self):
+        """§1.8 규칙 3행 — 권한 계층 미달은 404가 아니라 403이다."""
+        self.advisor.active_role = ActiveRole.USER
+        self.advisor.save(update_fields=["active_role"])
+
+        self.client.force_authenticate(self.advisor)
+        response = self.client.get(self.detail_url(self.assigned_concern.id))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_detail_nonexistent_concern_returns_404(self):
