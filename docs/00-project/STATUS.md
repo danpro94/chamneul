@@ -86,12 +86,14 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 | 지표 | 값 |
 | --- | --- |
 | 엔드포인트 | **44 / 44** — (경로, 메서드) 쌍 실측 |
-| 자동 테스트 | **291** |
+| 자동 테스트 | **292** |
 | 검증 4종 | check 0 issues / makemigrations No changes / ruff passed / test OK |
 | 맨바닥 기동 | 볼륨 삭제 후 사용자 여정 12단계 통과 ([smoke-test.md](../smoke-test.md)) |
-| 서브에이전트 리뷰 | 5회, 블로커 1·메이저 7 전부 반영 |
+| 서브에이전트 리뷰 | **6회**(security ×2, api-architect ×2, data-modeler, devops-local-platform). 블로커 0, 지적 전건 반영 또는 Owner 결정 대기로 분류 |
 
-**Phase 3 진입 전 권고 4건** (리뷰 노트 07 §3-1): ① 운영 설정(`DEBUG=False`) 경로로 한 번 띄워보기 — Phase 2 내내 **한 번도 실행하지 않았다** ② 정적파일 서빙 구성 ③ 브루트포스 로그인 방어 ④ M4-1~M4-3 자동 테스트.
+**Phase 3 진입 전 권고 4건** (리뷰 노트 07 §3-1, `devops-local-platform` 권고로 재배열): ① **`accounts` 자동 테스트** — #5·#6(OAuth)·#8은 자동 테스트도 스모크도 없는 **유일한 무검증 영역**이다 ② 운영 경로 1회 기동 + 정적파일 ③ 브루트포스 방어(외부 노출 전까지 실효 위험 0이라 뒤로) ④ 실제 경합 재현.
+
+**Owner 결정 대기 5건** (리뷰 노트 07 §3-5): Google OAuth client secret 회전 / compose app healthcheck / Dockerfile gunicorn 액세스 로그 / compose `db`의 `env_file` 축소 / `.env.example` 누락 키 3개. 뒤 4건은 **§16 불가침 파일**이라 승인 없이 수정하지 않았다.
 
 ## 4. Active SPEC
 
