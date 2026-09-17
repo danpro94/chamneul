@@ -43,12 +43,14 @@
 * [x] STATUS.md 문서 부채 3건 종결 + **학습 부채 14건 폐기**(결정 4)
 * [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **291 tests OK**
 
-## TASK-004 — Phase 2 종료 판정 + Phase 3 인수인계
+## TASK-004 — Phase 2 종료 판정 + Phase 3 인수인계 — **완료 (2026-09-17)**
 
-* [ ] CLAUDE.md §1의 **9개 조건을 증거와 함께** 대조 (명령 + 출력)
-* [ ] STATUS.md §6 학습 부채 **종결 처리** (결정 4)
-* [ ] STATUS.md §7 문서 부채 종결 처리
-* [ ] STATUS.md에 Phase 2 종료 판정표 + Phase 3 인수인계 목록
-* [ ] `docs/reviews/07-phase2-closeout.md` — Phase 2 전체 회고
-* [ ] README_AIUSAGE.md에 SPEC-004 항목
-* [ ] PR 생성 → 서브에이전트 리뷰(`devops-local-platform` + `data-modeler`) → 머지
+* [x] CLAUDE.md §1의 **9개 조건 전항**을 증거와 함께 대조 — 9/9 충족
+* [x] **라우트 44개 실측** — URL 패턴은 37개지만 (경로, 메서드) 쌍은 정확히 44개(6개 경로가 메서드 공유)
+* [x] 결정 2·3이 **실행 중인 시스템**에 반영됐는지 실증 — 응답 시각 `…Z`(`+09:00` 0회), #21 미배정 조언가 **404** / `active_role≠ADVISOR` **403**
+* [x] Admin 감사 무결성 라이브 확인 — `AssignmentAdmin` add/change/delete 전부 `False`, `AdviceAdmin` 본문 readonly
+* [x] STATUS.md §6 학습 부채 종결(결정 4) + §7 문서 부채 3건 종결 (TASK-003)
+* [x] STATUS.md에 **Phase 2 완료 판정표** + Phase 3 진입 전 권고 4건
+* [x] `docs/reviews/07-phase2-closeout.md` — 조건별 증거표 + 인수인계 + 회고
+* [x] README_AIUSAGE.md에 SPEC-004 항목
+* [ ] PR 생성 → 서브에이전트 리뷰 → 머지  ← 진행 중
