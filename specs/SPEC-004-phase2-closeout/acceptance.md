@@ -16,7 +16,7 @@ Phase 2 종료 게이트. 이 SPEC의 AC는 **CLAUDE.md §1의 완료 조건을 
 - [x] `curl -i /healthz` → **200**
 - [x] 위 전 과정의 실제 출력이 `docs/smoke-test.md`에 있다
 
-## AC-2. 사용자 여정 11단계 (TASK-001)
+## AC-2. 사용자 여정 12단계 (TASK-001)
 
 각 단계는 **실제 명령과 실제 응답**으로 판정한다.
 
@@ -91,7 +91,7 @@ Phase 2 종료 게이트. 이 SPEC의 AC는 **CLAUDE.md §1의 완료 조건을 
 - [x] STATUS.md에 Phase 3 인수인계 목록이 있다
 - [x] `docs/reviews/07-phase2-closeout.md` 존재
 - [x] `data-modeler` 실행 + 결과 반영 (drift 22건, 그중 코드 5건은 분리 보고 후 수정)
-- [ ] `devops-local-platform` 실행 + 결과 반영  ← PR 직후 진행
+- [x] `devops-local-platform` 실행 + 결과 반영 (2026-09-17). 지적 16건 중 문서 정정 9건·코드 1건(D-14) 반영, 스모크 스크립트 커밋(D-6). compose/Dockerfile 개선 4건은 **§16 불가침이라 Owner 결정 대기**
 
 ## AC-10. 회귀 없음 (전 TASK)
 

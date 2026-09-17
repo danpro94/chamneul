@@ -7,9 +7,11 @@
 
 이 문서가 답하는 질문은 하나다. **"볼륨을 비운 맨바닥에서 이 시스템이 일어서고, 사용자가 처음부터 끝까지 지나갈 수 있는가?"**
 
-283개 자동 테스트는 전부 **테스트 전용 DB**에서 돌았다. Django는 테스트마다 DB를 새로 만들고 끝나면 지운다. 따라서 "코드가 의도대로 동작한다"는 확인됐지만 **"진짜 컨테이너가 맨바닥에서 일어선다"는 이 문서 이전에 미확인이었다.**
+자동 테스트(작성 시점 283개, 이후 SPEC-004/TASK-003까지 **291개**)는 전부 **테스트 전용 DB**에서 돌았다. Django는 테스트마다 DB를 새로 만들고 끝나면 지운다. 따라서 "코드가 의도대로 동작한다"는 확인됐지만 **"진짜 컨테이너가 맨바닥에서 일어선다"는 이 문서 이전에 미확인이었다.**
 
 ## 2. 맨바닥 기동
+
+> ⚠️ **이 문서의 모든 측정은 `runserver` 위에서 수행됐다.** 저장소에 `docker-compose.override.yml`이 커밋돼 있고(`command: python manage.py runserver`), Compose는 override를 자동으로 병합하므로 그냥 `docker compose up`을 하면 **항상 개발 서버**로 뜬다. 이미지의 `CMD`는 `gunicorn --workers 3`(`Dockerfile:61`)이며 **그 경로는 아직 한 번도 검증하지 않았다**(§5 갭 3). 확인 방법: `docker compose ps`의 COMMAND 열, 또는 응답 헤더의 `Server: WSGIServer/...`.
 
 > ⚠️ `down -v`는 **PostgreSQL 볼륨을 삭제**한다. 로컬 데이터가 전부 사라진다. 보존이 필요하면 §6의 백업 절차를 먼저 수행한다.
 
@@ -180,7 +182,9 @@ docker compose start db      # healthy까지 6초
 | `GET /api/v1/users/me` | **200** (0.09s) |
 | 사용자 여정 12단계 전체 | **전항 재통과** |
 
-**답**: 앱 재시작이 **필요 없다.** Django는 요청마다 연결을 확보하므로(`CONN_MAX_AGE` 기본값 0), 죽은 연결이 풀에 눌러앉지 않는다. DB가 돌아오면 다음 요청부터 자동 회복된다.
+**답**: 앱 재시작이 **필요 없다.** 다만 이유를 정확히 말해야 한다 — 이 프로젝트의 `CONN_MAX_AGE`는 **60**이다(`config/settings/base.py`, `DB_CONN_MAX_AGE` 기본값). 즉 연결을 재사용한다. 그럼에도 회복되는 것은 Django가 **요청이 끝날 때 오류가 난 연결을 폐기**하기 때문이다(`close_if_unusable_or_obsolete`). 죽은 연결이 다음 요청까지 살아남지 않으므로 새로 맺는다.
+
+> **이 결론은 서버에 의존한다.** 위 측정은 단일 프로세스(`runserver`)에서 했다. `gunicorn --workers 3`에서는 워커마다 연결을 쥐고 있어, DB 재기동 직후 **워커 수만큼 실패 요청이 먼저 발생**할 수 있다. gunicorn 경로는 아직 검증하지 않았다(§5 갭 3).
 
 ## 5. 알려진 갭 — Phase 2에서 의도적으로 열어둔 것
 
@@ -189,14 +193,14 @@ docker compose start db      # healthy까지 6초
 | # | 갭 | 영향 | 처리 |
 | --- | --- | --- | --- |
 | 1 | **브루트포스 로그인 방어 부재** — IP·계정 기준 레이트 리밋 없음 | 비밀번호 대입 공격에 무방비. 로컬 전용이라 현재 노출 없음 | Phase 3 (`.claude/rules/security.md` 명시) |
-| 2 | **정적파일 서빙 미구성** — `collectstatic`/WhiteNoise 없음 | `DEBUG=False`에서 Django Admin CSS가 깨진다. API 응답에는 영향 없음 | Phase 3 |
-| 3 | **dev/prod override 운영 경로 미검증** — "override 없음 = 운영 경로"가 기본값 | 운영 설정으로 뜬 컨테이너를 한 번도 실행해보지 않았다 | Phase 3 최우선 |
+| 2 | **정적파일이 서빙되지 않는다** — `collectstatic`은 **빌드 때 수행된다**(`Dockerfile:31`). 문제는 ① bind mount `.:/app`(`docker-compose.yml`)이 이미지의 `/app/staticfiles`를 **가리고**, ② `DEBUG=False`에서 정적파일을 서빙할 주체(WhiteNoise·리버스프록시)가 없다는 것 | `DEBUG=False`에서 Django Admin CSS가 깨진다. API 응답에는 영향 없음 | Phase 3. *(2026-09-17 정정: 종전 서술 "collectstatic 없음"은 사실이 아니었다 — 원인이 틀리면 이미 있는 것을 다시 추가하게 된다)* |
+| 3 | **운영 경로를 한 번도 띄워보지 않았다** — override를 빼는 것만으로는 부족하다. `docker-compose.yml`이 `DJANGO_SETTINGS_MODULE: config.settings.local`을 **고정**하므로, override만 제거하면 `gunicorn + local settings`라는 어느 쪽도 아닌 조합이 된다. 진짜 운영 경로는 **둘 다** 필요하다: `docker compose -f docker-compose.yml up -d` + `DJANGO_SETTINGS_MODULE=config.settings.prod` 주입 | gunicorn 실기동·정적파일·HTTPS 리다이렉트가 전부 미검증 | Phase 3 |
 | 4 | **고민 종료(`CLOSED`) 사용자 API 부재** | CLAUDE.md §6.6은 "사용자가 명시적으로 닫는다"고 서술하나 그 API가 없다. Phase 2는 **Django Admin으로만** 닫는다(Owner 결정 2026-09-16, D-4) | Phase 3 후보 |
 | 5 | **회수된 조언가의 배정 잔존** | 자격을 잃은 조언가의 배정이 남고 concern은 `ASSIGNED` 유지. #23 admin 상세에서 식별 가능하며 관리자가 #25로 해제한다 | 의도된 동작(SPEC-003 §7 결정 3) |
 | 6 | **실제 경합 미재현** | 잠금의 *존재*는 SQL 수준 테스트(`StateTransitionLockingTests`)로 고정했으나, 두 요청을 실제로 동시에 보내본 적은 없다 | Phase 3 (`TransactionTestCase` + 스레드) |
 | 7 | **DB 인지 readiness 프로브 부재** | §4-2 참조. `/healthz`가 DB 장애 중에도 초록 | Phase 3 (`/healthz/db`) |
 | 8 | **`DEBUG=True`에서 500이 전체 트레이스백 HTML** | 로컬 전용. 운영은 `DEBUG=False` 강제(§10) | 의도된 동작 |
-| 9 | **`accounts`의 M4-1~M4-3 자동 테스트 0건** | 회원가입·로그인·OAuth·프로필. 이 스모크 테스트가 회원가입·로그인·로그아웃 경로는 실환경에서 덮는다 | Phase 3 |
+| 9 | **`accounts`의 M4-1~M4-3 자동 테스트 0건** | 이 스모크가 회원가입(#2)·로그인(#3)·로그아웃(#4)은 실환경에서 덮는다. 그러나 **#5·#6(Google OAuth)과 #8(프로필 수정)은 자동 테스트도 스모크도 없다** — 이 프로젝트에서 **검증 수단이 0개인 유일한 영역**이다 | Phase 3 **최우선** |
 
 ## 6. 운영 체크리스트
 
@@ -225,9 +229,13 @@ grep -c "PostgreSQL database dump complete" ~/chamneul-backup-*.sql
 ### 복원
 
 ```bash
+docker compose stop app          # 앱이 잡은 연결 때문에 --clean의 DROP이 락 대기할 수 있다
 cat ~/chamneul-backup-YYYYMMDD.sql | \
-  docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+  docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+docker compose start app
 ```
+
+`ON_ERROR_STOP=1`이 없으면 **부분 복원이 성공처럼 보인다** — psql은 기본적으로 오류를 만나도 계속 진행한다.
 
 ### DB 안전 초기화
 
@@ -236,6 +244,15 @@ docker compose down -v          # 볼륨 삭제
 docker compose up -d
 docker compose exec app python manage.py migrate
 docker compose exec -it app python manage.py createsuperuser
+```
+
+### ⚠️ 화면 캡처 전 확인
+
+`docker compose config`는 병합된 설정을 출력하면서 **`.env`의 값을 전부 평문으로 찍는다** — Google OAuth client secret과 DB 비밀번호가 포함된다. 디버깅용으로는 유용하지만 **터미널 캡처를 공유·공개할 때 사고 1순위**다. 설정 구조만 보려면 서비스·키만 추려서 본다:
+
+```bash
+docker compose config --services
+docker compose config | grep -vE "SECRET|PASSWORD|CLIENT_SECRET"
 ```
 
 ### 포트 충돌
@@ -253,17 +270,27 @@ curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/healthz   # 200
 docker compose exec app python manage.py migrate --check          # 미적용 마이그레이션 여부
 ```
 
+> **`docker compose ps`의 app `Up`은 건강 신호가 아니다.** compose에 app healthcheck가 정의돼 있지 않아 `Up`은 "프로세스가 살아 있다"만 뜻한다(db는 `pg_isready` 헬스체크가 있어 `healthy`가 표시된다). app의 상태는 반드시 `curl /healthz`로 확인한다. app healthcheck 추가는 `docker-compose.yml` 변경이라 Owner 승인이 필요하다(CLAUDE.md §16).
+
 ## 7. 재실행
 
-이 문서의 여정 스크립트는 실행할 때마다 **새 계정을 만들므로 반복 실행이 가능하다**(계정 이메일에 실행 시각 접미사를 붙인다). 다만 관리자 계정(`root@chamneul.local`)은 §2-2로 미리 만들어져 있어야 한다.
+§3의 여정은 **[`scripts/smoke-journey.sh`](../scripts/smoke-journey.sh)로 커밋돼 있다.**
+
+```bash
+SMOKE_ADMIN_PASSWORD='<createsuperuser로 만든 비밀번호>' bash scripts/smoke-journey.sh
+```
+
+관리자 비밀번호는 환경변수로 받는다 — 자격증명을 저장소에 두지 않기 위해서다(§10). 관리자 계정은 §2-2로 미리 만들어져 있어야 한다.
+
+실행할 때마다 **새 계정을 만들므로 반복 실행이 가능하다**(계정 이메일에 실행 시각 접미사를 붙인다). 다만 `db` 로그에는 과거 실행에서 남은 중복키 `ERROR`가 보일 수 있는데, 이는 API가 409로 올바르게 막은 흔적이다.
 
 자동 테스트와의 역할 분담:
 
-| | 자동 테스트 (283개) | 스모크 테스트 (이 문서) |
+| | 자동 테스트 (291개) | 스모크 테스트 (이 문서) |
 | --- | --- | --- |
 | DB | 테스트 전용(매번 생성·삭제) | **실제 볼륨** |
 | 범위 | 함수·엔드포인트 단위 + 교차 검증 | 컨테이너 기동부터 사용자 여정까지 |
 | 답하는 질문 | "코드가 의도대로 동작하는가" | **"시스템이 맨바닥에서 일어서는가"** |
 | 실행 | `uv run python manage.py test` | 이 문서의 절차 |
 
-둘은 대체 관계가 아니다. SPEC-003에서 알림 `target_url` 5종이 전부 옳았지만 **아무도 눌러본 적이 없어** 옳다는 사실 자체가 미확인이었던 것처럼, 자동 테스트가 초록이어도 "실제로 일어서는가"는 별개의 질문이다.
+둘은 대체 관계가 아니다. **그리고 둘 다 통과해도 `gunicorn` 경로와 Google OAuth는 여전히 미검증이다.** SPEC-003에서 알림 `target_url` 5종이 전부 옳았지만 **아무도 눌러본 적이 없어** 옳다는 사실 자체가 미확인이었던 것처럼, 자동 테스트가 초록이어도 "실제로 일어서는가"는 별개의 질문이다.

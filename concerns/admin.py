@@ -25,14 +25,21 @@ class ConcernAdmin(admin.ModelAdmin):
     @admin.action(description="선택한 고민 종료 (ANSWERED -> CLOSED)")
     def close_selected(self, request, queryset):
         """§6.6이 허용하는 유일한 방향(ANSWERED -> CLOSED)만 수행한다.
-        다른 상태의 고민은 건드리지 않고 건수만 알린다."""
-        updated = queryset.filter(status=ConcernStatus.ANSWERED).update(
-            status=ConcernStatus.CLOSED
-        )
+
+        `deleted_at__isnull=True`가 필요하다 — 이 화면의 `get_queryset()`은
+        감사 목적으로 `with_deleted()`를 쓰므로, 필터 없이는 **사용자가 삭제한
+        고민까지 종료**된다(2026-09-16 리뷰 D-14).
+
+        `updated_at`을 함께 쓰는 이유: `.update()`는 `auto_now` 필드를
+        건드리지 않아서, 그냥 두면 상태는 바뀌었는데 갱신 시각은 멈춘다.
+        """
+        updated = queryset.filter(
+            status=ConcernStatus.ANSWERED, deleted_at__isnull=True
+        ).update(status=ConcernStatus.CLOSED, updated_at=timezone.now())
         skipped = queryset.count() - updated
         msg = f"{updated}건 종료"
         if skipped:
-            msg += f" / {skipped}건 건너뜀 (ANSWERED 상태가 아님)"
+            msg += f" / {skipped}건 건너뜀 (ANSWERED가 아니거나 삭제된 고민)"
         self.message_user(request, msg)
 
     @admin.action(description="선택한 고민 soft delete (deleted_at 기록)")

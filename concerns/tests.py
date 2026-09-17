@@ -1096,6 +1096,32 @@ class AdminBypassGuardTests(TestCase):
         submitted.refresh_from_db()
         self.assertEqual(answered.status, ConcernStatus.CLOSED)
         self.assertEqual(submitted.status, ConcernStatus.SUBMITTED)
+        # .update()는 auto_now를 건드리지 않으므로 명시 갱신이 필요하다 (D-14).
+        self.assertIsNotNone(answered.updated_at)
+
+    def test_close_action_skips_soft_deleted_concerns(self):
+        """D-14. 이 화면의 get_queryset()은 감사 목적으로 with_deleted()를
+        쓴다 — 필터가 없으면 사용자가 삭제한 고민까지 종료된다."""
+        from common.taxonomy import ConcernType
+
+        from .models import Concern, ConcernStatus
+
+        author = get_user_model().objects.create_user(
+            email="deleted.closer@example.com", nickname="delcloser", password="pw12345!"
+        )
+        deleted = Concern.objects.create(
+            author=author, concern_summary="삭제된 고민",
+            concern_type=ConcernType.BURNOUT, status=ConcernStatus.ANSWERED,
+            deleted_at=timezone.now(),
+        )
+
+        ma = self.model_admin(Concern)
+        request = type("Req", (), {"_messages": None})()
+        ma.message_user = lambda *a, **kw: None
+        ma.close_selected(request, Concern.objects.with_deleted().filter(author=author))
+
+        deleted.refresh_from_db()
+        self.assertEqual(deleted.status, ConcernStatus.ANSWERED)
 
     def test_advice_admin_body_fields_are_readonly(self):
         """B-02. 본문이 열려 있으면 이 화면에서 조언을 고쳐도 AdviceHistory

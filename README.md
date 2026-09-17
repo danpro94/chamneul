@@ -38,12 +38,16 @@ chamneul/
 ```bash
 cp .env.example .env   # 값 채우기 (CLAUDE.md §10 — .env는 절대 커밋하지 않는다)
 docker compose up -d
+docker compose exec app python manage.py migrate        # 없으면 첫 쓰기 API가 500난다
+docker compose exec -it app python manage.py createsuperuser
 curl http://localhost:8000/healthz   # {"status": "ok"} 기대
 ```
 
+`migrate`를 건너뛰면 `/healthz`는 200인데 데이터를 쓰는 API만 500이 난다(`relation ... does not exist`). 그 증상의 진단법은 [docs/smoke-test.md](docs/smoke-test.md) §4-1에 있다.
+
 리셋: `docker compose down -v` (named volume `pgdata` 포함 삭제 — DB 초기화).
 
-맨바닥에서 사용자 여정 전체를 통과시키는 절차, DB 장애 시 거동, 운영 체크리스트(로그·백업·복원·포트)는 **[docs/smoke-test.md](docs/smoke-test.md)** 를 본다. 자동 테스트(283개)는 테스트 전용 DB에서 돌아 "코드가 의도대로 동작하는가"를 답하고, 스모크 테스트는 실제 볼륨 위에서 **"시스템이 맨바닥에서 일어서는가"** 를 답한다.
+맨바닥에서 사용자 여정 전체를 통과시키는 절차, DB 장애 시 거동, 운영 체크리스트(로그·백업·복원·포트)는 **[docs/smoke-test.md](docs/smoke-test.md)** 를 본다. 자동 테스트(291개)는 테스트 전용 DB에서 돌아 "코드가 의도대로 동작하는가"를 답하고, 스모크 테스트는 실제 볼륨 위에서 **"시스템이 맨바닥에서 일어서는가"** 를 답한다.
 
 ## 문서 지도
 

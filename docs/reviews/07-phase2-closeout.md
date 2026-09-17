@@ -73,12 +73,23 @@ manage.py test                       → 291 tests OK
 
 | # | 항목 | 왜 먼저인가 |
 | --- | --- | --- |
-| **1** | **운영 설정(`DEBUG=False`) 경로로 한 번 띄워보기** | Phase 2 내내 **한 번도 실행하지 않았다.** "override 없음 = 운영 경로"가 기본값인데 그 경로가 실제로 뜨는지 미확인이다. 정적파일 미구성(아래 2)도 여기서 드러난다 |
-| **2** | 정적파일 서빙 구성(`collectstatic`/WhiteNoise) | `DEBUG=False`에서 Django Admin CSS가 깨진다. API에는 영향 없으나 운영 진입 시 즉시 체감 |
-| **3** | 브루트포스 로그인 방어(IP·계정 레이트 리밋) | `.claude/rules/security.md`가 Phase 3 과제로 명시. 외부 노출 시점에 **필수**로 승격 |
-| **4** | M4-1~M4-3 자동 테스트 | `accounts`의 회원가입·로그인·OAuth·프로필이 테스트 0건이다. 스모크가 실환경에서 한 번 덮었을 뿐 회귀 방어가 없다 |
+| **1** | **`accounts` 자동 테스트** (#2·#3·#4·#7·#8·#9 + **#5·#6 OAuth**) | 인증은 보안 경계 전체이고, Phase 3의 모든 변경이 그 위를 지나간다. 특히 **OAuth(#5·#6)와 프로필 수정(#8)은 자동 테스트도 스모크도 없는 유일한 무검증 영역**이다. *(2026-09-17 `devops-local-platform` 권고로 4번에서 승격)* |
+| **2** | **운영 경로 1회 기동 + 정적파일** | `docker compose -f docker-compose.yml up -d` **와** `DJANGO_SETTINGS_MODULE=config.settings.prod` 주입이 **둘 다** 필요하다(override만 빼면 gunicorn + local settings). 정적파일은 여기서 반드시 부딪히므로 한 항목으로 묶는다. **예상되는 것은 이미 실측됐다** — 아래 §3-2 참조 |
+| **3** | 브루트포스 로그인 방어(IP·계정 레이트 리밋) | `.claude/rules/security.md`가 Phase 3 과제로 명시. **외부 노출 전까지는 실효 위험이 0**이므로 1·2 뒤로 내린다. 노출 시점에 **필수**로 승격 |
+| **4** | 실제 경합 재현 + `Feedback.score` DB 제약 | §3-3 참조 |
 
-### 3-2. 설계상 열어둔 것 (버그 아님)
+### 3-2. 운영 경로에서 만날 것 — 이미 실측됨
+
+`devops-local-platform` 리뷰가 기존 컨테이너 안에서 `config.settings.prod`를 로드해 확인한 결과다. **"안 띄워봤지만 무엇이 나올지는 안다"** 상태다.
+
+| 확인 | 결과 |
+| --- | --- |
+| 평문 HTTP `/healthz` | **301** (`SECURE_SSL_REDIRECT=True`) — **로드밸런서 헬스체크 기본값(2xx만 정상)에서 즉시 unhealthy가 된다** |
+| `X-Forwarded-Proto: https` 동반 | 200 |
+| Host가 컨테이너 IP·서비스명 | **400** (`ALLOWED_HOSTS=localhost,127.0.0.1`) |
+| `STATIC_ROOT` 존재 | **False** (bind mount가 가림) |
+
+### 3-3. 설계상 열어둔 것 (버그 아님)
 
 | 항목 | 현재 동작 | 재검토 시점 |
 | --- | --- | --- |
@@ -88,7 +99,7 @@ manage.py test                       → 291 tests OK
 | 고민 종료(`CLOSED`) 사용자 API 없음 | Django Admin의 CLOSED 전용 action으로만. CLAUDE.md §6.6 문구와 긴장 | Phase 3 |
 | 알림 일괄 읽음 없음 | api.md 비범위 | 알림량이 늘면 |
 
-### 3-3. 검증 공백
+### 3-4. 검증 공백
 
 | 항목 | 현재 | 필요한 것 |
 | --- | --- | --- |
@@ -96,7 +107,7 @@ manage.py test                       → 291 tests OK
 | `Feedback.score` 범위 | `validators`만 | DB `CheckConstraint` |
 | 에러 메시지의 모델명 노출 | `"No Assignment matches the given query."` — Django 기본 메시지가 모델명을 드러낸다 | 에러 메시지 정책 수립 시 일괄 처리(전 엔드포인트 동일 패턴이라 개별 수정은 부적절) |
 
-### 3-4. Phase 3 범위 (CLAUDE.md §5)
+### 3-6. Phase 3 범위 (CLAUDE.md §5)
 
 아웃컴 추적 · 신뢰 점수 알고리즘 · 조언가 매칭 알고리즘 · 사용자 신청 철회 API · AWS · Kubernetes · Terraform · CI/CD · 결제 · 운영 모니터링 · 프론트엔드.
 
@@ -137,6 +148,40 @@ model.md 정합성 점검에서 나온 drift 22건은 **전부 서술 계층**�
 같은 일이 시스템 규모로도 있었다. 291개 테스트가 녹색이어도 "맨바닥에서 일어서는가"는 별개의 질문이었고, 볼륨을 비우고 돌려보기 전까지 답할 수 없었다.
 
 ---
+
+## 3-5. `devops-local-platform` 리뷰 결과 (2026-09-17)
+
+Phase 2 판정 자체는 유효하다는 확인을 받았다 — **코드·인프라 결함 0건**, 조건 9개 중 6개는 리뷰어가 독립 재실측했다(`ps` / healthz 200 / `migrate --check` / 마이그레이션 25건 / **라우트 44개** / `check` 0 issues).
+
+문제는 **문서의 기술 서술**에 있었고, 전부 정정했다:
+
+| 무엇이 틀렸나 | 실제 |
+| --- | --- |
+| "`CONN_MAX_AGE` 기본값 0이라 회복된다" | **60**이다. 회복 기전은 요청 종료 시 오류 난 연결을 폐기하는 것(`close_if_unusable_or_obsolete`) |
+| "`collectstatic` 없음" | `Dockerfile:31`이 **빌드 때 수행한다.** 진짜 원인은 bind mount가 `/app/staticfiles`를 가리는 것 + 서빙 주체 부재 |
+| "override 없음 = 운영 경로" | `docker-compose.yml`이 `settings.local`을 고정하므로, override만 빼면 **gunicorn + local**이라는 어느 쪽도 아닌 조합이 된다 |
+| (누락) 측정 조건 | **전 구간 `runserver`에서 측정했다.** `docker-compose.override.yml`이 커밋돼 있어 `docker compose up`은 항상 개발 서버로 뜬다 — 이 사실을 몰랐다 |
+
+마지막 항목이 가장 무겁다. §4-3의 "앱 재시작 불필요"라는 결론이 **서버에 의존**한다 — gunicorn 3워커에서는 워커마다 연결을 쥐고 있어 DB 재기동 직후 워커 수만큼 실패가 먼저 날 수 있다. 문서에 명시했다.
+
+**함께 드러난 것 2건:**
+
+* **`#5·#6`(Google OAuth)과 `#8`(프로필 수정)은 자동 테스트도 스모크도 없다** — 이 프로젝트에서 **검증 수단이 0개인 유일한 영역**이다. "44/44"가 "존재"와 "동작 검증"을 섞어 읽히게 하고 있었다.
+* `README.md` Quick Start에 `migrate`가 없어 **문서대로 따라가면 첫 쓰기 API가 500**이었다. 아이러니하게도 스모크 문서 §4-1이 바로 그 증상의 진단법을 적고 있다.
+
+코드 결함 1건(D-14)도 고쳤다 — Admin의 CLOSED action이 `with_deleted()` 쿼리셋 위에서 돌아 **소프트 삭제된 고민까지 종료**할 수 있었고, `.update()`가 `updated_at`을 갱신하지 않았다.
+
+**Owner 결정 대기 5건** (전부 §16 불가침 파일 또는 운영 판단):
+
+| # | 항목 | 성격 |
+| --- | --- | --- |
+| 1 | **Google OAuth client secret 회전** | 리뷰 중 `docker compose config`가 실제 secret을 평문 출력했다. Git 이력에는 없음(확인됨) |
+| 2 | compose에 app healthcheck 추가 | `docker compose ps`의 app `Up`이 건강 신호가 아니다 |
+| 3 | Dockerfile gunicorn에 `--access-logfile -` | 운영 경로에서 **요청 로그가 한 줄도 안 남는다** |
+| 4 | compose `db` 서비스의 `env_file` 축소 | DB 컨테이너에 Django·OAuth 시크릿이 주입된다(최소권한 위반) |
+| 5 | `.env.example`에 누락 키 3개 추가 | `GOOGLE_OAUTH_REDIRECT_URI` 등 |
+
+**Phase 3 우선순위 재배열 권고도 받았다**: 브루트포스 방어(현 3번)는 외부 노출 전까지 실효 위험이 0이므로 뒤로, **`accounts` 자동 테스트(현 4번)를 1번으로** — 인증은 보안 경계 전체이고 OAuth는 무검증 영역이다. 이 권고를 §3-1에 반영했다.
 
 ## 판정
 
