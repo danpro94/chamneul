@@ -58,4 +58,9 @@ USER 10001
  
 EXPOSE 8000
 
-CMD ["/app/.venv/bin/gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3"]
+# --access-logfile/--error-logfile을 - 로 주지 않으면 gunicorn은 액세스 로그를
+# 내보내지 않는다. 그 상태로 운영 경로에 가면 `docker compose logs app`에
+# 요청 기록이 한 줄도 남지 않아, 장애 시 무엇이 들어왔는지 알 수 없다.
+CMD ["/app/.venv/bin/gunicorn", "config.wsgi:application", \
+     "--bind", "0.0.0.0:8000", "--workers", "3", \
+     "--access-logfile", "-", "--error-logfile", "-"]

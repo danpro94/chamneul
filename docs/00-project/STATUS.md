@@ -93,7 +93,9 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 **Phase 3 진입 전 권고 4건** (리뷰 노트 07 §3-1, `devops-local-platform` 권고로 재배열): ① **`accounts` 자동 테스트** — #5·#6(OAuth)·#8은 자동 테스트도 스모크도 없는 **유일한 무검증 영역**이다 ② 운영 경로 1회 기동 + 정적파일 ③ 브루트포스 방어(외부 노출 전까지 실효 위험 0이라 뒤로) ④ 실제 경합 재현.
 
-**Owner 결정 대기 5건** (리뷰 노트 07 §3-5): Google OAuth client secret 회전 / compose app healthcheck / Dockerfile gunicorn 액세스 로그 / compose `db`의 `env_file` 축소 / `.env.example` 누락 키 3개. 뒤 4건은 **§16 불가침 파일**이라 승인 없이 수정하지 않았다.
+**Owner 승인 후 처리 5건** (2026-09-17, 리뷰 노트 07 §3-5): compose app healthcheck / Dockerfile gunicorn 액세스 로그 / compose `db`의 `env_file` 제거(앱 시크릿 미주입) / `.env.example` 누락 키 3개 / `restart: unless-stopped` — **§16 불가침 파일이라 승인 후에만 수정**했고, 재빌드 후 두 서비스 `healthy` + 스모크 여정 재통과로 검증했다.
+
+> **Owner 작업 1건 남음**: Google OAuth client secret 회전. 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md). Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
 
 ## 4. Active SPEC
 

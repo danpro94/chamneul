@@ -129,15 +129,32 @@ Phase 2 판정 자체는 유효하다는 확인을 받았다 — **코드·인�
 
 코드 결함 1건(D-14)도 고쳤다 — Admin의 CLOSED action이 `with_deleted()` 쿼리셋 위에서 돌아 **소프트 삭제된 고민까지 종료**할 수 있었고, `.update()`가 `updated_at`을 갱신하지 않았다.
 
-**Owner 결정 대기 5건** (전부 §16 불가침 파일 또는 운영 판단):
+**Owner 결정 5건 — 2026-09-17 전건 승인·처리.** `docker-compose.yml`·`Dockerfile`·`.env.example`은 CLAUDE.md §16 불가침이라 **Owner 승인 후에만** 손댔다.
 
-| # | 항목 | 성격 |
+| # | 항목 | 처리 |
 | --- | --- | --- |
-| 1 | **Google OAuth client secret 회전** | 리뷰 중 `docker compose config`가 실제 secret을 평문 출력했다. Git 이력에는 없음(확인됨) |
-| 2 | compose에 app healthcheck 추가 | `docker compose ps`의 app `Up`이 건강 신호가 아니다 |
-| 3 | Dockerfile gunicorn에 `--access-logfile -` | 운영 경로에서 **요청 로그가 한 줄도 안 남는다** |
-| 4 | compose `db` 서비스의 `env_file` 축소 | DB 컨테이너에 Django·OAuth 시크릿이 주입된다(최소권한 위반) |
-| 5 | `.env.example`에 누락 키 3개 추가 | `GOOGLE_OAUTH_REDIRECT_URI` 등 |
+| 1 | **Google OAuth client secret 회전** | **Owner 작업 항목** — Google Cloud Console에서 수행해야 한다. 절차는 아래 §3-5-1. Git 이력에 없음은 재확인했다(`.env` 미추적, `.gitignore`가 `.env`·`.env.*` 커버) |
+| 2 | compose에 app healthcheck | **완료** — `/healthz` 10초 간격, 기동 유예 20초. 실측: `Up 10 seconds (healthy)` |
+| 3 | Dockerfile gunicorn 액세스 로그 | **완료** — `--access-logfile -`·`--error-logfile -`. 이미지 `Config.Cmd`로 확인 |
+| 4 | compose `db`의 `env_file` 제거 | **완료** — `docker compose config` 기준 db에 남은 키는 `POSTGRES_DB`·`POSTGRES_USER`·`POSTGRES_PASSWORD` **3개뿐**. `${...}` 치환은 Compose가 `.env`를 자동으로 읽으므로 그대로 동작한다 |
+| 5 | `.env.example` 누락 키 3개 | **완료** — `GOOGLE_OAUTH_REDIRECT_URI`·`GOOGLE_OAUTH_SUCCESS_REDIRECT`·`DB_CONN_MAX_AGE` |
+
+부수적으로 `restart: unless-stopped`도 추가했다(D-15) — Docker Desktop 재시작 후 스택이 내려가 있던 문제.
+
+**검증**: 재빌드·재기동 후 두 서비스 모두 `healthy`, 볼륨 데이터 보존(사용자 14·고민 6), **스모크 여정 12단계 재통과**. 설정 변경이 기능을 깨지 않았다.
+
+#### 3-5-1. Google OAuth client secret 회전 절차 (Owner 작업)
+
+리뷰 중 `docker compose config`가 `.env`의 값을 평문 출력했고, 그 출력이 세션 로그에 남았다. **Git 이력에는 없지만** 로그가 남은 이상 회전이 안전하다.
+
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → 해당 OAuth 2.0 클라이언트 ID 선택
+2. **client secret 추가** (기존 것을 먼저 지우지 말 것 — 지우면 그 즉시 로그인이 끊긴다)
+3. 로컬 `.env`의 `GOOGLE_OAUTH_CLIENT_SECRET`을 새 값으로 교체
+4. `docker compose up -d` (env_file은 재기동 시 다시 읽힌다)
+5. `#5` authorize → `#6` callback 로그인 1회 확인
+6. 확인 후 **Console에서 기존 secret 폐기**
+
+> `docker compose config`는 병합된 설정을 출력하면서 `.env` 값을 **평문으로 찍는다.** 앞으로 설정 구조만 볼 때는 `docker compose config --services` 또는 `docker compose config --quiet`(문법 검증만)를 쓴다. 이 경고는 [smoke-test.md](../smoke-test.md) §6에도 넣었다.
 
 **Phase 3 우선순위 재배열 권고도 받았다**: 브루트포스 방어(현 3번)는 외부 노출 전까지 실효 위험이 0이므로 뒤로, **`accounts` 자동 테스트(현 4번)를 1번으로** — 인증은 보안 경계 전체이고 OAuth는 무검증 영역이다. 이 권고를 §3-1에 반영했다.
 

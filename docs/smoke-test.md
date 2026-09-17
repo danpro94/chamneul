@@ -194,7 +194,7 @@ docker compose start db      # healthy까지 6초
 | --- | --- | --- | --- |
 | 1 | **브루트포스 로그인 방어 부재** — IP·계정 기준 레이트 리밋 없음 | 비밀번호 대입 공격에 무방비. 로컬 전용이라 현재 노출 없음 | Phase 3 (`.claude/rules/security.md` 명시) |
 | 2 | **정적파일이 서빙되지 않는다** — `collectstatic`은 **빌드 때 수행된다**(`Dockerfile:31`). 문제는 ① bind mount `.:/app`(`docker-compose.yml`)이 이미지의 `/app/staticfiles`를 **가리고**, ② `DEBUG=False`에서 정적파일을 서빙할 주체(WhiteNoise·리버스프록시)가 없다는 것 | `DEBUG=False`에서 Django Admin CSS가 깨진다. API 응답에는 영향 없음 | Phase 3. *(2026-09-17 정정: 종전 서술 "collectstatic 없음"은 사실이 아니었다 — 원인이 틀리면 이미 있는 것을 다시 추가하게 된다)* |
-| 3 | **운영 경로를 한 번도 띄워보지 않았다** — override를 빼는 것만으로는 부족하다. `docker-compose.yml`이 `DJANGO_SETTINGS_MODULE: config.settings.local`을 **고정**하므로, override만 제거하면 `gunicorn + local settings`라는 어느 쪽도 아닌 조합이 된다. 진짜 운영 경로는 **둘 다** 필요하다: `docker compose -f docker-compose.yml up -d` + `DJANGO_SETTINGS_MODULE=config.settings.prod` 주입 | gunicorn 실기동·정적파일·HTTPS 리다이렉트가 전부 미검증 | Phase 3 |
+| 3 | **운영 경로(gunicorn + prod settings)를 한 번도 띄워보지 않았다** — override를 빼는 것만으로는 부족하다. `docker-compose.yml`이 `DJANGO_SETTINGS_MODULE: config.settings.local`을 **고정**하므로, override만 제거하면 `gunicorn + local settings`라는 어느 쪽도 아닌 조합이 된다. 진짜 운영 경로는 **둘 다** 필요하다: `docker compose -f docker-compose.yml up -d` + `DJANGO_SETTINGS_MODULE=config.settings.prod` 주입 | gunicorn 실기동·정적파일·HTTPS 리다이렉트가 전부 미검증 | Phase 3 |
 | 4 | **고민 종료(`CLOSED`) 사용자 API 부재** | CLAUDE.md §6.6은 "사용자가 명시적으로 닫는다"고 서술하나 그 API가 없다. Phase 2는 **Django Admin으로만** 닫는다(Owner 결정 2026-09-16, D-4) | Phase 3 후보 |
 | 5 | **회수된 조언가의 배정 잔존** | 자격을 잃은 조언가의 배정이 남고 concern은 `ASSIGNED` 유지. #23 admin 상세에서 식별 가능하며 관리자가 #25로 해제한다 | 의도된 동작(SPEC-003 §7 결정 3) |
 | 6 | **실제 경합 미재현** | 잠금의 *존재*는 SQL 수준 테스트(`StateTransitionLockingTests`)로 고정했으나, 두 요청을 실제로 동시에 보내본 적은 없다 | Phase 3 (`TransactionTestCase` + 스레드) |
@@ -212,6 +212,8 @@ docker compose logs db --tail 50         # DB
 docker compose logs -f app               # 실시간
 docker compose logs app 2>&1 | grep -iE "error|exception"
 ```
+
+운영 경로(gunicorn)에서는 요청 로그도 같은 스트림으로 나온다 — 이미지 `CMD`에 `--access-logfile -`·`--error-logfile -`이 있다(2026-09-17 추가). 이 옵션이 없으면 gunicorn은 액세스 로그를 내보내지 않아 `docker compose logs app`에 **요청 기록이 한 줄도 남지 않는다**.
 
 ### DB 백업 (볼륨 삭제 전 필수)
 
@@ -270,7 +272,9 @@ curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/healthz   # 200
 docker compose exec app python manage.py migrate --check          # 미적용 마이그레이션 여부
 ```
 
-> **`docker compose ps`의 app `Up`은 건강 신호가 아니다.** compose에 app healthcheck가 정의돼 있지 않아 `Up`은 "프로세스가 살아 있다"만 뜻한다(db는 `pg_isready` 헬스체크가 있어 `healthy`가 표시된다). app의 상태는 반드시 `curl /healthz`로 확인한다. app healthcheck 추가는 `docker-compose.yml` 변경이라 Owner 승인이 필요하다(CLAUDE.md §16).
+> **두 서비스 모두 `healthy`가 표시된다** (2026-09-17, Owner 승인 후 app healthcheck 추가). app은 `/healthz`를 10초 간격으로 호출하며 기동 유예 20초를 둔다.
+>
+> 다만 **app의 `healthy`는 "프로세스가 요청을 받는다"까지만 뜻한다** — `/healthz`는 DB를 건드리지 않는 liveness 프로브이므로 **DB가 죽어도 healthy가 유지된다**(§4-2). DB까지 포함한 판정은 여전히 `/healthz/db`(갭 7)가 필요하다.
 
 ## 7. 재실행
 
