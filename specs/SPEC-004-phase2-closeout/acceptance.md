@@ -90,7 +90,8 @@ Phase 2 종료 게이트. 이 SPEC의 AC는 **CLAUDE.md §1의 완료 조건을 
 - [x] STATUS.md §6 학습 부채 14건이 **종결 처리**됐다 (결정 4)
 - [x] STATUS.md에 Phase 3 인수인계 목록이 있다
 - [x] `docs/reviews/07-phase2-closeout.md` 존재
-- [x] 서브에이전트 리뷰 2종(`devops-local-platform`·`data-modeler`) 실행 + 결과 반영
+- [x] `data-modeler` 실행 + 결과 반영 (drift 22건, 그중 코드 5건은 분리 보고 후 수정)
+- [ ] `devops-local-platform` 실행 + 결과 반영  ← PR 직후 진행
 
 ## AC-10. 회귀 없음 (전 TASK)
 
