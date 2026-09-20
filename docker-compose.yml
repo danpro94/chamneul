@@ -3,7 +3,11 @@
 services:
   db:
     image: postgres:16
-    env_file: .env
+    # env_file을 쓰지 않는다 (최소권한). 통째로 읽으면 DJANGO_SECRET_KEY와
+    # Google OAuth secret까지 Postgres 컨테이너에 주입된다 — DB 컨테이너가
+    # 뚫렸을 때 앱 시크릿까지 함께 나가는 구조가 된다.
+    # 아래 ${...}는 컨테이너 주입이 아니라 Compose의 변수 치환이며, Compose는
+    # 프로젝트 디렉터리의 .env를 그 용도로 자동으로 읽는다.
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -11,6 +15,7 @@ services:
     ports:
       # host:container — 15432 on the host avoids clashing with a local 5432.
       - "15432:5432"
+    restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -29,10 +34,22 @@ services:
       DB_PORT: 5432
     ports:
       - "8000:8000"
+    healthcheck:
+      # 이게 없으면 `docker compose ps`의 app `Up`은 "프로세스가 살아 있다"만
+      # 뜻한다 — 요청을 받을 수 있는지와는 무관하다(db는 pg_isready가 있어
+      # `healthy`가 뜬다). /healthz는 DB를 건드리지 않는 liveness 프로브라
+      # DB 장애 중에도 통과한다(config/health.py) — 의도된 동작이다.
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
     depends_on:
       db:
         # Wait until Postgres actually accepts connections, not just "started".
         condition: service_healthy
+    restart: unless-stopped
     volumes:
       - .:/app
       # Anonymous volume keeps the container-built .venv from being shadowed by

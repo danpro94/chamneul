@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-16 (SPEC-003/TASK-005 커밋 기준. PR #3·#4·#5 머지 완료)
+> 마지막 실측: 2026-09-17 (SPEC-004/TASK-004 커밋 기준. PR #3~#7 머지 완료)
 
 ---
 
@@ -9,18 +9,18 @@
 
 | 항목 | 값 |
 | --- | --- |
-| Phase | Phase 2 — 로컬 컨테이너 MVP |
-| 현재 마일스톤 | M4 — api.md v1.1의 44개 엔드포인트 구현 (8모듈) |
+| Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
+| 현재 마일스톤 | **M5 완료** — 스모크 테스트 + 문서 정리 |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 마일스톤 | M5 — 스모크 테스트 + 문서 정리 → Phase 2 종료 |
+| 다음 | Phase 3 — 진입 전 확인 목록은 [리뷰 노트 07 §3](../reviews/07-phase2-closeout.md) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
 | M1 | 스켈레톤 (config/accounts/common, custom User+uuid7, /healthz, compose) | 완료 |
 | M2 | 런타임 승격 [소유] Dockerfile 멀티스테이지·비루트·gunicorn + [위임] accounts 역할 모델 3종 | 완료 |
-| M3 | 도메인 모델 7종 + 마이그레이션 + Admin | 완료 (리뷰 노트 미작성 — 부채 #4) |
-| M4 | api.md v1.1의 44개 엔드포인트 구현 (8모듈) | 진행 중 |
-| M5 | 스모크 테스트 + 문서 정리 | 미착수 |
+| M3 | 도메인 모델 7종 + 마이그레이션 + Admin | 완료 |
+| M4 | api.md v1.1의 44개 엔드포인트 구현 (8모듈) | 완료 |
+| M5 | 스모크 테스트 + 문서 정리 (SPEC-004) | 완료 |
 
 ---
 
@@ -79,9 +79,37 @@
 
 **없다.** api.md v1.1의 44개 엔드포인트가 전량 구현됐다(2026-09-15, SPEC-003/TASK-004). 남은 것은 구현이 아니라 검증·정리다 — SPEC-003 TASK-005(교차 검증 + AC 전수 대조 + 서브에이전트 리뷰), 그다음 M5(스모크 + 문서 부채).
 
+## 3-1. Phase 2 완료 판정 (2026-09-17)
+
+CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)는 [리뷰 노트 07](../reviews/07-phase2-closeout.md) §1.
+
+| 지표 | 값 |
+| --- | --- |
+| 엔드포인트 | **44 / 44** — (경로, 메서드) 쌍 실측 |
+| 자동 테스트 | **292** |
+| 검증 4종 | check 0 issues / makemigrations No changes / ruff passed / test OK |
+| 맨바닥 기동 | 볼륨 삭제 후 사용자 여정 12단계 통과 ([smoke-test.md](../smoke-test.md)) |
+| 서브에이전트 리뷰 | **6회**(security ×2, api-architect ×2, data-modeler, devops-local-platform). 블로커 0, 지적 전건 반영 또는 Owner 결정 대기로 분류 |
+
+**Phase 3 진입 전 권고 4건** (리뷰 노트 07 §3-1, `devops-local-platform` 권고로 재배열): ① **`accounts` 자동 테스트** — #5·#6(OAuth)·#8은 자동 테스트도 스모크도 없는 **유일한 무검증 영역**이다 ② 운영 경로 1회 기동 + 정적파일 ③ 브루트포스 방어(외부 노출 전까지 실효 위험 0이라 뒤로) ④ 실제 경합 재현.
+
+**Owner 승인 후 처리 5건** (2026-09-17, 리뷰 노트 07 §3-5): compose app healthcheck / Dockerfile gunicorn 액세스 로그 / compose `db`의 `env_file` 제거(앱 시크릿 미주입) / `.env.example` 누락 키 3개 / `restart: unless-stopped` — **§16 불가침 파일이라 승인 후에만 수정**했고, 재빌드 후 두 서비스 `healthy` + 스모크 여정 재통과로 검증했다.
+
+> **Owner 작업 1건 남음**: Google OAuth client secret 회전. 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md). Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
+
 ## 4. Active SPEC
 
-**SPEC-003-notifications-roles — 진행 중 (2026-09-15).** api.md #39~43 (M4-7 + M4-8) 5개 엔드포인트. §7 결정 3건 Owner 승인 완료: **(1) 알림 응답에 `actor`(관리자 신원) 미노출 (2) 타인 알림 조회는 404 — 쿼리셋을 `recipient=user`로 좁혀 존재 자체를 숨김 (3) ADVISOR 회수 시 활성 배정은 자동 해제하지 않음(관리자가 #25로 명시 해제)**. 셋 다 CLAUDE.md 조항과 충돌하지 않아 ADR 불필요.
+**SPEC-004-phase2-closeout — 진행 중 (2026-09-16).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. 
+
+* **TASK-001 완료 (2026-09-16)** — 볼륨을 비운 **맨바닥에서 사용자 여정 12단계 전항 통과**. [docs/smoke-test.md](../smoke-test.md) 신규.
+  * `depends_on: service_healthy` 동작 확인(`db Waiting → Healthy → app Starting`), 마이그레이션 25건, `createsuperuser`가 ADMIN `UserRole` 행 생성(ADR-003 §1).
+  * **DB 장애 실측**: `/healthz`는 DB가 죽어도 200(설계된 liveness 프로브) / DB 쓰기 요청은 500 + `OperationalError` / **DB 재기동 시 앱 재시작 불필요**(`StartedAt` 불변, 여정 전체 재통과).
+  * 마이그레이션 미적용 상태 판별 요령 확보: `/healthz` 초록 + 쓰기 500 + 로그에 `relation ... does not exist`.
+  * 갭 9건 문서화(브루트포스 방어, 정적파일, prod 경로 미검증, `CLOSED` API 부재, 배정 잔존, 경합 미재현, readiness 프로브 부재 등).
+  * 실행 중 테스트 픽스처 오류 3곳 발견·정정(`reflective_questions`는 배열이 아니라 `TextField`).
+* 남은 TASK: 002(model.md 정합화), 003(이월 2건 + 문서 부채), 004(Phase 2 종료 판정).
+
+**SPEC-003-notifications-roles — 완료·머지 (2026-09-16, PR #6).** api.md #39~43 (M4-7 + M4-8) 5개 엔드포인트. §7 결정 3건 Owner 승인 완료: **(1) 알림 응답에 `actor`(관리자 신원) 미노출 (2) 타인 알림 조회는 404 — 쿼리셋을 `recipient=user`로 좁혀 존재 자체를 숨김 (3) ADVISOR 회수 시 활성 배정은 자동 해제하지 않음(관리자가 #25로 명시 해제)**. 셋 다 CLAUDE.md 조항과 충돌하지 않아 ADR 불필요.
 
 * **TASK-001 완료** — #39 목록 + #40 상세. Mock-Up UI 4장으로 목록·필터·상세·404 확인.
 * **TASK-002 완료** — #41 읽음 처리(멱등, `read_at` 최초 값 보존). **M4-7 종료.** `notifications` 앱 테스트 28개(전체 **215개**). 검증 4종 통과.
@@ -147,23 +175,21 @@ api.md #16~25 (M4-5 concerns) 10개 엔드포인트 전량 구현, AC-1~AC-10 �
 | 모순 #6 (2026-09-09 부트스트랩) | api.md #16·#19·#22가 여전히 `is_deleted` 표기, 모델은 `deleted_at` | **종결됨** — 해석 승인(파생 응답 필드) 후 TASK-006에서 api.md 정정 완료: 상태 서술은 `deleted_at`, `is_deleted`는 #22 응답 필드로만 사용 |
 | 모순 #7 (2026-09-09 부트스트랩) | #16~19(사용자 concern CRUD)에 `active_role` 게이팅 여부 불명확 | 해석 승인됨(2026-09-09): 게이트 없음(자기 고민은 역할 무관) |
 
-## 6. 학습 부채 (14건, 누적)
+## 6. 학습 부채 — **종결 (2026-09-17, Owner 결정)**
 
-| 구분 | 건수 | 내용 |
-| --- | --- | --- |
-| M2 | 9건 | 401/403/409, `@transaction.atomic` 최우선 재검증 |
-| M3 | 2건 | 부분 유니크 "종결 ≠ 비활성" 경계, `with_deleted()` 호출 vs 제약 문법 |
-| 이월 게이트 | 3건 | 드릴 #2(마이그레이션 실패)·#3(env 오타), WB-1 백지 재현, M3 퀴즈 |
+Owner가 학습 세션 종료를 선언했다(2026-09-11). 누적 14건(M2 9 / M3 2 / 이월 게이트 3)은 **처리하지 않고 종결**한다 — 남겨두면 영원히 "미해소"로 보이고, 실제 작업 우선순위를 왜곡한다.
 
-처리 시점: M4 완료 후 일괄 (`docs/reviews/04-milestone4-definition.md` §0).
+기록만 남긴다: M2 9건(401/403/409 구분, `@transaction.atomic`), M3 2건(부분 유니크 "종결 ≠ 비활성" 경계, `with_deleted()` 호출 vs 제약 문법), 이월 게이트 3건(드릴 #2·#3, WB-1 백지 재현, M3 퀴즈).
+
+> 이 중 일부는 **학습이 아니라 실무로 해소됐다.** `@transaction.atomic`과 잠금은 M4에서 결함 4건(M-1·A-1·A-3·마지막 관리자)을 겪으며 규칙([.claude/rules/coding.md](../../.claude/rules/coding.md))과 테스트(`StateTransitionLockingTests`)로 정착했고, 401/403/409 구분은 api.md §1.8의 403/404 판정 규칙으로 문서화됐다.
 
 ## 7. 문서 부채
 
 | # | 항목 | 상태 |
 | --- | --- | --- |
-| 1 | README_AIUSAGE.md에 M4-1~M4-4 미기록 | 미해소 |
-| 2 | 리뷰 노트 미작성: `03-milestone3-review.md`, `04-milestone4-review.md` | 미해소 |
-| 3 | model.md 문서 drift 6건 미반영 | 미해소 |
+| 1 | README_AIUSAGE.md에 M4-1~M4-4 미기록 | **해소** (2026-09-17, SPEC-004/TASK-003). git 이력에서 실측해 소급 기록 — 당시 판단 근거가 남지 않은 항목은 "미기록"으로 명시했다 |
+| 2 | 리뷰 노트 미작성: `03-milestone3-review.md`, `04-milestone4-review.md` | **해소** (2026-09-17). M3는 소급 작성(사후에 드러난 것을 구분 표기), M4는 모듈별 리뷰를 가로지르는 관점으로 작성 |
+| 3 | model.md 문서 drift 6건 미반영 | **해소** (2026-09-16, TASK-002). 재측정 결과 **22건**이었다 — 기록된 4건 전부 현존 + M4 신규 18건 |
 | 4 | root/docs 이중 `README_AIUSAGE.md` | **2026-09-09 부트스트랩에서 병합·정리** |
 
 ## 7-1. 동일 유형 결함 점검 (2026-09-14)

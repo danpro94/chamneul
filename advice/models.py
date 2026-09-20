@@ -18,8 +18,11 @@ class Advice(models.Model):
     """조언 (model.md §3.8, CLAUDE.md §6.2).
 
     사용자는 APPROVED 상태만 볼 수 있다 — 이 노출 규칙은 M4의 queryset/serializer
-    가 강제한다. version은 감사용 증가 카운터(§6.7): advisor가 PENDING/REVIEWING
-    에서 수정할 때마다 서비스 레이어가 +1 하고 AdviceHistory에 스냅샷을 남긴다.
+    가 강제한다. version은 감사용 증가 카운터다: advisor가 PENDING/REVIEWING에서
+    **본문 4필드(directional_guidance / reflective_questions / considerations /
+    out_of_scope_flag)를 실제로 바꿀 때만** 서비스 레이어가 +1 하고 AdviceHistory에
+    직전 본문을 스냅샷으로 남긴다. submit 플래그만 토글하는 것은 증가시키지
+    않는다 (ADR-007이 CLAUDE.md §6.7을 supersede).
     """
 
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
