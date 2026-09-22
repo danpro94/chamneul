@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-09-17 (SPEC-004/TASK-004 커밋 기준. PR #3~#7 머지 완료)
+> 마지막 실측: 2026-09-22 (ADR-008 커밋 기준. PR #3~#8 머지 완료)
 
 ---
 
@@ -10,9 +10,9 @@
 | 항목 | 값 |
 | --- | --- |
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
-| 현재 마일스톤 | **M5 완료** — 스모크 테스트 + 문서 정리 |
+| 현재 마일스톤 | M5 완료. **ADR-008로 엔드포인트 3건 추가(44 → 47)** — SPEC-005에서 구현 |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | Phase 3 — 진입 전 확인 목록은 [리뷰 노트 07 §3](../reviews/07-phase2-closeout.md) |
+| 다음 | SPEC-005(#45~#47) → 프론트엔드 1개 여정 → Phase 3. 진입 전 확인 목록은 [리뷰 노트 07 §3](../reviews/07-phase2-closeout.md) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (44 / 44)
+## 2. 구현된 엔드포인트 (44 / 47)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls`, `notifications.urls` 5개 include.
 
@@ -75,9 +75,17 @@
 | 43 | DELETE | `/api/v1/admin/users/{user-id}/roles/{role}` | `AdminUserRoleDetailView.delete` (SPEC-003/TASK-004) |
 | 44 | GET | `/api/v1/csrf` | `CsrfView` |
 
-## 3. 미구현 엔드포인트 (0 / 44)
+## 3. 미구현 엔드포인트 (3 / 47)
 
-**없다.** api.md v1.1의 44개 엔드포인트가 전량 구현됐다(2026-09-15, SPEC-003/TASK-004). 남은 것은 구현이 아니라 검증·정리다 — SPEC-003 TASK-005(교차 검증 + AC 전수 대조 + 서브에이전트 리뷰), 그다음 M5(스모크 + 문서 부채).
+Phase 2의 44개는 전량 구현됐다. 아래 3건은 **2026-09-22 ADR-008로 새로 추가**된 것으로, MVP UI 프로토타입을 만들며 드러난 공백이다 — 명세로만 읽을 때는 보이지 않다가 **화면에 버튼을 놓으려는 순간** 드러났다.
+
+| # | Method | Endpoint | 비고 |
+| --- | --- | --- | --- |
+| 45 | POST | `/api/v1/auth/password-reset` | 가입되지 않은 주소에도 200(계정 존재 은닉). 메일 발송 자체는 Phase 3 |
+| 46 | POST | `/api/v1/auth/password-reset/confirm` | 토큰 + 새 비밀번호. 성공 시 기존 세션 전부 무효화 |
+| 47 | PATCH | `/api/v1/users/me/concerns/{concern-id}` | **`SUBMITTED` 상태에서만**, 이후는 409 |
+
+구현 단위: `specs/SPEC-005-api-gaps/` (미착수).
 
 ## 3-1. Phase 2 완료 판정 (2026-09-17)
 
@@ -85,7 +93,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 | 지표 | 값 |
 | --- | --- |
-| 엔드포인트 | **44 / 44** — (경로, 메서드) 쌍 실측 |
+| 엔드포인트 | **44 / 44** — Phase 2 기준. ADR-008로 총계가 47이 되어 현재는 44/47 |
 | 자동 테스트 | **292** |
 | 검증 4종 | check 0 issues / makemigrations No changes / ruff passed / test OK |
 | 맨바닥 기동 | 볼륨 삭제 후 사용자 여정 12단계 통과 ([smoke-test.md](../smoke-test.md)) |
