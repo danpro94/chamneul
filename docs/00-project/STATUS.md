@@ -85,7 +85,7 @@ Phase 2의 44개는 전량 구현됐다. 아래 3건은 **2026-09-22 ADR-008로 
 | 46 | POST | `/api/v1/auth/password-reset/confirm` | 토큰 + 새 비밀번호. 성공 시 기존 세션 전부 무효화 |
 | 47 | PATCH | `/api/v1/users/me/concerns/{concern-id}` | **`SUBMITTED` 상태에서만**, 이후는 409 |
 
-구현 단위: `specs/SPEC-005-api-gaps/` (미착수).
+구현 단위: [specs/SPEC-005-api-gaps/](../../specs/SPEC-005-api-gaps/) — **명세 작성 완료, §7 결정 3건 Owner 승인 대기**.
 
 ## 3-1. Phase 2 완료 판정 (2026-09-17)
 
@@ -107,7 +107,11 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 ## 4. Active SPEC
 
-**SPEC-004-phase2-closeout — 진행 중 (2026-09-16).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. 
+**SPEC-005-api-gaps — 명세 작성됨 (2026-09-23), 착수 대기.** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
+
+§7 Owner 결정 3건 대기: (1) 재설정 링크 목적지 — 설정값 vs 백엔드 템플릿 (2) Google 전용 계정이 토큰을 들고 #46에 오면 비밀번호를 설정해줄지 (3) #47에 서버 관리 필드가 섞여 오면 무시할지 400일지.
+
+**SPEC-004-phase2-closeout — 완료·머지 (2026-09-17, PR #8).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. 
 
 * **TASK-001 완료 (2026-09-16)** — 볼륨을 비운 **맨바닥에서 사용자 여정 12단계 전항 통과**. [docs/smoke-test.md](../smoke-test.md) 신규.
   * `depends_on: service_healthy` 동작 확인(`db Waiting → Healthy → app Starting`), 마이그레이션 25건, `createsuperuser`가 ADMIN `UserRole` 행 생성(ADR-003 §1).
