@@ -1,8 +1,10 @@
 # API Specification v1
 
-본 문서는 `chamneul` Phase 2 v1의 공식 API 명세이다. Notion v0 export(41건)을 정합성 검토한 뒤, `토큰 재발급`을 제거하고 `/healthz` + 관리자 역할 부여/해제 2건을 추가하여 43 엔드포인트를 확정했고, 2026-07-08 Owner 결정으로 CSRF 부트스트랩 엔드포인트(`GET /api/v1/csrf`, D-1)를 추가하여 **총 44 엔드포인트**로 확정한다.
+본 문서는 `chamneul` Phase 2 v1의 공식 API 명세이다. Notion v0 export(41건)을 정합성 검토한 뒤, `토큰 재발급`을 제거하고 `/healthz` + 관리자 역할 부여/해제 2건을 추가하여 43 엔드포인트를 확정했고, 2026-07-08 Owner 결정으로 CSRF 부트스트랩 엔드포인트(`GET /api/v1/csrf`, D-1)를 추가하여 **총 44 엔드포인트**로 확정했고, 2026-09-22 ADR-008로 **47 엔드포인트**가 됐다(#45~#47).
 
 > 2026-07-08 M4 착수 전 Owner 결정 반영 (D-1~D-8, C-10·C-11): §3 요약표 #44 추가, §1.2 CSRF 부트스트랩, 응답 필드 3건 보강(`is_submitted`·작성자 한정 `reject_reason`·`expected_version`, D-3), 알림 `target_url` 규약(C-10), Google nickname 자동 산정(C-11), `domain_category` 11종 확정(D-6), `is_deleted` 표기 정리(C-1). 기존 #1~43 번호는 ux/01 등 상호참조 안정성을 위해 유지하고 신규 엔드포인트만 #44로 덧붙인다.
+>
+> 2026-09-22 **ADR-008 — 엔드포인트 3건 추가 (44 → 47)**: MVP UI 프로토타입을 만들며 드러난 API 공백 두 가지를 닫는다. **#45·#46** 비밀번호 재설정(요청·확정 2단계. 가입되지 않은 주소에도 200 — 계정 존재 은닉. 메일 발송 자체는 Phase 3, 로컬은 콘솔 출력), **#47** 고민 수정(`SUBMITTED` 상태에서만, 이후는 409). 44개를 명세로만 읽을 때는 보이지 않던 공백이 **화면에 버튼을 놓으려는 순간** 드러났다. §3 요약표와 예외 목록도 함께 갱신.
 >
 > 2026-09-17 **SPEC-004(M5, Phase 2 종료) Owner 결정 반영**: (1) **§1.7 시각 정책 전면 교체** — 백엔드는 전 구간 UTC(DB 저장·API 전송 모두 ISO 8601 UTC), 현지 시각 변환은 클라이언트 책임. 종전 "응답은 KST로 직렬화"는 **구현과 반대**였다(코드가 옳고 문서가 틀림). 예시 문자열도 UTC로. (2) **#21** — 배정되지 않은 조언가에게 403이 아니라 **404**. 미배정 조언가는 concern id를 알 수 없으므로 403은 존재를 알려준다. 이로써 §1.8 404 규칙의 **마지막 예외가 사라졌다**. (3) **#11** — 접근 제어 조건을 신규 규칙으로 정정(APPROVED는 ADVISOR 역할 보유 중에만 중복 판정). #43과 서술이 어긋나 있던 것을 맞췄다.
 >
@@ -219,6 +221,9 @@ CLAUDE.md §7 참조. 요지:
 | 42 | admin · role | POST | `/api/v1/admin/users/{user-id}/roles` | Admin | 역할 부여 (ADMIN/ADVISOR) | ✓ |
 | 43 | admin · role | DELETE | `/api/v1/admin/users/{user-id}/roles/{role}` | Admin | 역할 해제 | ✓ |
 | 44 | auth · csrf | GET | `/api/v1/csrf` | Anonymous | CSRF 부트스트랩 — `csrftoken` 쿠키 발급(비로그인 최초 POST 전, D-1). 논리적으로 auth 그룹이나 번호 안정성 위해 말미 배치 | ✓ |
+| 45 | auth | POST | `/api/v1/auth/password-reset` | Anonymous | 비밀번호 재설정 요청 (ADR-008). **가입되지 않은 주소에도 200** | ✓ |
+| 46 | auth | POST | `/api/v1/auth/password-reset/confirm` | Anonymous | 토큰 + 새 비밀번호로 확정 (ADR-008) | ✓ |
+| 47 | concern | PATCH | `/api/v1/users/me/concerns/{concern-id}` | User(본인) | 고민 수정 — **`SUBMITTED` 상태에서만** (ADR-008) | ✓ |
 
 URI 변경 요약 (Notion v0 → v1):
 
@@ -915,6 +920,73 @@ URI 변경 요약 (Notion v0 → v1):
 | 접근 제어 조건 | 없음(Anonymous). 상태 변경 아님이므로 CSRF 검사 대상 아님. |
 | Side Effect | `csrftoken` 쿠키 발급. 세션 미생성. |
 | MVP 여부 | ✓ |
+
+---
+
+### 45. POST /api/v1/auth/password-reset
+
+| 항목 | 내용 |
+| --- | --- |
+| Method | POST |
+| Endpoint | `/api/v1/auth/password-reset` |
+| Permission | Anonymous |
+| Description | 비밀번호 재설정 요청. 해당 이메일로 재설정 링크를 발송한다(ADR-008). |
+| Request 주요 필드 | `email` (필수) |
+| Response 주요 필드 | `{ "detail": "메일을 보냈습니다." }` — **본문과 상태 코드가 계정 존재 여부와 무관하게 동일하다.** |
+| Status | 200 / 400(형식 오류) / 500 |
+| 접근 제어 조건 | 없음(Anonymous). CSRF 필요(#44로 부트스트랩) — 상태 변경 요청이므로 ADR-002 §5 적용. |
+| Side Effect | 가입된 주소면 재설정 메일 발송. **가입되지 않았거나 Google 전용 계정이어도 응답은 같다** — 다만 메일 본문이 다르다(Google 계정에는 "이 계정은 Google 로그인을 씁니다"). 세션 미생성, 비밀번호 미변경. |
+| MVP 여부 | ✓ |
+
+**왜 404가 없는가 (ADR-008 §2)**: "그런 계정 없습니다"로 답하면 이 엔드포인트가 **가입 여부를 조회하는 도구**가 된다(CLAUDE.md §10). 존재 은닉은 §1.8의 404 규칙과 같은 논리이나, 여기서는 **한 걸음 더** 나아가 404조차 주지 않는다 — 상태 코드 자체가 신호가 되기 때문이다.
+
+**토큰**: Django 기본 `PasswordResetTokenGenerator`. 서버에 저장하지 않고 계산으로 검증한다(모델 변경 없음). 유효기간 30분, 사용 후 무효.
+
+**메일 발송은 Phase 3**: `local`/`test`는 `console` 백엔드로 링크를 터미널에 출력하고, `prod` SMTP 연결은 배포 시점 과제다. 레이트 리밋(같은 주소 반복 요청 차단)도 Phase 3.
+
+---
+
+### 46. POST /api/v1/auth/password-reset/confirm
+
+| 항목 | 내용 |
+| --- | --- |
+| Method | POST |
+| Endpoint | `/api/v1/auth/password-reset/confirm` |
+| Permission | Anonymous |
+| Description | 재설정 링크의 토큰과 새 비밀번호를 받아 변경을 확정한다(ADR-008). |
+| Request 주요 필드 | `uid`, `token`, `new_password` (전부 필수) |
+| Response 주요 필드 | `{ "detail": "비밀번호를 바꿨습니다." }` |
+| Status | 200 / 400(토큰 만료·사용됨·위조, 또는 비밀번호가 검증기 미통과) / 500 |
+| 접근 제어 조건 | 없음(Anonymous). 토큰 자체가 인증이다. CSRF 필요. |
+| Side Effect | 비밀번호 변경(PBKDF2 해싱). **해당 사용자의 기존 세션은 전부 무효화**된다 — 비밀번호를 되찾는 상황은 계정이 탈취됐을 수 있는 상황이므로, 남의 세션을 살려두면 안 된다. 토큰도 무효화된다. |
+| MVP 여부 | ✓ |
+
+**만료·위조·재사용 토큰은 전부 400**으로 같게 응답한다. 구분해 주면 어떤 토큰이 "존재했다"는 정보가 샌다. 실패 시 비밀번호는 **바뀌지 않는다**.
+
+**경로의 `/confirm`**: §7의 "명사, 동사 금지"에 대한 예외이며, `#33 /review`·`#41 /read`와 **같은 범주**다(§3 예외 목록 참조). 재설정은 "요청"과 "확정" 두 단계가 반드시 분리돼야 하므로 — 한 번에 처리하면 이메일 주소만 아는 사람이 남의 비밀번호를 바꿀 수 있다.
+
+---
+
+### 47. PATCH /api/v1/users/me/concerns/{concern-id}
+
+| 항목 | 내용 |
+| --- | --- |
+| Method | PATCH |
+| Endpoint | `/api/v1/users/me/concerns/{concern-id}` |
+| Permission | User (본인) |
+| Description | 고민 수정. **`status = SUBMITTED`일 때만** 가능하다(ADR-008). |
+| Request 주요 필드 | `concern_summary?`, `concern_type?`, `concern_type_secondary?`, `decision_context?`, `preferred_advisor_lane?`, `display_alias?`, `is_anonymous?` — 전부 선택(부분 수정) |
+| Response 주요 필드 | `#18`(고민 상세)과 동일한 형태 |
+| Status | 200 / 400 / 401 / 404 / 409(배정 이후) / 500 |
+| 접근 제어 조건 | 작성자 본인만. 쿼리셋을 `author=user`로 좁혀 판정하므로 **타인의 고민은 404**(§1.8). 소프트 삭제된 고민도 404. |
+| Side Effect | 본문 필드만 갱신. **상태 전이·알림·버전 증가 없음.** `status`·`author`·`deleted_at`은 요청으로 바꿀 수 없다(서버 관리 필드). |
+| MVP 여부 | ✓ |
+
+**왜 `SUBMITTED`에서만인가 (ADR-008 §4)**: 배정 이후에 원문이 바뀌면 **조언가가 읽고 답하던 글이 조용히 달라진다.** 이미 쓴 조언이 다른 질문에 대한 답이 되고, 조언가는 그 사실을 모른다. 상태로 막으면 이 충돌이 **구조적으로 불가능**해지고, 경합 처리도 필요 없다.
+
+**왜 409인가**: 요청 자체는 올바르고 현재 상태와 충돌하는 경우다(§1.8). 본인 고민이 맞고(403 아님), 존재하는 것도 맞다(404 아님).
+
+**배정 이후의 추가 설명**: 원문을 고치는 대신 *"추가로 드리고 싶은 말"*을 **덧붙이는** 방식이 양쪽 요구를 모두 만족한다(조언가가 본 글은 불변, 새 정보는 전달). 모델 추가가 필요하고 실사용 수요를 확인한 뒤가 적절하므로 **Phase 3 후보**로 둔다(ADR-008 Trade-offs).
 
 ---
 
