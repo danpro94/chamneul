@@ -61,6 +61,7 @@ curl http://localhost:8000/healthz   # {"status": "ok"} 기대
 | 완료 판정 기준 | [docs/testing/TEST_CRITERIA.md](docs/testing/TEST_CRITERIA.md) |
 | 로컬에서 직접 돌려보고 싶다 | [docs/smoke-test.md](docs/smoke-test.md) |
 | 이 앱이 사용자에게 무엇인가 / 설계 의도와 어긋난 게 있나 | [docs/00-project/DESIGN-ALIGNMENT-M4.md](docs/00-project/DESIGN-ALIGNMENT-M4.md) |
+| 화면은 왜 이렇게 생겼나 (색·서체·톤·문체) | [docs/ui/DESIGN-PRINCIPLES.md](docs/ui/DESIGN-PRINCIPLES.md) |
 | AI 활용 이력 | [README_AIUSAGE.md](README_AIUSAGE.md) |
 | 지금 진행 중인 작업 단위 | [specs/](specs/) |
 
