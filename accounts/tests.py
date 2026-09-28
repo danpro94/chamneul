@@ -11,7 +11,10 @@ either one is an operational incident rather than a bug:
   * the system must never end up with zero administrators (ADR-003 §2).
 """
 
+from unittest import expectedFailure
+
 from django.contrib.auth import get_user_model
+from django.contrib.sessions.models import Session
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -835,3 +838,275 @@ class RoleGuardHardeningTests(AdminRoleTestBase):
         self.assertFalse(model_admin.has_add_permission(None))
         self.assertFalse(model_admin.has_change_permission(None))
         self.assertFalse(model_admin.has_delete_permission(None))
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPEC-005 / TASK-001 — 인증 회귀 기반 (#2·#3·#4·#7·#8·#9)
+#
+# 이 블록은 **이미 동작하는 것을 고정**한다. 구현은 바꾸지 않는다.
+# 쓰는 도중 api.md 계약과 다른 동작이 네 곳에서 나왔다(F-1~F-4). 규칙대로
+# 고치지 않고 분리 보고했으며, 계약을 단언하는 테스트는 `@expectedFailure`로
+# 둔다. 스위트는 녹색을 유지하되, 누군가 고치는 순간 "예상치 못한 성공"으로
+# 떠서 데코레이터를 떼라고 알려준다 — 결함을 잊지 않게 하는 래칫이다.
+#
+# 세션을 다루는 테스트는 force_authenticate를 쓰지 않는다. 그건 인증기를
+# 통째로 건너뛰므로 세션 발급·삭제를 검증하지 못한다.
+# ═══════════════════════════════════════════════════════════════════════════
+
+SIGNUP_URL = "/api/v1/auth/signup"
+LOGIN_URL = "/api/v1/auth/login"
+LOGOUT_URL = "/api/v1/auth/logout"
+ME_URL = "/api/v1/users/me"
+MY_ROLES_URL = "/api/v1/users/me/roles"
+STRONG_PW = "Strong-pass-123"
+
+
+class AuthTestBase(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.existing = User.objects.create_user(
+            email="alpha@example.com", nickname="alpha", password=STRONG_PW
+        )
+
+    def signup(self, **over):
+        body = {"email": "new@example.com", "nickname": "newbie", "password": STRONG_PW}
+        body.update(over)
+        return self.client.post(SIGNUP_URL, body, format="json")
+
+    def login(self, email="alpha@example.com", password=STRONG_PW, client=None):
+        c = client or self.client
+        return c.post(LOGIN_URL, {"email": email, "password": password}, format="json")
+
+
+class SignupRegressionTests(AuthTestBase):
+    """POST /api/v1/auth/signup (#2)."""
+
+    def test_creates_account_and_returns_201(self):
+        response = self.signup()
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(User.objects.filter(email="new@example.com").exists())
+
+    def test_response_fields_never_carry_the_password(self):
+        response = self.signup()
+        self.assertEqual(
+            set(response.data),
+            {"user_id", "email", "nickname", "active_role", "created_at"},
+        )
+        self.assertNotIn(STRONG_PW, response.content.decode())
+        self.assertEqual(response.data["active_role"], "USER")
+
+    def test_issues_an_httponly_session_cookie(self):
+        """가입 즉시 로그인된다(CLAUDE.md §4 — Signup auto-logs in)."""
+        response = self.signup()
+        self.assertIn("sessionid", response.cookies)
+        self.assertTrue(response.cookies["sessionid"]["httponly"])
+
+    def test_signup_session_is_usable_immediately(self):
+        self.signup()
+        self.assertEqual(self.client.get(ME_URL).status_code, 200)
+
+    def test_email_is_stored_lowercased(self):
+        self.signup(email="Mixed@Example.COM")
+        self.assertTrue(User.objects.filter(email="mixed@example.com").exists())
+
+    def test_password_is_hashed_not_stored_plain(self):
+        self.signup()
+        user = User.objects.get(email="new@example.com")
+        self.assertNotEqual(user.password, STRONG_PW)
+        self.assertTrue(user.check_password(STRONG_PW))
+
+    def test_weak_password_is_400(self):
+        response = self.signup(password="1234")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("password", response.data["error"]["details"])
+        self.assertFalse(User.objects.filter(email="new@example.com").exists())
+
+    def test_duplicate_email_is_rejected(self):
+        """현재 동작 고정: 거절은 된다(상태 코드는 F-2 참조)."""
+        response = self.signup(email="alpha@example.com")
+        self.assertIn(response.status_code, (400, 409))
+        self.assertEqual(User.objects.filter(email="alpha@example.com").count(), 1)
+
+    def test_duplicate_nickname_is_rejected(self):
+        response = self.signup(nickname="alpha")
+        self.assertIn(response.status_code, (400, 409))
+        self.assertEqual(User.objects.filter(nickname="alpha").count(), 1)
+
+    @expectedFailure
+    def test_duplicate_email_is_409_per_contract(self):
+        """F-2. api.md #2는 중복을 409로 정한다. 현재는 DRF 기본 UniqueValidator가
+        영문 메시지와 함께 400을 준다."""
+        self.assertEqual(self.signup(email="alpha@example.com").status_code, 409)
+
+    @expectedFailure
+    def test_duplicate_nickname_is_409_per_contract(self):
+        """F-2."""
+        self.assertEqual(self.signup(nickname="alpha").status_code, 409)
+
+    @expectedFailure
+    def test_duplicate_email_in_other_case_is_409_not_500(self):
+        """F-1 (결함). 중복 검사는 입력값 그대로(대소문자 구분) 비교하는데,
+        저장 시 매니저가 소문자로 바꾼다 — 검사를 통과한 뒤 DB 제약에 걸려
+        IntegrityError가 처리되지 않은 채 500이 된다. 사용자 입력으로 서버가
+        죽는 경로다."""
+        response = self.signup(email="ALPHA@example.com")
+        self.assertEqual(response.status_code, 409)
+
+    def test_requires_csrf(self):
+        """익명 상태 변경 요청도 CSRF를 요구한다(ADR-002 §5). 뷰에
+        csrf_protect를 명시했기 때문이며, 빠지면 이 테스트가 잡는다."""
+        client = APIClient(enforce_csrf_checks=True)
+        response = client.post(
+            SIGNUP_URL,
+            {"email": "c@example.com", "nickname": "csrfx", "password": STRONG_PW},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+
+class LoginRegressionTests(AuthTestBase):
+    """POST /api/v1/auth/login (#3)."""
+
+    def test_valid_credentials_return_200_and_session(self):
+        response = self.login()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("sessionid", response.cookies)
+        self.assertEqual(self.client.get(ME_URL).status_code, 200)
+
+    def test_response_wraps_identity_under_user(self):
+        response = self.login()
+        self.assertEqual(set(response.data), {"user"})
+        self.assertEqual(
+            set(response.data["user"]), {"user_id", "email", "nickname", "active_role"}
+        )
+
+    def test_email_match_is_case_insensitive(self):
+        self.assertEqual(self.login(email="ALPHA@Example.com").status_code, 200)
+
+    def test_wrong_password_and_unknown_account_are_indistinguishable(self):
+        """어느 쪽인지 구분되면 로그인 창이 가입 여부 조회 도구가 된다(§10)."""
+        wrong = self.login(password="nope-nope-123")
+        unknown = self.login(email="nobody@example.com", password="nope-nope-123")
+        self.assertEqual(wrong.status_code, unknown.status_code)
+        self.assertEqual(wrong.content, unknown.content)
+        self.assertNotIn("sessionid", wrong.cookies)
+
+    def test_inactive_account_cannot_log_in(self):
+        """보안상 핵심 불변식. 상태 코드는 F-4 참조."""
+        self.existing.is_active = False
+        self.existing.save(update_fields=["is_active"])
+        response = self.login()
+        self.assertNotEqual(response.status_code, 200)
+        self.assertEqual(self.client.get(ME_URL).status_code, 401)
+
+    @expectedFailure
+    def test_wrong_credentials_are_401_per_contract(self):
+        """F-3. api.md §1.8은 '인증 필요/실패'를 401로 정한다. 현재 400."""
+        self.assertEqual(self.login(password="nope-nope-123").status_code, 401)
+
+    def test_requires_csrf(self):
+        client = APIClient(enforce_csrf_checks=True)
+        self.assertEqual(self.login(client=client).status_code, 403)
+
+
+class LogoutRegressionTests(AuthTestBase):
+    """POST /api/v1/auth/logout (#4).
+
+    §10: 로그아웃은 서버 세션 레코드를 지우고 쿠키도 지워야 한다 — 클라이언트
+    쿠키 삭제에만 기대면 안 된다.
+    """
+
+    def test_logout_deletes_the_server_session_record(self):
+        self.login()
+        key = self.client.cookies["sessionid"].value
+        self.assertTrue(Session.objects.filter(session_key=key).exists())
+
+        response = self.client.post(LOGOUT_URL)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {"message": "로그아웃 되었습니다."})
+        self.assertFalse(Session.objects.filter(session_key=key).exists())
+
+    def test_logout_clears_the_cookie(self):
+        self.login()
+        response = self.client.post(LOGOUT_URL)
+        cookie = response.cookies["sessionid"]
+        self.assertEqual(cookie.value, "")
+        self.assertEqual(str(cookie["max-age"]), "0")
+
+    def test_old_cookie_is_useless_after_logout(self):
+        """쿠키를 몰래 복사해 둔 사람이 있어도 로그아웃 뒤에는 못 쓴다 —
+        서버에 레코드가 없기 때문이다."""
+        self.login()
+        stolen = self.client.cookies["sessionid"].value
+        self.client.post(LOGOUT_URL)
+
+        other = APIClient()
+        other.cookies["sessionid"] = stolen
+        self.assertEqual(other.get(ME_URL).status_code, 401)
+
+    def test_anonymous_logout_is_401(self):
+        self.assertEqual(self.client.post(LOGOUT_URL).status_code, 401)
+
+
+class ProfileRegressionTests(AuthTestBase):
+    """GET/PATCH /api/v1/users/me (#7·#8) and GET /users/me/roles (#9)."""
+
+    def setUp(self):
+        super().setUp()
+        self.login()
+
+    def test_me_fields(self):
+        response = self.client.get(ME_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            set(response.data),
+            {"user_id", "email", "nickname", "active_role", "roles", "created_at"},
+        )
+        self.assertEqual(response.data["roles"], ["USER"])
+
+    def test_me_never_exposes_advisor_type_or_password(self):
+        body = self.client.get(ME_URL).content.decode()
+        self.assertNotIn("advisor_type", body)
+        self.assertNotIn("password", body)
+
+    def test_partial_update_changes_only_sent_fields(self):
+        response = self.client.patch(ME_URL, {"job": "개발자"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.existing.refresh_from_db()
+        self.assertEqual(self.existing.job, "개발자")
+        self.assertEqual(self.existing.nickname, "alpha")
+
+    def test_update_response_fields(self):
+        response = self.client.patch(ME_URL, {"interest": "커리어"}, format="json")
+        self.assertEqual(
+            set(response.data), {"user_id", "email", "nickname", "updated_at"}
+        )
+
+    def test_email_cannot_be_changed_through_profile_update(self):
+        self.client.patch(ME_URL, {"email": "hijack@example.com"}, format="json")
+        self.existing.refresh_from_db()
+        self.assertEqual(self.existing.email, "alpha@example.com")
+
+    def test_duplicate_nickname_is_409(self):
+        User.objects.create_user(email="b@example.com", nickname="taken", password=STRONG_PW)
+        response = self.client.patch(ME_URL, {"nickname": "taken"}, format="json")
+        self.assertEqual(response.status_code, 409)
+
+    def test_short_nickname_is_400(self):
+        response = self.client.patch(ME_URL, {"nickname": "a"}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_roles_endpoint_fields_and_defaults(self):
+        response = self.client.get(MY_ROLES_URL)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.data), {"roles", "active_role", "advisor_status"})
+        self.assertEqual(response.data["roles"], ["USER"])
+        self.assertEqual(response.data["advisor_status"], "NONE")
+
+    def test_anonymous_is_401_on_all_three(self):
+        anon = APIClient()
+        self.assertEqual(anon.get(ME_URL).status_code, 401)
+        self.assertEqual(anon.patch(ME_URL, {"job": "x"}, format="json").status_code, 401)
+        self.assertEqual(anon.get(MY_ROLES_URL).status_code, 401)
