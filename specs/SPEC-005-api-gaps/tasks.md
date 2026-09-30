@@ -17,16 +17,21 @@
 * [x] **계약 불일치 4건 발견 → 분리 보고**(spec §9, F-1~F-4). F-1은 **500 결함**. 계약 단언 테스트는 `@expectedFailure` 래칫으로 보존
 * [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **325 tests OK (expected failures=4)**
 
-## TASK-002 — Google OAuth 회귀 (#5·#6)
+## TASK-002 — Google OAuth 회귀 (#5·#6) — **완료 (2026-09-30)**
 
-* [ ] `#5` authorize: 리다이렉트 URL에 `client_id`·`redirect_uri`·`state` 포함
-* [ ] `#6` 신규 사용자 생성 경로 — 닉네임 자동 산정(C-11) 동작 확인
-* [ ] `#6` 같은 이메일의 기존 로컬 계정에 **연결**되는 경로
-* [ ] `#6` 이미 다른 Google 계정과 연결된 계정 → **409**
-* [ ] `aud` 불일치 토큰 → 거부
-* [ ] **mock 경계는 `urlopen`** — 우리 코드가 아니라 네트워크를 대체한다(plan §4)
-* [ ] 구현 변경 0건
-* [ ] 검증 4종 실행 결과 첨부
+* [x] `#5` authorize: 302 + `client_id`·`redirect_uri`·`state`·`scope` 포함 / URL의 state = HttpOnly 쿠키 값 / 매번 다른 state / 세션 미생성 / 미설정 시 500
+* [x] `#6` 신규 사용자 생성 → 세션 발급 + 성공 리다이렉트 + state 쿠키 삭제 + **사용 불가 비밀번호**
+* [x] `#6` 닉네임 산정(C-11): 구글 이름 → 이메일 앞부분 폴백 → 충돌 시 `_NNNN` 접미사(20자 이내)
+* [x] `#6` 같은 이메일의 기존 로컬 계정에 **연결**(중복 생성 없음, 기존 비밀번호 유지, 이메일 대소문자 무시)
+* [x] `#6` 이미 다른 Google 계정과 연결된 계정 → **409**, 세션 미발급
+* [x] **보안 검증 3종**: `aud` 불일치 / 발급자 불일치 / **이메일 미인증** → 401, 계정 생성·연결 없음
+* [x] state 불일치·쿠키 없음·사용자 취소 → 400 **+ 구글을 아예 부르지 않음** / code 없음 400
+* [x] 구글 장애(토큰·tokeninfo 각각) → 502 / `id_token` 없는 응답 → 502 / 비활성 계정 → 401
+* [x] **mock 경계는 `urlopen`** — 예상 밖 주소를 부르면 즉시 실패(실제 네트워크 유출 방지)
+* [x] **변이 검증**: `aud`·이메일 인증·발급자 검사를 각각 지우면 **해당 테스트가 FAILED** — 테스트가 실제 코드를 검증한다는 증거
+* [x] 구현 변경 0건 (`accounts/{views,services,serializers,oauth,models}.py` diff 없음)
+* [x] **이 경로에서는 계약 불일치가 나오지 않았다** — 분리 보고 없음
+* [x] 검증 4종 — check 0 issues / makemigrations No changes / ruff passed / **354 tests OK (expected failures=4)**
 
 ## TASK-003 — 재설정 요청 (#45)
 

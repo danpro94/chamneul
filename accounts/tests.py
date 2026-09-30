@@ -11,11 +11,15 @@ either one is an operational incident rather than a bug:
   * the system must never end up with zero administrators (ADR-003 §2).
 """
 
+import json
+import re
+import urllib.error
 from unittest import expectedFailure
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.sessions.models import Session
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from advice import services as advice_services
@@ -30,7 +34,15 @@ from concerns.models import (
 )
 from notifications.models import Notification, NotificationType
 
-from .models import ActiveRole, Role, RoleGrant, RoleGrantAction, UserRole
+from . import oauth
+from .models import (
+    ActiveRole,
+    GoogleIdentity,
+    Role,
+    RoleGrant,
+    RoleGrantAction,
+    UserRole,
+)
 
 User = get_user_model()
 
@@ -1110,3 +1122,306 @@ class ProfileRegressionTests(AuthTestBase):
         self.assertEqual(anon.get(ME_URL).status_code, 401)
         self.assertEqual(anon.patch(ME_URL, {"job": "x"}, format="json").status_code, 401)
         self.assertEqual(anon.get(MY_ROLES_URL).status_code, 401)
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPEC-005 / TASK-002 — Google OAuth 회귀 (#5·#6)
+#
+# 이 프로젝트에서 자동 테스트도 스모크도 없던 유일한 영역이다.
+#
+# mock 경계는 **네트워크**(`urllib.request.urlopen`)다. `accounts.oauth`의
+# 함수를 mock하면 그 함수가 검증되지 않는다. 여기서는 구글이 돌려줄 응답
+# 바이트만 가짜로 주고, 발급자·audience·이메일 인증 검증과 계정 연결/생성,
+# 닉네임 산정은 전부 실제 코드가 실행한다. 예상하지 못한 주소를 부르면
+# 즉시 실패하게 해서, 테스트가 조용히 실제 네트워크로 나가는 일을 막는다.
+# ═══════════════════════════════════════════════════════════════════════════
+
+AUTHORIZE_URL = "/api/v1/auth/google/authorize"
+CALLBACK_URL = "/api/v1/auth/google/callback"
+TEST_CLIENT_ID = "test-client.apps.googleusercontent.com"
+
+GOOGLE_TEST_SETTINGS = {
+    "GOOGLE_OAUTH_CLIENT_ID": TEST_CLIENT_ID,
+    "GOOGLE_OAUTH_CLIENT_SECRET": "test-secret",
+    "GOOGLE_OAUTH_REDIRECT_URI": "http://testserver/api/v1/auth/google/callback",
+    "GOOGLE_OAUTH_SUCCESS_REDIRECT": "/after-login",
+}
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._body = json.dumps(payload).encode()
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _claims(**over):
+    """tokeninfo가 돌려주는 정상 응답. 필요한 값만 덮어써서 실패 경우를 만든다."""
+    base = {
+        "iss": "https://accounts.google.com",
+        "aud": TEST_CLIENT_ID,
+        "sub": "google-sub-001",
+        "email": "jiwon@example.com",
+        "email_verified": "true",
+        "name": "Jiwon Kim",
+    }
+    base.update(over)
+    return base
+
+
+class FakeGoogle:
+    """`urlopen` 대체물. 주소로 분기해 구글 두 엔드포인트를 흉내 낸다.
+
+    tokeninfo 주소(`…/tokeninfo`)가 토큰 주소(`…/token`)로 *시작*하므로
+    tokeninfo를 먼저 판별해야 한다 — 순서를 바꾸면 모든 호출이 토큰 교환으로
+    잘못 라우팅된다.
+    """
+
+    def __init__(self, claims=None, token_payload=None, token_error=None, info_error=None):
+        self.claims = claims if claims is not None else _claims()
+        self.token_payload = (
+            token_payload if token_payload is not None else {"id_token": "fake.id.token"}
+        )
+        self.token_error = token_error
+        self.info_error = info_error
+        self.calls = []
+
+    def __call__(self, req, timeout=None):
+        url = getattr(req, "full_url", req)
+        self.calls.append(url)
+        if url.startswith(oauth.GOOGLE_TOKENINFO_URL):
+            if self.info_error:
+                raise self.info_error
+            return _FakeResponse(self.claims)
+        if url == oauth.GOOGLE_TOKEN_URL:
+            if self.token_error:
+                raise self.token_error
+            return _FakeResponse(self.token_payload)
+        raise AssertionError(f"예상하지 못한 네트워크 호출: {url}")
+
+
+@override_settings(**GOOGLE_TEST_SETTINGS)
+class GoogleAuthorizeRegressionTests(TestCase):
+    """GET /api/v1/auth/google/authorize (#5)."""
+
+    def test_redirects_to_google_with_required_params(self):
+        response = APIClient().get(AUTHORIZE_URL)
+        self.assertEqual(response.status_code, 302)
+        location = response["Location"]
+        self.assertTrue(location.startswith(oauth.GOOGLE_AUTHORIZE_URL))
+        for part in (
+            f"client_id={TEST_CLIENT_ID}",
+            "response_type=code",
+            "scope=openid+email+profile",
+            "redirect_uri=",
+            "state=",
+        ):
+            self.assertIn(part, location)
+
+    def test_state_in_url_matches_httponly_cookie(self):
+        """콜백은 URL의 state와 쿠키의 state를 대조한다(OAuth용 CSRF). 둘이
+        같은 값으로 발급돼야 하고, 쿠키는 스크립트가 읽을 수 없어야 한다."""
+        response = APIClient().get(AUTHORIZE_URL)
+        cookie = response.cookies["oauth_state"]
+        self.assertTrue(cookie["httponly"])
+        state_in_url = re.search(r"state=([^&]+)", response["Location"]).group(1)
+        self.assertEqual(state_in_url, cookie.value)
+
+    def test_state_is_different_every_time(self):
+        a = APIClient().get(AUTHORIZE_URL).cookies["oauth_state"].value
+        b = APIClient().get(AUTHORIZE_URL).cookies["oauth_state"].value
+        self.assertNotEqual(a, b)
+
+    def test_does_not_create_a_session(self):
+        response = APIClient().get(AUTHORIZE_URL)
+        self.assertNotIn("sessionid", response.cookies)
+
+    @override_settings(GOOGLE_OAUTH_CLIENT_ID="", GOOGLE_OAUTH_CLIENT_SECRET="")
+    def test_unconfigured_is_500(self):
+        self.assertEqual(APIClient().get(AUTHORIZE_URL).status_code, 500)
+
+
+@override_settings(**GOOGLE_TEST_SETTINGS)
+class GoogleCallbackRegressionTests(TestCase):
+    """GET /api/v1/auth/google/callback (#6)."""
+
+    STATE = "state-abc"
+
+    def local_account(self):
+        """구글과 같은 이메일로 이미 가입해 둔 로컬(비밀번호) 계정."""
+        return User.objects.create_user(
+            email="jiwon@example.com", nickname="jiwon", password=STRONG_PW
+        )
+
+    def callback(self, fake=None, state=STATE, cookie_state=STATE, code="auth-code", **extra):
+        client = APIClient()
+        if cookie_state is not None:
+            client.cookies["oauth_state"] = cookie_state
+        params = {"code": code, **extra}
+        if state is not None:
+            params["state"] = state
+        if code is None:
+            params.pop("code")
+        fake = fake or FakeGoogle()
+        with patch("accounts.oauth.urllib.request.urlopen", fake):
+            response = client.get(CALLBACK_URL, params)
+        return client, response, fake
+
+    # --- 정상 경로 -----------------------------------------------------------
+
+    def test_new_user_is_created_logged_in_and_redirected(self):
+        client, response, _ = self.callback()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/after-login")
+        user = User.objects.get(email="jiwon@example.com")
+        self.assertTrue(
+            GoogleIdentity.objects.filter(user=user, google_sub="google-sub-001").exists()
+        )
+        self.assertEqual(client.get(ME_URL).status_code, 200)
+
+    def test_new_google_user_has_no_usable_password(self):
+        """비밀번호 없이 만들어진 계정이다 — 이메일/비밀번호 로그인은 막혀 있어야
+        한다. (SPEC-005 결정 2: #46이 이 계정에 비밀번호를 설정할 수 있게 된다.)"""
+        self.callback()
+        self.assertFalse(User.objects.get(email="jiwon@example.com").has_usable_password())
+
+    def test_callback_clears_the_state_cookie(self):
+        _, response, _ = self.callback()
+        self.assertEqual(response.cookies["oauth_state"].value, "")
+
+    def test_the_verified_token_is_the_one_just_exchanged(self):
+        """토큰 교환 → 검증이 실제로 이어져 있는지. 교환에서 받은 id_token이
+        tokeninfo 호출에 그대로 실려야 한다."""
+        _, _, fake = self.callback(fake=FakeGoogle(token_payload={"id_token": "tok-777"}))
+        self.assertEqual(fake.calls[0], oauth.GOOGLE_TOKEN_URL)
+        self.assertIn("id_token=tok-777", fake.calls[1])
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_nickname_is_derived_from_google_name(self):
+        """C-11. 닉네임은 구글 이름에서 만든다."""
+        self.callback()
+        self.assertEqual(User.objects.get(email="jiwon@example.com").nickname, "Jiwon Kim")
+
+    def test_nickname_falls_back_to_email_local_part(self):
+        self.callback(fake=FakeGoogle(claims=_claims(name="", email="zed@example.com")))
+        self.assertEqual(User.objects.get(email="zed@example.com").nickname, "zed")
+
+    def test_nickname_collision_gets_a_numeric_suffix(self):
+        User.objects.create_user(
+            email="other@example.com", nickname="Jiwon Kim", password=STRONG_PW
+        )
+        self.callback()
+        nickname = User.objects.get(email="jiwon@example.com").nickname
+        self.assertRegex(nickname, r"^Jiwon Kim_\d{4}$")
+        self.assertLessEqual(len(nickname), 20)
+
+    def test_known_google_account_logs_into_the_same_user(self):
+        self.callback()
+        before = User.objects.count()
+        client, response, _ = self.callback()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(User.objects.count(), before)
+        self.assertEqual(client.get(ME_URL).data["email"], "jiwon@example.com")
+
+    def test_existing_local_account_is_linked_not_duplicated(self):
+        """같은 (구글이 인증한) 이메일의 로컬 계정이 있으면 새로 만들지 않고
+        그 계정에 연결한다 — 계정을 둘로 쪼개지 않는다(§10)."""
+        local = self.local_account()
+        self.callback()
+        self.assertEqual(User.objects.filter(email="jiwon@example.com").count(), 1)
+        self.assertTrue(GoogleIdentity.objects.filter(user=local).exists())
+        local.refresh_from_db()
+        self.assertTrue(local.check_password(STRONG_PW))  # 기존 비밀번호는 그대로
+
+    def test_linking_matches_email_case_insensitively(self):
+        local = self.local_account()
+        self.callback(fake=FakeGoogle(claims=_claims(email="Jiwon@Example.COM")))
+        self.assertTrue(GoogleIdentity.objects.filter(user=local).exists())
+        self.assertEqual(User.objects.count(), 1)
+
+    # --- 거절 경로 ------------------------------------------------------------
+
+    def test_account_already_linked_to_another_google_account_is_409(self):
+        local = self.local_account()
+        GoogleIdentity.objects.create(
+            user=local, google_sub="someone-else", email="jiwon@example.com"
+        )
+        client, response, _ = self.callback()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(GoogleIdentity.objects.filter(user=local).count(), 1)
+        self.assertEqual(client.get(ME_URL).status_code, 401)
+
+    def test_unverified_email_is_rejected(self):
+        """구글이 인증하지 않은 이메일을 믿으면, 남의 이메일로 구글 계정을 만든
+        사람이 그 이메일의 기존 로컬 계정에 연결돼 들어갈 수 있다 — 계정 탈취."""
+        local = self.local_account()
+        client, response, _ = self.callback(fake=FakeGoogle(claims=_claims(email_verified="false")))
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(GoogleIdentity.objects.filter(user=local).exists())
+        self.assertEqual(client.get(ME_URL).status_code, 401)
+
+    def test_token_minted_for_another_app_is_rejected(self):
+        """audience 검증. 다른 앱용으로 발급된 토큰을 받아주면 그 앱이 사용자의
+        토큰을 들고 우리 서비스에 로그인할 수 있다."""
+        _, response, _ = self.callback(fake=FakeGoogle(claims=_claims(aud="other-app")))
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(User.objects.filter(email="jiwon@example.com").exists())
+
+    def test_wrong_issuer_is_rejected(self):
+        _, response, _ = self.callback(fake=FakeGoogle(claims=_claims(iss="https://evil.example.com")))
+        self.assertEqual(response.status_code, 401)
+
+    def test_missing_sub_is_rejected(self):
+        _, response, _ = self.callback(fake=FakeGoogle(claims=_claims(sub="")))
+        self.assertEqual(response.status_code, 401)
+
+    def test_state_mismatch_is_400_and_never_calls_google(self):
+        _, response, fake = self.callback(state="attacker-state")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(fake.calls, [])
+
+    def test_missing_state_cookie_is_400(self):
+        _, response, fake = self.callback(cookie_state=None)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(fake.calls, [])
+
+    def test_missing_code_is_400(self):
+        _, response, _ = self.callback(code=None)
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_cancelled_consent_is_400(self):
+        _, response, fake = self.callback(error="access_denied")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(fake.calls, [])
+
+    def test_google_unreachable_is_502(self):
+        _, response, _ = self.callback(fake=FakeGoogle(token_error=urllib.error.URLError("down")))
+        self.assertEqual(response.status_code, 502)
+
+    def test_tokeninfo_unreachable_is_502(self):
+        _, response, _ = self.callback(fake=FakeGoogle(info_error=urllib.error.URLError("down")))
+        self.assertEqual(response.status_code, 502)
+
+    def test_token_response_without_id_token_is_502(self):
+        _, response, _ = self.callback(fake=FakeGoogle(token_payload={"access_token": "x"}))
+        self.assertEqual(response.status_code, 502)
+
+    def test_inactive_linked_account_is_401(self):
+        self.callback()
+        User.objects.filter(email="jiwon@example.com").update(is_active=False)
+        client, response, _ = self.callback()
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(client.get(ME_URL).status_code, 401)
+
+    @override_settings(GOOGLE_OAUTH_CLIENT_ID="", GOOGLE_OAUTH_CLIENT_SECRET="")
+    def test_unconfigured_is_500(self):
+        _, response, _ = self.callback()
+        self.assertEqual(response.status_code, 500)
