@@ -13,19 +13,25 @@ either one is an operational incident rather than a bug:
 
 import json
 import re
+import sys
 import urllib.error
+import uuid
+from datetime import datetime, timedelta
 from unittest import expectedFailure
 from unittest.mock import patch
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
+from django.contrib.auth import SESSION_KEY, get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sessions.models import Session
 from django.core import mail
+from django.core.signals import got_request_exception
 from django.db import connection
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
-from django.utils.http import urlsafe_base64_decode
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.views.debug import ExceptionReporter
 from rest_framework.test import APIClient
 
 from advice import services as advice_services
@@ -1582,3 +1588,247 @@ class PasswordResetRequestTests(AuthTestBase):
 
     def test_token_lifetime_is_30_minutes(self):
         self.assertEqual(settings.PASSWORD_RESET_TIMEOUT, 30 * 60)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPEC-005 / TASK-004 — 비밀번호 재설정 확정 (#46)
+#
+# 토큰은 직접 만들지 않고 #45가 실제로 보낸 메일에서 꺼낸다. 두 엔드포인트가
+# 같은 형식으로 말하는지까지 함께 검증하기 위해서다.
+#
+# 세션 무효화는 두 겹이다. ① Django는 세션에 비밀번호에서 파생한 해시를 넣어
+# 두고 요청마다 대조하므로, 비밀번호가 바뀌면 옛 세션은 다음 요청에서 저절로
+# 로그아웃된다. ② 그 위에 서비스가 그 사용자의 세션 행을 서버에서 지운다
+# (#4 로그아웃과 같은 원칙, ADR-002 §4). ①만으로도 401이 나오므로, ②는 세션
+# '행'이 사라졌는지로 따로 검증한다 — 그러지 않으면 ②를 지워도 아무 테스트도
+# 실패하지 않는다.
+#
+# 만료는 PASSWORD_RESET_TIMEOUT=0이 아니라 발급 시각을 과거로 돌려 검증한다.
+# Django의 만료 판정은 `>`라서 0초 설정은 같은 초 안에 만든 토큰을 통과시킨다
+# (실행 타이밍에 따라 결과가 갈리는 테스트가 된다).
+# ═══════════════════════════════════════════════════════════════════════════
+
+CONFIRM_URL = "/api/v1/auth/password-reset/confirm"
+NEW_PW = "Brand-new-pass-456"
+
+
+def sessions_of(user):
+    user_id = str(user.pk)
+    return [s for s in Session.objects.all() if s.get_decoded().get(SESSION_KEY) == user_id]
+
+
+@override_settings(PASSWORD_RESET_URL=RESET_PAGE)
+class PasswordResetConfirmTests(AuthTestBase):
+    """POST /api/v1/auth/password-reset/confirm (#46)."""
+
+    def issue_link(self, email="alpha@example.com"):
+        mail.outbox.clear()
+        APIClient().post(RESET_URL, {"email": email}, format="json")
+        return RESET_LINK_RE.search(mail.outbox[-1].body).groups()
+
+    def issue_link_minutes_ago(self, minutes):
+        issued_at = datetime.now() - timedelta(minutes=minutes)
+        with patch.object(default_token_generator, "_now", return_value=issued_at):
+            return self.issue_link()
+
+    def confirm(self, uid, token, new_password=NEW_PW, client=None):
+        c = client or APIClient()
+        body = {"uid": uid, "token": token, "new_password": new_password}
+        return c.post(CONFIRM_URL, body, format="json")
+
+    def stored_password(self, user=None):
+        return User.objects.get(pk=(user or self.existing).pk).password
+
+    def assert_can_login(self, password, email="alpha@example.com"):
+        self.assertEqual(
+            self.login(email=email, password=password, client=APIClient()).status_code, 200
+        )
+
+    def assert_cannot_login(self, password, email="alpha@example.com"):
+        # 200이 아니기만 하면 된다 — 실패 코드(400/401)는 F-3 결정에 달렸다.
+        self.assertNotEqual(
+            self.login(email=email, password=password, client=APIClient()).status_code, 200
+        )
+
+    # ── 성공 경로 ────────────────────────────────────────────────────────
+
+    def test_valid_link_changes_the_password(self):
+        response = self.confirm(*self.issue_link())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"detail": "비밀번호를 바꿨습니다."})
+        self.assert_can_login(NEW_PW)
+        self.assert_cannot_login(STRONG_PW)
+
+    def test_confirm_does_not_log_the_caller_in(self):
+        """재설정은 로그인이 아니다. 새 비밀번호로 #3을 거치게 한다."""
+        client = APIClient()
+        response = self.confirm(*self.issue_link(), client=client)
+        self.assertNotIn("sessionid", response.cookies)
+        self.assertEqual(client.get(ME_URL).status_code, 401)
+
+    def test_token_is_still_valid_just_under_30_minutes(self):
+        """만료 테스트의 짝 — 31분이 실패하는 이유가 '시간' 때문임을 보인다."""
+        self.assertEqual(self.confirm(*self.issue_link_minutes_ago(29)).status_code, 200)
+
+    def test_google_only_account_can_set_a_password(self):
+        """결정 2(spec §7): 토큰을 가졌다는 것은 메일함 소유가 증명된 것이다."""
+        google_only = User.objects.create_user(email="gonly@example.com", nickname="gonly")
+        response = self.confirm(*self.issue_link("gonly@example.com"))
+        self.assertEqual(response.status_code, 200)
+        google_only.refresh_from_db()
+        self.assertTrue(google_only.has_usable_password())
+        self.assert_can_login(NEW_PW, email="gonly@example.com")
+
+    # ── 실패 경로: 전부 400, 비밀번호 불변 ───────────────────────────────
+
+    def test_reused_token_is_400_and_password_unchanged(self):
+        uid, token = self.issue_link()
+        self.assertEqual(self.confirm(uid, token).status_code, 200)
+        after_first = self.stored_password()
+
+        response = self.confirm(uid, token, new_password="Another-pass-789")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.stored_password(), after_first)
+        self.assert_can_login(NEW_PW)
+
+    def test_expired_token_is_400_and_password_unchanged(self):
+        before = self.stored_password()
+        response = self.confirm(*self.issue_link_minutes_ago(31))
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.stored_password(), before)
+
+    def test_forged_token_is_400_and_password_unchanged(self):
+        before = self.stored_password()
+        uid, token = self.issue_link()
+        forged = token[:-1] + ("a" if token[-1] != "a" else "b")
+        self.assertEqual(self.confirm(uid, forged).status_code, 400)
+        self.assertEqual(self.stored_password(), before)
+
+    def test_inactive_account_link_is_rejected(self):
+        """#45가 비활성 계정에 메일을 보내지 않는 것(I-1)과 짝. 메일을 받은 뒤
+        비활성화된 경우에도 링크가 통하면 안 된다."""
+        uid, token = self.issue_link()
+        User.objects.filter(pk=self.existing.pk).update(is_active=False)
+        before = self.stored_password()
+        self.assertEqual(self.confirm(uid, token).status_code, 400)
+        self.assertEqual(self.stored_password(), before)
+
+    def test_all_link_failures_are_indistinguishable(self):
+        """AC-4 핵심. 만료·위조·재사용·없는 계정·깨진 uid를 구분해 주면 어떤
+        토큰이나 계정이 '존재했다'는 정보가 샌다(api.md #46)."""
+        uid, token = self.issue_link()
+        unknown_uid = urlsafe_base64_encode(force_bytes(uuid.uuid4()))
+        cases = {
+            "expired": self.confirm(*self.issue_link_minutes_ago(31)),
+            "forged": self.confirm(uid, token[:-1] + ("a" if token[-1] != "a" else "b")),
+            "unknown uid": self.confirm(unknown_uid, token),
+            "garbage uid": self.confirm("!!not-base64!!", token),
+        }
+        self.assertEqual(self.confirm(uid, token).status_code, 200)
+        cases["reused"] = self.confirm(uid, token, new_password="Another-pass-789")
+
+        self.assertEqual({r.status_code for r in cases.values()}, {400}, cases)
+        self.assertEqual(len({r.content for r in cases.values()}), 1)
+
+    def test_weak_password_is_400_and_does_not_burn_the_token(self):
+        """검증기 4종(AUTH_PASSWORD_VALIDATORS)을 그대로 쓴다. 약한 비밀번호로
+        실패해도 비밀번호가 안 바뀌었으니 같은 링크로 다시 시도할 수 있어야 한다."""
+        uid, token = self.issue_link()
+        before = self.stored_password()
+
+        response = self.confirm(uid, token, new_password="123")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("new_password", response.json()["error"]["details"])
+        self.assertEqual(self.stored_password(), before)
+
+        self.assertEqual(self.confirm(uid, token).status_code, 200)
+
+    def test_missing_fields_are_400(self):
+        response = APIClient().post(CONFIRM_URL, {}, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(set(response.json()["error"]["details"]), {"uid", "token", "new_password"})
+
+    def test_requires_csrf(self):
+        before = self.stored_password()
+        response = self.confirm(*self.issue_link(), client=APIClient(enforce_csrf_checks=True))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.stored_password(), before)
+
+    def test_error_report_does_not_carry_the_password_or_token(self):
+        """보안 리뷰 #46 체크리스트 6. 운영(DEBUG=False)에서 500이 나면 Django
+        오류 리포트(관리자 메일 등)가 request.POST와 각 프레임의 지역 변수를
+        담는다 — 둘 다 가려야 한다. DEBUG=True 화면은 Django가 일부러 가리지
+        않으므로(로컬 전용) 여기서는 리포트 자체를 만들어 확인한다."""
+        uid, token = self.issue_link()
+        reports = []
+
+        def capture(sender, request, **kwargs):
+            reports.append(ExceptionReporter(request, *sys.exc_info()).get_traceback_html())
+
+        got_request_exception.connect(capture)
+        try:
+            # 세션 정리 단계에서 터뜨린다 — 그 위의 뷰·서비스 프레임 지역 변수에
+            # 비밀번호와 토큰이 들어 있는 상태로 리포트가 만들어진다.
+            with patch("accounts.services._purge_sessions_of", side_effect=RuntimeError("boom")):
+                response = APIClient(raise_request_exception=False).post(
+                    CONFIRM_URL, {"uid": uid, "token": token, "new_password": NEW_PW}
+                )
+        finally:
+            got_request_exception.disconnect(capture)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(len(reports), 1)
+        self.assertIn("boom", reports[0])  # 리포트가 실제로 그 오류를 담았다
+        self.assertNotIn(NEW_PW, reports[0])
+        self.assertNotIn(token, reports[0])
+
+    # ── 세션 무효화 ──────────────────────────────────────────────────────
+
+    def test_existing_sessions_of_that_user_are_logged_out(self):
+        """비밀번호를 되찾는 상황 = 계정이 탈취됐을 수 있는 상황. 침입자의
+        세션이 살아 있으면 비밀번호만 바뀌고 침입자는 그대로 남는다."""
+        victim_device, intruder_device = APIClient(), APIClient()
+        self.login(client=victim_device)
+        self.login(client=intruder_device)
+
+        self.confirm(*self.issue_link())
+
+        self.assertEqual(victim_device.get(ME_URL).status_code, 401)
+        self.assertEqual(intruder_device.get(ME_URL).status_code, 401)
+
+    def test_server_side_session_rows_are_deleted_only_for_that_user(self):
+        """spec §8 리스크 4: 해당 사용자의 세션만 지워야 한다."""
+        other = User.objects.create_user(
+            email="bravo@example.com", nickname="bravo", password=STRONG_PW
+        )
+        self.login(client=APIClient())
+        self.login(client=APIClient())
+        other_device = APIClient()
+        self.login(email="bravo@example.com", client=other_device)
+        self.assertEqual(len(sessions_of(self.existing)), 2)
+
+        self.confirm(*self.issue_link())
+
+        self.assertEqual(sessions_of(self.existing), [])
+        self.assertEqual(len(sessions_of(other)), 1)
+        self.assertEqual(other_device.get(ME_URL).status_code, 200)
+
+    # ── 상태 전이 규칙(.claude/rules/coding.md) ──────────────────────────
+
+    def test_locks_the_user_row_and_writes_only_the_password(self):
+        """잠금이 없으면 같은 링크 두 번이 동시에 들어올 때 둘 다 토큰 검사를
+        통과할 수 있다. 잠근 뒤 다시 읽어야 두 번째가 바뀐 비밀번호를 보고
+        실패한다."""
+        uid, token = self.issue_link()
+        with CaptureQueriesContext(connection) as ctx:
+            self.assertEqual(self.confirm(uid, token).status_code, 200)
+        sqls = [q["sql"] for q in ctx.captured_queries]
+
+        self.assertTrue(any('FOR UPDATE OF "accounts_user"' in s for s in sqls))
+        updates = [s for s in sqls if s.startswith('UPDATE "accounts_user"')]
+        self.assertEqual(len(updates), 1)
+        set_clause = updates[0].split(" WHERE ")[0]
+        self.assertIn('"password"', set_clause)
+        self.assertIn('"updated_at"', set_clause)
+        for column in ('"email"', '"nickname"', '"is_active"', '"last_login"', '"active_role"'):
+            self.assertNotIn(column, set_clause)

@@ -8,12 +8,17 @@ only ADVISOR/ADMIN are stored as UserRole rows (model.md §3.2).
 
 import re
 import secrets
+import uuid
 
+from django.contrib.auth import SESSION_KEY
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
+from django.contrib.sessions.models import Session
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from common.exceptions import Conflict
@@ -298,3 +303,66 @@ def request_password_reset(email: str) -> None:
     token = default_token_generator.make_token(user)
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     send_reset_mail(user, uid, token)
+
+
+# One message for every way a link can be bad (expired, used, forged, unknown
+# account). Telling them apart would reveal that a token or account existed.
+_INVALID_RESET_LINK = "링크가 만료됐거나 올바르지 않습니다. 비밀번호 재설정을 다시 요청해 주세요."
+
+
+def _user_id_from_uid(uidb64: str):
+    try:
+        return uuid.UUID(urlsafe_base64_decode(uidb64).decode())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _purge_sessions_of(user) -> None:
+    """Delete every server-side session row of `user`.
+
+    Django already logs those sessions out on their next request (the session
+    carries a hash derived from the password), but the rows would linger until
+    expiry. Deleting them follows the logout rule (ADR-002 §4): invalidation is
+    a server-side fact, not something we wait for.
+
+    Full scan because the DB session table has no user column — acceptable at
+    Phase 2 size; a user index is the next step if it grows (SPEC-005 plan §2).
+    """
+    user_id = str(user.pk)
+    stale = [
+        session.session_key
+        for session in Session.objects.iterator()
+        if session.get_decoded().get(SESSION_KEY) == user_id
+    ]
+    Session.objects.filter(session_key__in=stale).delete()
+
+
+def confirm_password_reset(uidb64: str, token: str, new_password: str) -> None:
+    """#46 — set a new password from a mailed link, then end every session.
+
+    The user row is locked and re-read before the token check: two requests
+    with the same link would otherwise both see the old password and both pass.
+    The token needs no explicit revocation — it is derived from the password
+    hash, so changing the password is what makes it fail next time.
+    """
+    with transaction.atomic():
+        # A malformed uid becomes None, which matches no row — same path as an
+        # unknown account, so the two cannot be told apart.
+        user_id = _user_id_from_uid(uidb64)
+        user = (
+            User.objects.select_for_update(of=("self",)).filter(pk=user_id, is_active=True).first()
+        )
+        if user is None or not default_token_generator.check_token(user, token):
+            raise ValidationError({"token": [_INVALID_RESET_LINK]})
+
+        try:
+            validate_password(new_password, user=user)
+        except DjangoValidationError as exc:
+            raise ValidationError({"new_password": list(exc.messages)}) from exc
+
+        user.set_password(new_password)
+        user.save(update_fields=["password", "updated_at"])
+
+        # Recovering a password = the account may have been taken over. A
+        # surviving session would leave the intruder logged in (api.md #46).
+        _purge_sessions_of(user)

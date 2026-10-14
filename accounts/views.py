@@ -6,6 +6,7 @@ from django.db import IntegrityError
 from django.http import HttpResponseRedirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from django.views.decorators.debug import sensitive_post_parameters, sensitive_variables
 from rest_framework import status
 from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -19,6 +20,7 @@ from . import oauth, services
 from .serializers import (
     ActiveRoleSerializer,
     LoginSerializer,
+    PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     RoleGrantRequestSerializer,
     SignupResultSerializer,
@@ -133,6 +135,31 @@ class PasswordResetView(APIView):
         serializer.is_valid(raise_exception=True)
         services.request_password_reset(serializer.validated_data["email"])
         return Response({"detail": "메일을 보냈습니다."}, status=status.HTTP_200_OK)
+
+
+@csrf_protected
+@method_decorator(sensitive_post_parameters("new_password", "token"), name="dispatch")
+class PasswordResetConfirmView(APIView):
+    """POST /api/v1/auth/password-reset/confirm (#46) — set the new password.
+
+    The token is the credential, so the endpoint is anonymous. It does not log
+    the caller in: every session of the user is ended and they sign in again
+    with #3.
+    """
+
+    permission_classes = [AllowAny]
+
+    # Every local here can hold the password or token (the serializer's repr
+    # includes the raw input), so all of them are hidden from error reports.
+    # Django applies the nearest decorated caller to deeper frames too, so this
+    # also covers confirm_password_reset's locals.
+    @method_decorator(sensitive_variables())
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        services.confirm_password_reset(data["uid"], data["token"], data["new_password"])
+        return Response({"detail": "비밀번호를 바꿨습니다."}, status=status.HTTP_200_OK)
 
 
 class GoogleAuthorizeView(APIView):

@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-10-14 (SPEC-005/TASK-003 커밋 기준. PR #3~#11 머지 완료)
+> 마지막 실측: 2026-10-14 (SPEC-005/TASK-004 커밋 기준. PR #3~#11 머지 완료)
 
 ---
 
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (45 / 47)
+## 2. 구현된 엔드포인트 (46 / 47)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls`, `notifications.urls` 5개 include.
 
@@ -75,17 +75,17 @@
 | 43 | DELETE | `/api/v1/admin/users/{user-id}/roles/{role}` | `AdminUserRoleDetailView.delete` (SPEC-003/TASK-004) |
 | 44 | GET | `/api/v1/csrf` | `CsrfView` |
 | 45 | POST | `/api/v1/auth/password-reset` | `PasswordResetView` + [accounts/emails.py](../../accounts/emails.py) (SPEC-005/TASK-003) |
+| 46 | POST | `/api/v1/auth/password-reset/confirm` | `PasswordResetConfirmView` (SPEC-005/TASK-004) |
 
-## 3. 미구현 엔드포인트 (2 / 47)
+## 3. 미구현 엔드포인트 (1 / 47)
 
 Phase 2의 44개는 전량 구현됐다. 아래 3건은 **2026-09-22 ADR-008로 새로 추가**된 것으로, MVP UI 프로토타입을 만들며 드러난 공백이다 — 명세로만 읽을 때는 보이지 않다가 **화면에 버튼을 놓으려는 순간** 드러났다.
 
 | # | Method | Endpoint | 비고 |
 | --- | --- | --- | --- |
-| 46 | POST | `/api/v1/auth/password-reset/confirm` | 토큰 + 새 비밀번호. 성공 시 기존 세션 전부 무효화 |
 | 47 | PATCH | `/api/v1/users/me/concerns/{concern-id}` | **`SUBMITTED` 상태에서만**, 이후는 409 |
 
-구현 단위: [specs/SPEC-005-api-gaps/](../../specs/SPEC-005-api-gaps/) — §7 결정 3건 승인(2026-09-28). #45는 TASK-003에서 구현 완료.
+구현 단위: [specs/SPEC-005-api-gaps/](../../specs/SPEC-005-api-gaps/) — §7 결정 3건 승인(2026-09-28). #45·#46은 TASK-003·004에서 구현 완료.
 
 ## 3-1. Phase 2 완료 판정 (2026-09-17)
 
@@ -93,7 +93,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 | 지표 | 값 |
 | --- | --- |
-| 엔드포인트 | **44 / 44** — Phase 2 기준. ADR-008로 총계가 47이 되어 현재는 45/47 (2026-10-14) |
+| 엔드포인트 | **44 / 44** — Phase 2 기준. ADR-008로 총계가 47이 되어 현재는 46/47 (2026-10-14) |
 | 자동 테스트 | **292** |
 | 검증 4종 | check 0 issues / makemigrations No changes / ruff passed / test OK |
 | 맨바닥 기동 | 볼륨 삭제 후 사용자 여정 12단계 통과 ([smoke-test.md](../smoke-test.md)) |
@@ -114,7 +114,8 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 * **TASK-001 완료** — 인증 회귀 기반 33개(전체 **325개**, expected failures 4). 구현 변경 0건. **api.md 계약과 다른 동작 4건 발견(F-1~F-4)** — 그중 **F-1은 결함**: 기존 이메일을 대소문자만 바꿔 가입하면 **500**(중복 검사는 대소문자 구분, 저장은 소문자화). 고치지 않고 분리 보고했고 TASK-006에서 결정을 받는다. 상세는 [spec §9](../../specs/SPEC-005-api-gaps/spec.md).
 * **TASK-002 완료** — Google OAuth 회귀 29개(전체 **354개**). 구현 변경 0건. **이 프로젝트에서 검증 수단이 0개이던 유일한 영역이 닫혔다.** 보안 검증 3종(`aud`·발급자·이메일 인증)을 각각 지워보는 **변이 검증**으로 테스트가 실제 코드를 검증함을 확인했다. OAuth 경로에서는 계약 불일치가 나오지 않았다.
 * **TASK-003 완료 (2026-10-14)** — #45 재설정 요청. 테스트 14개(전체 **368개**). 가입·미가입·Google 전용·비활성·메일 실패 **5가지 경우의 응답이 바이트 단위로 같고**, 차이는 메일함에만 난다. 방어 코드 5곳을 하나씩 지우는 **변이 검증** 전건 검출. 실제 컨테이너에서 콘솔 메일 출력과 응답 바이트 동일(헤더 포함) 확인. 구현 중 판단 3건(I-1 비활성 계정 미발송, I-2 메일 실패 비노출, I-3 test 설정 생략)은 [spec §10](../../specs/SPEC-005-api-gaps/spec.md) — Owner 확인 대상. `.env.example`의 `PASSWORD_RESET_URL` 키는 §16 승인 대기.
-* 남은 TASK: 004(#46) · 005(#47) · 006(마무리 + F-1~F-4 결정).
+* **TASK-004 완료 (2026-10-14)** — #46 재설정 확정. 테스트 16개(전체 **384개**). 만료·위조·재사용·없는 계정·깨진 uid **5가지 실패가 바이트 단위로 같은 400**. 성공 시 그 사용자의 세션 행만 삭제(다른 사용자 세션 유지). 사용자 행 잠금 + `update_fields`(SQL 실측). 변이 검증 8건 전건 검출. **실제 컨테이너 왕복**: 콘솔 링크 → 확정 200 → 재사용 400 → 옛 세션 401 → 새 비밀번호 로그인 200. 백그라운드 `security-reviewer`(#45 대상)의 #46 체크리스트 7항 중 미반영 1항(오류 리포트에 비밀번호·토큰 노출)을 함께 반영. 상세 [spec §11](../../specs/SPEC-005-api-gaps/spec.md).
+* 남은 TASK: 005(#47) · 006(마무리 + F-1~F-4 결정).
 
 **SPEC-004-phase2-closeout — 완료·머지 (2026-09-17, PR #8).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. 
 

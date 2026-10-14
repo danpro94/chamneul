@@ -60,6 +60,16 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
 
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """#46 input. Only presence is checked here: the token needs the user and
+    the password validators need the user too (similarity check), so both are
+    judged in `services.confirm_password_reset`."""
+
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, style={"input_type": "password"})
+
+
 class UserCardSerializer(serializers.ModelSerializer):
     """Shared identity card. Response key is `user_id` (api.md #2/#3/#7), not the
     raw `id`. Sensitive fields (password, permission flags) never appear here.
