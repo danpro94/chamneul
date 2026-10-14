@@ -161,6 +161,10 @@ PASSWORD_RESET_URL = os.environ.get("PASSWORD_RESET_URL", "http://localhost:3000
 # EMAIL_BACKEND is left at Django's SMTP default here: real delivery is wired at
 # deploy time (Phase 3). Until then a send failure is logged, not surfaced
 # (accounts/emails.py). local.py prints mail to the console instead.
+# Sending is synchronous, so a mail server that never answers must fail fast:
+# shorter than gunicorn's 30 s worker timeout, or the worker is killed first and
+# only registered addresses get a 502 (security review S-1, SPEC-005 §12).
+EMAIL_TIMEOUT = 10
 
 # --- DRF ---------------------------------------------------------------
 REST_FRAMEWORK = {

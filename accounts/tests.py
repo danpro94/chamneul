@@ -13,6 +13,7 @@ either one is an operational incident rather than a bug:
 
 import json
 import re
+import smtplib
 import sys
 import urllib.error
 import uuid
@@ -1449,6 +1450,7 @@ class GoogleCallbackRegressionTests(TestCase):
 # ═══════════════════════════════════════════════════════════════════════════
 
 RESET_URL = "/api/v1/auth/password-reset"
+GUNICORN_DEFAULT_TIMEOUT = 30  # Dockerfile CMD does not override --timeout
 RESET_PAGE = "https://app.example.test/reset-password"
 RESET_LINK_RE = re.compile(re.escape(RESET_PAGE) + r"\?uid=([\w-]+)&token=([\w-]+)")
 
@@ -1485,12 +1487,16 @@ class PasswordResetRequestTests(AuthTestBase):
         self.assertEqual(unregistered.status_code, registered.status_code)
         self.assertEqual(unregistered.content, registered.content)
         self.assertEqual(set(unregistered.cookies), set(registered.cookies))
+        self.assertEqual(dict(unregistered.items()), dict(registered.items()))
         self.assertEqual(len(mail.outbox), 0)
 
     def test_email_is_matched_case_insensitively(self):
         """저장값은 매니저가 소문자로 만든다. 입력도 같은 형태로 맞춰 찾는다."""
         self.request_reset("ALPHA@Example.com")
         self.assertEqual(len(mail.outbox), 1)
+        # 보내는 곳은 입력값이 아니라 **저장된** 주소다. 입력값으로 보내면
+        # 유니코드 대소문자 충돌로 남의 링크를 받는 길이 열린다(CVE-2019-19844 유형).
+        self.assertEqual(mail.outbox[0].to, [self.existing.email])
 
     def test_mail_carries_a_working_link(self):
         """링크가 '있다'에서 끝내지 않고 uid가 이 사용자를 가리키는지, 토큰이
@@ -1526,6 +1532,7 @@ class PasswordResetRequestTests(AuthTestBase):
         User.objects.filter(pk=self.existing.pk).update(is_active=False)
         response = self.request_reset("alpha@example.com")
 
+        self.assertEqual(response.status_code, baseline.status_code)
         self.assertEqual(response.content, baseline.content)
         self.assertEqual(len(mail.outbox), 0)
 
@@ -1546,6 +1553,31 @@ class PasswordResetRequestTests(AuthTestBase):
         self.assertEqual(response.status_code, baseline.status_code)
         self.assertEqual(response.content, baseline.content)
         self.assertNotIn("alpha@example.com", "\n".join(logs.output))
+
+    def test_refused_recipient_log_does_not_carry_the_address(self):
+        """보안 리뷰 S-4. SMTP가 수신자를 거부하면 예외 문자열 자체에 주소가
+        들어 있다({'alpha@example.com': (550, ...)}). traceback을 통째로 남기면
+        '주소는 남기지 않는다'가 실제 거부 상황에서 깨진다."""
+        refused = smtplib.SMTPRecipientsRefused({"alpha@example.com": (550, b"no such user")})
+        with (
+            patch(
+                "django.core.mail.backends.locmem.EmailBackend.send_messages",
+                side_effect=refused,
+            ),
+            self.assertLogs("accounts.emails", level="ERROR") as logs,
+        ):
+            self.request_reset("alpha@example.com")
+
+        self.assertNotIn("alpha@example.com", "\n".join(logs.output))
+        self.assertIn("SMTPRecipientsRefused", "\n".join(logs.output))
+
+    def test_mail_send_has_a_timeout_shorter_than_the_worker_timeout(self):
+        """보안 리뷰 S-1. 타임아웃이 없으면(Django 기본 None) 응답 없는 메일
+        서버 앞에서 gunicorn 워커(기본 30초)가 먼저 죽는다. 그 종료는
+        SystemExit라 except Exception이 못 잡는다 — 가입된 주소에만 502가 나고
+        (가입 여부 신호), 요청 몇 건으로 워커 전부가 묶인다."""
+        self.assertIsNotNone(settings.EMAIL_TIMEOUT)
+        self.assertLess(settings.EMAIL_TIMEOUT, GUNICORN_DEFAULT_TIMEOUT)
 
     def test_malformed_email_is_400(self):
         self.assertEqual(self.request_reset("not-an-email").status_code, 400)

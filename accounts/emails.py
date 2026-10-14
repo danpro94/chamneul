@@ -50,8 +50,9 @@ def send_reset_mail(user, uid: str, token: str) -> None:
     )
     try:
         send_mail(SUBJECT, body, None, [user.email])
-    except Exception:
+    except Exception as exc:
         # Must not reach the response: a 500 only for registered addresses
         # would reveal which ones exist (ADR-008 §2). Django's own reset form
-        # makes the same choice. Log the pk, never the address.
-        logger.exception("Password reset mail failed for user %s", user.pk)
+        # makes the same choice. Log the pk and the exception type only — no
+        # traceback, because SMTP exceptions embed the recipient address.
+        logger.error("Password reset mail failed for user %s (%s)", user.pk, type(exc).__name__)
