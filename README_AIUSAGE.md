@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-10-14 — SPEC-005/TASK-005: 고민 수정 (#47) [위임]
+
+### 작업
+
+조언가가 배정되기 전(`SUBMITTED`)에만 고민을 고칠 수 있게 했다. 배정 뒤에 원문이 바뀌면 조언가가 답하던 질문이 조용히 달라지므로 409로 막는다. **이로써 47개 엔드포인트가 모두 구현됐다.**
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-004에서 연속 진행 승인(중간 정지 생략). 신규 결정 없음 — 결정 3(서버 관리 필드 무시)은 2026-09-28 승인분.
+
+### 생성 산출물
+
+* `concerns/services.py` `update_own_concern` · `serializers.py` `ConcernUpdateSerializer`(#16 시리얼라이저 상속, partial) · `views.py` `ConcernDetailView.patch`
+* `concerns/tests.py` — `ConcernEditTests` 11개
+
+### 검증 결과
+
+* 선-실패 9/11(통과한 2개는 엔드포인트 부재 405에서도 참인 "익명 401"·"부수효과 없음")
+* `check` / `makemigrations --check` / `ruff check` 통과 / **397 tests OK (expected failures=4)**
+* **변이 검증 6건 전건 검출**: 잠금·`update_fields`·상태 게이트·작성자 스코프·소프트 삭제·서버 필드 쓰기 허용.
+* **실제 컨테이너**: 작성 → 수정 200(`status: "CLOSED"`를 섞어 보내도 `SUBMITTED` 유지) → 상태를 `ASSIGNED`로 전환 → 수정 409 `NOT_EDITABLE` → 재조회 시 원문 유지 → 없는 id 404. *배정 상태 전환은 관리자 API(#24) 대신 `manage.py shell`로 DB를 직접 바꿨다(관리자 계정 비밀번호를 쓰지 않기 위해).*
+
+### 이번에 드러난 것
+
+`#24` 배정이 이미 같은 고민 행을 잠그고 있었다(SPEC-001). 그래서 이번 잠금 하나로 "확인 직후 배정"의 틈이 닫힌다 — 한쪽만 잠그면 효과가 없으므로 상대편을 먼저 확인했다.
+
+### 잔여 리스크
+
+* 409의 `details.reason = "NOT_EDITABLE"`은 api.md #47에 아직 없다 — TASK-006에서 반영.
+* 빈 본문 `PATCH {}`는 200이고 `updated_at`만 갱신된다(내용 변화 없음). 계약상 문제는 없으나 기록.
+
+---
+
 ## 2026-10-14 — SPEC-005 보안 리뷰 후속: #45 지적 3건 수정 [위임]
 
 ### 작업

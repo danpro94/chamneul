@@ -60,14 +60,14 @@
 
 ## TASK-005 — 고민 수정 (#47)
 
-* [ ] `SUBMITTED` + 본인 → 200, 필드 갱신 — 실패 테스트
-* [ ] 부분 필드만 전송 → 그 필드만 바뀌고 **나머지 불변** — 실패 테스트
-* [ ] `ASSIGNED`/`ANSWERED`/`CLOSED` → **409, 어느 필드도 불변** — 실패 테스트
-* [ ] 타인의 고민 → 404 / 소프트 삭제된 고민 → 404 / 비로그인 → 401
-* [ ] `status`·`author`·`deleted_at` 섞어 전송 → 200이되 **무시**(결정 3)
-* [ ] `update_own_concern` — `atomic` + `select_for_update(of=("self",))` + 받은 필드만 `update_fields`
-* [ ] **발행 SQL 실측** — 잠금이 실재하고 `UPDATE`가 지정 컬럼만 싣는지
-* [ ] 검증 4종 실행 결과 첨부
+* [x] `SUBMITTED` + 본인 → 200, 필드 갱신 — 실패 테스트
+* [x] 부분 필드만 전송 → 그 필드만 바뀌고 **나머지 불변** — 실패 테스트
+* [x] `ASSIGNED`/`ANSWERED`/`CLOSED` → **409, 어느 필드도 불변** — 실패 테스트
+* [x] 타인의 고민 → 404 / 소프트 삭제된 고민 → 404 / 비로그인 → 401
+* [x] `status`·`author`·`deleted_at` 섞어 전송 → 200이되 **무시**(결정 3)
+* [x] `update_own_concern` — `atomic` + `select_for_update(of=("self",))` + 받은 필드만 `update_fields`
+* [x] **발행 SQL 실측** — 잠금이 실재하고 `UPDATE`가 지정 컬럼만 싣는지
+* [x] 검증 4종 실행 결과 첨부
 
 ## TASK-006 — 마무리
 

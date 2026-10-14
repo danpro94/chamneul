@@ -55,16 +55,16 @@ TEST_CRITERIA.md §2·§3을 SPEC-005에 적용한 판정 기준. 전항 Django 
 
 ## AC-5. 고민 수정 (#47, TASK-005)
 
-- [ ] `SUBMITTED` + 본인 → 200, 보낸 필드가 갱신됨
-- [ ] 부분 전송 시 **보내지 않은 필드는 불변**
-- [ ] `ASSIGNED` → 409 / `ANSWERED` → 409 / `CLOSED` → 409
-- [ ] 409인 경우 **어느 필드도 바뀌지 않았다**
-- [ ] 타인의 고민 → 404 (403 아님, §1.8)
-- [ ] 소프트 삭제된 고민 → 404
-- [ ] 비로그인 → 401
-- [ ] `status`·`author`·`deleted_at`을 섞어 보내면 200이되 그 필드는 **무시**
-- [ ] 발행 SQL에 `FOR UPDATE OF "concerns_concern"`이 있다
-- [ ] `UPDATE`가 **보낸 필드 + `updated_at`만** 싣는다
+- [x] `SUBMITTED` + 본인 → 200, 보낸 필드가 갱신됨
+- [x] 부분 전송 시 **보내지 않은 필드는 불변**
+- [x] `ASSIGNED` → 409 / `ANSWERED` → 409 / `CLOSED` → 409
+- [x] 409인 경우 **어느 필드도 바뀌지 않았다**
+- [x] 타인의 고민 → 404 (403 아님, §1.8)
+- [x] 소프트 삭제된 고민 → 404
+- [x] 비로그인 → 401
+- [x] `status`·`author`·`deleted_at`을 섞어 보내면 200이되 그 필드는 **무시**
+- [x] 발행 SQL에 `FOR UPDATE OF "concerns_concern"`이 있다
+- [x] `UPDATE`가 **보낸 필드 + `updated_at`만** 싣는다
 
 ## AC-6. 회귀 없음 (전 TASK)
 
