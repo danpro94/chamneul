@@ -6,6 +6,47 @@
 
 ---
 
+## 2026-10-14 — SPEC-005/TASK-003: 비밀번호 재설정 요청 (#45) [위임]
+
+### 작업
+
+ADR-008의 첫 신규 엔드포인트. "비밀번호를 잊었어요"를 누르면 재설정 링크를 메일로 보낸다. **이 API의 핵심은 무엇을 하느냐보다 무엇을 알려주지 않느냐다** — 가입되지 않은 주소에도 똑같이 200을 돌려줘서, 남의 가입 여부를 캐는 도구가 되지 않게 했다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-003 착수 승인. 구현 중 판단 3건(I-1~I-3, spec §10)은 계약을 바꾸지 않는 범위라 먼저 구현하고 **사후 확인**을 요청했다.
+
+### 생성 산출물
+
+* `accounts/emails.py` (신규) — 메일 본문 2종(로컬 계정 / Google 전용 계정)
+* `accounts/services.py` `request_password_reset` · `serializers.py` · `views.py` `PasswordResetView` · `urls.py`
+* `config/settings/base.py` (`PASSWORD_RESET_TIMEOUT` 30분 · `PASSWORD_RESET_URL`) · `local.py` (console 메일)
+* `accounts/tests.py` — `PasswordResetRequestTests` 14개
+
+### 검증 결과
+
+* 선-실패: 14개 중 12개 실패 확인(엔드포인트 부재 404). 나머지 2개는 "두 응답이 같다"는 비교라 둘 다 404여도 통과 — 구현 후에도 의미가 유지된다.
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / **368 tests OK (expected failures=4)**
+* **변이 검증 5건 전건 검출**: 비활성 필터·메일 실패 처리·CSRF·Google 분기·소문자화를 하나씩 지우면 각각 해당 테스트 1개가 정확히 FAILED.
+* **실제 컨테이너**: 재빌드 후 curl로 가입/미가입 요청 → 둘 다 200, 본문 바이트 동일, 헤더도(Date 제외) 동일, CSRF 없으면 403. `docker compose logs app`에 메일이 **1통만**(가입된 주소분) 찍히고 링크가 들어 있음을 확인.
+
+### 이번에 드러난 것
+
+계약은 "응답이 같다"였지만, 구현해 보니 **응답이 갈라질 수 있는 길이 두 개 더** 있었다. ① 메일 서버가 죽으면 가입된 주소에서만 500이 난다 → 그 500이 곧 "가입됨" 신호. 실패를 로그로만 남기도록 막았다(Django 기본 폼도 같은 선택). ② 비활성 계정. 둘 다 테스트로 고정했다.
+
+### 잔여 리스크
+
+1. **응답 시간 차이** — 메일 발송이 동기라, 실제 SMTP를 붙이면 가입된 주소의 응답이 눈에 띄게 느려진다. 비동기 발송과 레이트 리밋은 Phase 3.
+2. 보내는 주소가 `webmaster@localhost`(`DEFAULT_FROM_EMAIL` 미설정) — SMTP 연결 때 함께 정한다.
+3. `.env.example`에 `PASSWORD_RESET_URL` 키가 아직 없다 — §16 승인 대기.
+4. `ruff format --check`가 기존 파일 3개(`accounts/models.py`·`services.py`·`tests.py`)에서 걸린다. HEAD에서도 동일한 기존 상태이고 이번 변경분은 정렬돼 있다. 별도 정리 커밋 후보.
+
+---
+
 ## 2026-09-30 — SPEC-005/TASK-002: Google OAuth 회귀 (#5·#6) [위임]
 
 ### 작업

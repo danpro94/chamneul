@@ -35,14 +35,14 @@
 
 ## TASK-003 — 재설정 요청 (#45)
 
-* [ ] 가입된 이메일 → 200 + 메일 1통 — 실패 테스트
-* [ ] **가입되지 않은 이메일 → 200, 응답이 가입된 경우와 바이트 단위 동일** — 실패 테스트
-* [ ] 메일 미발송 확인(`mail.outbox` 길이 0)
-* [ ] Google 전용 계정 → 200, **메일 본문이 다름** — 실패 테스트
-* [ ] 이메일 형식 오류 → 400 / CSRF 없음 → 403
-* [ ] `settings`에 `EMAIL_BACKEND`(local·test = console) · `PASSWORD_RESET_URL` 추가
-* [ ] `accounts/emails.py` 신설 + `request_password_reset` 서비스
-* [ ] 검증 4종 실행 결과 첨부
+* [x] 가입된 이메일 → 200 + 메일 1통 — 실패 테스트
+* [x] **가입되지 않은 이메일 → 200, 응답이 가입된 경우와 바이트 단위 동일** — 실패 테스트
+* [x] 메일 미발송 확인(`mail.outbox` 길이 0)
+* [x] Google 전용 계정 → 200, **메일 본문이 다름** — 실패 테스트
+* [x] 이메일 형식 오류 → 400 / CSRF 없음 → 403
+* [x] `settings`에 `EMAIL_BACKEND`(local = console) · `PASSWORD_RESET_URL` 추가 — test는 Django 러너가 locmem을 강제하므로 설정하지 않음(계획 대비 변경, 주석으로 명시)
+* [x] `accounts/emails.py` 신설 + `request_password_reset` 서비스
+* [x] 검증 4종 실행 결과 첨부
 
 ## TASK-004 — 재설정 확정 (#46) ★
 

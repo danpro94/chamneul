@@ -19,6 +19,7 @@ from . import oauth, services
 from .serializers import (
     ActiveRoleSerializer,
     LoginSerializer,
+    PasswordResetRequestSerializer,
     RoleGrantRequestSerializer,
     SignupResultSerializer,
     SignupSerializer,
@@ -115,6 +116,23 @@ class LogoutView(APIView):
     def post(self, request):
         logout(request)
         return Response({"message": "로그아웃 되었습니다."}, status=status.HTTP_200_OK)
+
+
+@csrf_protected
+class PasswordResetView(APIView):
+    """POST /api/v1/auth/password-reset (#45) — request a reset link.
+
+    The response is identical whether or not the address has an account;
+    otherwise this endpoint becomes a lookup tool for who signed up (ADR-008 §2).
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.request_password_reset(serializer.validated_data["email"])
+        return Response({"detail": "메일을 보냈습니다."}, status=status.HTTP_200_OK)
 
 
 class GoogleAuthorizeView(APIView):

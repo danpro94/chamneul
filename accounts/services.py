@@ -9,13 +9,17 @@ only ADVISOR/ADMIN are stored as UserRole rows (model.md §3.2).
 import re
 import secrets
 
+from django.contrib.auth.tokens import default_token_generator
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from common.exceptions import Conflict
 from common.uuid7 import uuid7
 
+from .emails import send_reset_mail
 from .models import ActiveRole, Role, RoleGrant, RoleGrantAction, User, UserRole
 
 # advisor_status exposes only these (api.md #9). WITHDRAWN is unreachable in
@@ -275,3 +279,22 @@ def revoke_role(target_user_id, role, actor, reason=""):
             target.save(update_fields=["active_role", "updated_at"])
 
     return target
+
+
+def request_password_reset(email: str) -> None:
+    """#45 — mail a reset link if the address belongs to an active account.
+
+    Returns nothing on purpose: the caller cannot tell whether a mail went out,
+    so the view has no way to let it leak into the response (ADR-008 §2).
+    Inactive accounts are skipped, as Django's own reset form does — they could
+    not log in with the new password anyway (#3).
+
+    Nothing is written: the token is computed from the password hash and
+    last_login, so changing the password is what invalidates it (#46).
+    """
+    user = User.objects.filter(email=email.lower(), is_active=True).first()
+    if user is None:
+        return
+    token = default_token_generator.make_token(user)
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    send_reset_mail(user, uid, token)

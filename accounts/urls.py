@@ -30,6 +30,8 @@ urlpatterns = [
     path("auth/signup", views.SignupView.as_view(), name="auth-signup"),
     path("auth/login", views.LoginView.as_view(), name="auth-login"),
     path("auth/logout", views.LogoutView.as_view(), name="auth-logout"),
+    # SPEC-005 password reset (#45).
+    path("auth/password-reset", views.PasswordResetView.as_view(), name="auth-password-reset"),
     path(
         "auth/google/authorize",
         views.GoogleAuthorizeView.as_view(),

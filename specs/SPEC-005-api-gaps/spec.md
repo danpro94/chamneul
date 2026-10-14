@@ -140,3 +140,21 @@ ADR-008이 엔드포인트 3건을 추가했다. 그중 둘(#45·#46)이 **`acco
 관찰(결함 아님): `LANGUAGE_CODE = "en-us"`라 검증기 메시지가 영문이다("This password is too short…"). 응답 봉투의 `message`는 한국어라 한 응답 안에 두 언어가 섞인다.
 
 **이 4건은 TASK-006에서 Owner 결정을 받는다.** F-1은 결함이라 수정이 필요하고, F-2·F-3은 코드를 계약에 맞출지 계약을 코드에 맞출지, F-4는 api.md를 고칠지의 문제다.
+
+## 10. TASK-003 구현 중 판단 — Owner 확인 대상 (2026-10-14)
+
+계약(api.md #45)을 바꾸지 않는 범위의 구현 판단이다. 셋 다 "응답으로 계정 존재를 알리지 않는다"는 ADR-008 §2에서 나왔다.
+
+| # | 판단 | 이유 | 검증 |
+| --- | --- | --- | --- |
+| I-1 | **비활성 계정(`is_active=False`)에는 메일을 보내지 않는다.** 응답은 동일 | 새 비밀번호로도 로그인할 수 없다(#3). Django 기본 `PasswordResetForm`도 같은 이유로 건너뛴다 | `test_inactive_account_gets_identical_response_and_no_mail` |
+| I-2 | **메일 발송 실패는 응답에 반영하지 않는다.** 로그(pk만, 주소 없음)로만 남기고 200 | 가입된 주소에만 500이 나면 그 500이 "가입됨" 신호가 된다. Django 기본 폼과 같은 선택. api.md의 500은 다른 서버 오류용으로 남는다 | `test_mail_failure_does_not_change_the_response` |
+| I-3 | `config/settings/test.py`에 `EMAIL_BACKEND`를 두지 않는다(plan §1 대비 변경) | Django 테스트 러너가 항상 locmem으로 바꿔치기한다. 두면 동작하지 않는 설정이 된다 | 주석으로 명시 |
+
+I-1·I-2는 TASK-006의 api.md 반영(결정 1·2) 때 #45 Side Effect 행에 함께 적는다.
+
+**남은 갭 (Phase 3)**
+
+* **응답 시간 차이** — 메일 발송이 동기라 가입된 주소의 응답이 더 느릴 수 있다(콘솔 백엔드에서는 무시할 수준, 실제 SMTP에서는 커진다). 발송을 비동기(큐)로 넘기면 닫힌다. 레이트 리밋과 함께 Phase 3.
+* **보내는 주소** — `DEFAULT_FROM_EMAIL` 미설정이라 `webmaster@localhost`로 나간다. SMTP 연결과 함께 배포 시점에 정한다.
+* **`.env.example`에 `PASSWORD_RESET_URL` 키 추가** — §16(`.env*`) 승인 대기. 기본값이 settings에 있어 로컬 동작에는 지장이 없다.

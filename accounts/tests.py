@@ -17,9 +17,15 @@ import urllib.error
 from unittest import expectedFailure
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sessions.models import Session
+from django.core import mail
+from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
+from django.utils.http import urlsafe_base64_decode
 from rest_framework.test import APIClient
 
 from advice import services as advice_services
@@ -1425,3 +1431,154 @@ class GoogleCallbackRegressionTests(TestCase):
     def test_unconfigured_is_500(self):
         _, response, _ = self.callback()
         self.assertEqual(response.status_code, 500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPEC-005 / TASK-003 — 비밀번호 재설정 요청 (#45)
+#
+# 이 엔드포인트의 핵심 계약은 "무엇을 하느냐"보다 "무엇을 알려주지 않느냐"다
+# (ADR-008 §2). 가입·미가입·Google 전용·비활성 — 어느 경우든 응답 바이트가
+# 같아야 하고, 차이는 메일함(`mail.outbox`)에만 나타나야 한다. 그래서
+# 테스트는 응답끼리 서로 비교하고, 메일은 따로 센다.
+# ═══════════════════════════════════════════════════════════════════════════
+
+RESET_URL = "/api/v1/auth/password-reset"
+RESET_PAGE = "https://app.example.test/reset-password"
+RESET_LINK_RE = re.compile(re.escape(RESET_PAGE) + r"\?uid=([\w-]+)&token=([\w-]+)")
+
+
+@override_settings(PASSWORD_RESET_URL=RESET_PAGE)
+class PasswordResetRequestTests(AuthTestBase):
+    """POST /api/v1/auth/password-reset (#45)."""
+
+    def request_reset(self, email, client=None):
+        c = client or self.client
+        return c.post(RESET_URL, {"email": email}, format="json")
+
+    def make_google_only(self):
+        # password=None → unusable password, 즉 Google 로그인만 되는 계정.
+        return User.objects.create_user(email="gonly@example.com", nickname="gonly")
+
+    def test_registered_email_is_200_and_sends_one_mail(self):
+        response = self.request_reset("alpha@example.com")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["alpha@example.com"])
+
+    def test_response_body_matches_contract(self):
+        response = self.request_reset("alpha@example.com")
+        self.assertEqual(response.json(), {"detail": "메일을 보냈습니다."})
+
+    def test_unregistered_email_gets_byte_identical_response_and_no_mail(self):
+        """AC-3 핵심. 상태 코드든 본문이든 쿠키든, 하나라도 다르면 이 API가
+        '가입 여부 조회기'가 된다(CLAUDE.md §10)."""
+        registered = self.request_reset("alpha@example.com")
+        mail.outbox.clear()
+        unregistered = self.request_reset("nobody@example.com")
+
+        self.assertEqual(unregistered.status_code, registered.status_code)
+        self.assertEqual(unregistered.content, registered.content)
+        self.assertEqual(set(unregistered.cookies), set(registered.cookies))
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_email_is_matched_case_insensitively(self):
+        """저장값은 매니저가 소문자로 만든다. 입력도 같은 형태로 맞춰 찾는다."""
+        self.request_reset("ALPHA@Example.com")
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_mail_carries_a_working_link(self):
+        """링크가 '있다'에서 끝내지 않고 uid가 이 사용자를 가리키는지, 토큰이
+        실제로 통과하는지까지 본다 — SPEC-003의 `target_url`처럼 옳아 보이지만
+        아무도 눌러보지 않은 링크를 만들지 않기 위해서다."""
+        self.request_reset("alpha@example.com")
+        match = RESET_LINK_RE.search(mail.outbox[0].body)
+        self.assertIsNotNone(match, mail.outbox[0].body)
+
+        uid, token = match.groups()
+        self.assertEqual(urlsafe_base64_decode(uid).decode(), str(self.existing.pk))
+        self.assertTrue(default_token_generator.check_token(self.existing, token))
+
+    def test_google_only_account_gets_a_different_mail_with_a_link(self):
+        """결정 2(spec §7): Google 전용 계정도 토큰이 유효하면 비밀번호를 만들
+        수 있으므로 링크를 함께 준다. 다만 본문에서 Google 계정임을 알린다."""
+        self.make_google_only()
+        local = self.request_reset("alpha@example.com")
+        google = self.request_reset("gonly@example.com")
+
+        self.assertEqual(google.status_code, local.status_code)
+        self.assertEqual(google.content, local.content)
+
+        local_mail, google_mail = mail.outbox
+        self.assertIn("Google", google_mail.body)
+        self.assertNotIn("Google", local_mail.body)
+        self.assertIsNotNone(RESET_LINK_RE.search(google_mail.body))
+
+    def test_inactive_account_gets_identical_response_and_no_mail(self):
+        """비활성 계정은 새 비밀번호로도 로그인할 수 없다(#3). 메일을 보낼
+        이유가 없고, Django 기본 재설정 폼도 같은 이유로 건너뛴다."""
+        baseline = self.request_reset("nobody@example.com")
+        User.objects.filter(pk=self.existing.pk).update(is_active=False)
+        response = self.request_reset("alpha@example.com")
+
+        self.assertEqual(response.content, baseline.content)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_mail_failure_does_not_change_the_response(self):
+        """메일 서버가 죽었을 때 가입된 주소에만 500이 나면, 그 500이 곧
+        '가입됨' 신호다. 실패는 로그로만 남기고 응답은 같게 둔다. 로그에는
+        주소가 아니라 pk만 남긴다(개인정보)."""
+        baseline = self.request_reset("nobody@example.com")
+        with (
+            patch(
+                "django.core.mail.backends.locmem.EmailBackend.send_messages",
+                side_effect=ConnectionRefusedError("smtp down"),
+            ),
+            self.assertLogs("accounts.emails", level="ERROR") as logs,
+        ):
+            response = self.request_reset("alpha@example.com")
+
+        self.assertEqual(response.status_code, baseline.status_code)
+        self.assertEqual(response.content, baseline.content)
+        self.assertNotIn("alpha@example.com", "\n".join(logs.output))
+
+    def test_malformed_email_is_400(self):
+        self.assertEqual(self.request_reset("not-an-email").status_code, 400)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_missing_email_is_400(self):
+        self.assertEqual(self.client.post(RESET_URL, {}, format="json").status_code, 400)
+
+    def test_requires_csrf(self):
+        """익명 POST라도 상태를 바꾸는(메일을 보내는) 요청이다(ADR-002 §5)."""
+        client = APIClient(enforce_csrf_checks=True)
+        response = self.request_reset("alpha@example.com", client=client)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_passes_with_bootstrapped_csrf_token(self):
+        """403 테스트의 짝. #44로 받은 토큰을 헤더에 실으면 통과해야 한다 —
+        그래야 403이 'CSRF 때문'이라는 것이 증명된다."""
+        client = APIClient(enforce_csrf_checks=True)
+        client.get("/api/v1/csrf")
+        token = client.cookies["csrftoken"].value
+        response = client.post(
+            RESET_URL, {"email": "alpha@example.com"}, format="json", HTTP_X_CSRFTOKEN=token
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_changes_nothing_in_the_database(self):
+        """AC-3 '토큰이 DB에 저장되지 않는다'. Django 토큰은 비밀번호 해시와
+        last_login으로 계산되므로 저장할 것이 없다. 세션도 만들지 않는다."""
+        password_before = self.existing.password
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.request_reset("alpha@example.com")
+
+        self.assertEqual(response.status_code, 200)
+        writes = [q["sql"] for q in ctx.captured_queries if not q["sql"].startswith("SELECT")]
+        self.assertEqual(writes, [])
+        self.assertNotIn("sessionid", response.cookies)
+        self.existing.refresh_from_db()
+        self.assertEqual(self.existing.password, password_before)
+
+    def test_token_lifetime_is_30_minutes(self):
+        self.assertEqual(settings.PASSWORD_RESET_TIMEOUT, 30 * 60)

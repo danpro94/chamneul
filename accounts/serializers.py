@@ -53,6 +53,13 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """#45 input. Only the format is checked here — whether the address has an
+    account is deliberately never reported back (ADR-008 §2)."""
+
+    email = serializers.EmailField()
+
+
 class UserCardSerializer(serializers.ModelSerializer):
     """Shared identity card. Response key is `user_id` (api.md #2/#3/#7), not the
     raw `id`. Sensitive fields (password, permission flags) never appear here.
