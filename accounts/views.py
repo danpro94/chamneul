@@ -2,7 +2,7 @@ import secrets
 
 from django.conf import settings
 from django.contrib.auth import login, logout
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.http import HttpResponseRedirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
@@ -84,7 +84,14 @@ class SignupView(APIView):
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        try:
+            # Savepoint: after an IntegrityError the connection is unusable until
+            # the enclosing atomic block ends, so the INSERT gets its own block.
+            with transaction.atomic():
+                user = serializer.save()
+        except IntegrityError as exc:
+            # Two signups racing past the checks above: the DB index decides.
+            raise Conflict("이미 가입된 이메일 또는 닉네임입니다.") from exc
         # Issue the session immediately — the response carries Set-Cookie: sessionid.
         login(request, user)
         return Response(SignupResultSerializer(user).data, status=status.HTTP_201_CREATED)

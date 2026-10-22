@@ -146,16 +146,24 @@ def link_or_create_google_user(google_sub: str, email: str, name: str = ""):
     if identity is not None:
         return identity.user
 
-    existing = User.objects.filter(email=email).first()
-    if existing is not None:
-        # Reaching here means this google_sub is NOT yet linked (step 1 missed).
-        # If the matched account already has a Google link, it is a different
-        # account — refuse rather than silently overwrite or violate the
-        # OneToOne (which would surface as an opaque 500).
-        if GoogleIdentity.objects.filter(user=existing).exists():
-            raise Conflict("이 계정은 이미 다른 Google 계정과 연결되어 있습니다.")
-        GoogleIdentity.objects.create(user=existing, google_sub=google_sub, email=email)
-        return existing
+    with transaction.atomic():
+        existing = User.objects.select_for_update(of=("self",)).filter(email=email).first()
+        if existing is not None:
+            # Reaching here means this google_sub is NOT yet linked (step 1 missed).
+            # If the matched account already has a Google link, it is a different
+            # account — refuse rather than silently overwrite or violate the
+            # OneToOne (which would surface as an opaque 500).
+            if GoogleIdentity.objects.filter(user=existing).exists():
+                raise Conflict("이 계정은 이미 다른 Google 계정과 연결되어 있습니다.")
+            GoogleIdentity.objects.create(user=existing, google_sub=google_sub, email=email)
+            # F-5 (pre-account takeover): signup (#2) never proved ownership of
+            # this address, so whoever created the local account may not be the
+            # person Google just verified. Their password and sessions must not
+            # survive the link. The real owner can set a password again via #45.
+            existing.set_unusable_password()
+            existing.save(update_fields=["password", "updated_at"])
+            _purge_sessions_of(existing)
+            return existing
 
     return _create_with_nickname(email, google_sub, _derive_nickname_base(name, email))
 
@@ -286,6 +294,15 @@ def revoke_role(target_user_id, role, actor, reason=""):
     return target
 
 
+def _reset_allowed(user) -> bool:
+    """Local accounts, and Google accounts (decision 2). An unusable password
+    with no Google link means an admin switched password login off — the
+    mailbox alone must not reopen it (security review S-2)."""
+    from .models import GoogleIdentity
+
+    return user.has_usable_password() or GoogleIdentity.objects.filter(user=user).exists()
+
+
 def request_password_reset(email: str) -> None:
     """#45 — mail a reset link if the address belongs to an active account.
 
@@ -298,7 +315,7 @@ def request_password_reset(email: str) -> None:
     last_login, so changing the password is what invalidates it (#46).
     """
     user = User.objects.filter(email=email.lower(), is_active=True).first()
-    if user is None:
+    if user is None or not _reset_allowed(user):
         return
     token = default_token_generator.make_token(user)
     uid = urlsafe_base64_encode(force_bytes(user.pk))
@@ -352,7 +369,11 @@ def confirm_password_reset(uidb64: str, token: str, new_password: str) -> None:
         user = (
             User.objects.select_for_update(of=("self",)).filter(pk=user_id, is_active=True).first()
         )
-        if user is None or not default_token_generator.check_token(user, token):
+        if (
+            user is None
+            or not _reset_allowed(user)
+            or not default_token_generator.check_token(user, token)
+        ):
             raise ValidationError({"token": [_INVALID_RESET_LINK]})
 
         try:

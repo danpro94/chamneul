@@ -18,7 +18,6 @@ import sys
 import urllib.error
 import uuid
 from datetime import datetime, timedelta
-from unittest import expectedFailure
 from unittest.mock import patch
 
 from django.conf import settings
@@ -958,18 +957,18 @@ class SignupRegressionTests(AuthTestBase):
         self.assertIn(response.status_code, (400, 409))
         self.assertEqual(User.objects.filter(nickname="alpha").count(), 1)
 
-    @expectedFailure
     def test_duplicate_email_is_409_per_contract(self):
-        """F-2. api.md #2는 중복을 409로 정한다. 현재는 DRF 기본 UniqueValidator가
-        영문 메시지와 함께 400을 준다."""
-        self.assertEqual(self.signup(email="alpha@example.com").status_code, 409)
+        """F-2 (TASK-006에서 수정). api.md #2는 중복을 409로 정한다."""
+        response = self.signup(email="alpha@example.com")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["details"]["reason"], "EMAIL_TAKEN")
 
-    @expectedFailure
     def test_duplicate_nickname_is_409_per_contract(self):
         """F-2."""
-        self.assertEqual(self.signup(nickname="alpha").status_code, 409)
+        response = self.signup(nickname="alpha")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["details"]["reason"], "NICKNAME_TAKEN")
 
-    @expectedFailure
     def test_duplicate_email_in_other_case_is_409_not_500(self):
         """F-1 (결함). 중복 검사는 입력값 그대로(대소문자 구분) 비교하는데,
         저장 시 매니저가 소문자로 바꾼다 — 검사를 통과한 뒤 DB 제약에 걸려
@@ -977,6 +976,25 @@ class SignupRegressionTests(AuthTestBase):
         죽는 경로다."""
         response = self.signup(email="ALPHA@example.com")
         self.assertEqual(response.status_code, 409)
+        self.assertEqual(User.objects.filter(email="alpha@example.com").count(), 1)
+
+    def test_signup_race_past_the_checks_is_409_not_500(self):
+        """중복 검사(SELECT)와 저장(INSERT) 사이에 같은 주소의 가입이 끼어들면
+        검사는 통과하고 DB 유니크 인덱스에서 걸린다. 그 경합을 검사를 건너뛰는
+        것으로 재현한다 — 결과가 500이면 F-1이 다른 길로 돌아온 것이다."""
+        with (
+            patch("accounts.serializers.SignupSerializer.validate_email", lambda self, v: v),
+            patch("accounts.serializers.SignupSerializer.validate_nickname", lambda self, v: v),
+        ):
+            response = self.signup(email="alpha@example.com")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(User.objects.filter(email="alpha@example.com").count(), 1)
+
+    def test_nickname_length_rules_still_apply(self):
+        """409 처리를 위해 필드를 직접 선언하면서 모델의 길이 규칙(2~20자)을
+        잃지 않았는지."""
+        self.assertEqual(self.signup(nickname="a").status_code, 400)
+        self.assertEqual(self.signup(nickname="a" * 21).status_code, 400)
 
     def test_requires_csrf(self):
         """익명 상태 변경 요청도 CSRF를 요구한다(ADR-002 §5). 뷰에
@@ -1025,10 +1043,19 @@ class LoginRegressionTests(AuthTestBase):
         self.assertNotEqual(response.status_code, 200)
         self.assertEqual(self.client.get(ME_URL).status_code, 401)
 
-    @expectedFailure
     def test_wrong_credentials_are_401_per_contract(self):
-        """F-3. api.md §1.8은 '인증 필요/실패'를 401로 정한다. 현재 400."""
+        """F-3 (TASK-006에서 수정). api.md §1.8 '인증 필요/실패' = 401."""
         self.assertEqual(self.login(password="nope-nope-123").status_code, 401)
+
+    def test_inactive_account_answer_is_identical_to_wrong_password(self):
+        """F-4 (문서를 코드에 맞춤). 비활성 계정에 403을 따로 주면 '계정이 있고
+        비밀번호도 맞다'가 샌다. 틀린 비밀번호와 바이트 단위로 같아야 한다."""
+        wrong = self.login(password="nope-nope-123")
+        self.existing.is_active = False
+        self.existing.save(update_fields=["is_active"])
+        inactive = self.login()
+        self.assertEqual(inactive.status_code, wrong.status_code)
+        self.assertEqual(inactive.content, wrong.content)
 
     def test_requires_csrf(self):
         client = APIClient(enforce_csrf_checks=True)
@@ -1352,7 +1379,47 @@ class GoogleCallbackRegressionTests(TestCase):
         self.assertEqual(User.objects.filter(email="jiwon@example.com").count(), 1)
         self.assertTrue(GoogleIdentity.objects.filter(user=local).exists())
         local.refresh_from_db()
-        self.assertTrue(local.check_password(STRONG_PW))  # 기존 비밀번호는 그대로
+        # F-5 (TASK-006): 연결 순간 기존 비밀번호는 무효가 된다 — 아래 테스트 참조.
+        self.assertFalse(local.has_usable_password())
+
+    def test_linking_disables_the_preexisting_password_and_sessions(self):
+        """F-5 사전 계정 탈취. 가입(#2)은 이메일 소유를 확인하지 않으므로, 남이
+        피해자 주소로 먼저 로컬 계정을 만들어 둘 수 있다. 피해자가 구글로
+        들어와 그 계정에 연결될 때 **그 사람의 비밀번호와 세션이 살아 있으면
+        안 된다.** 진짜 주인은 #45로 비밀번호를 다시 만들 수 있다."""
+        self.local_account()
+        squatter = APIClient()
+        squatter.post(
+            LOGIN_URL, {"email": "jiwon@example.com", "password": STRONG_PW}, format="json"
+        )
+        self.assertEqual(squatter.get(ME_URL).status_code, 200)
+
+        owner, response, _ = self.callback()
+
+        self.assertEqual(response.status_code, 302)
+        # 침입자가 요청하기 **전에** 센다. 401 자체는 Django 세션 해시만으로도
+        # 나오고, 그 요청이 해시 불일치로 행을 지워버리기 때문이다(TASK-004 §11).
+        self.assertEqual(len(sessions_of(User.objects.get(email="jiwon@example.com"))), 1)
+        self.assertEqual(owner.get(ME_URL).status_code, 200)
+        self.assertEqual(squatter.get(ME_URL).status_code, 401)
+        relogin = APIClient().post(
+            LOGIN_URL, {"email": "jiwon@example.com", "password": STRONG_PW}, format="json"
+        )
+        self.assertEqual(relogin.status_code, 401)
+
+    def test_second_login_of_a_linked_account_keeps_its_password(self):
+        """비밀번호 무효화는 **연결하는 그 순간** 한 번만이다. 연결 뒤 #46으로
+        만든 비밀번호가 다음 구글 로그인마다 지워지면 안 된다."""
+        local = self.local_account()
+        self.callback()
+        local.refresh_from_db()
+        local.set_password("Made-later-789")
+        local.save(update_fields=["password"])
+
+        self.callback()
+
+        local.refresh_from_db()
+        self.assertTrue(local.check_password("Made-later-789"))
 
     def test_linking_matches_email_case_insensitively(self):
         local = self.local_account()
@@ -1452,7 +1519,8 @@ class GoogleCallbackRegressionTests(TestCase):
 RESET_URL = "/api/v1/auth/password-reset"
 GUNICORN_DEFAULT_TIMEOUT = 30  # Dockerfile CMD does not override --timeout
 RESET_PAGE = "https://app.example.test/reset-password"
-RESET_LINK_RE = re.compile(re.escape(RESET_PAGE) + r"\?uid=([\w-]+)&token=([\w-]+)")
+# S-5: 토큰은 `#` 뒤(fragment)에 싣는다 — 브라우저가 서버로 보내지 않는 부분이다.
+RESET_LINK_RE = re.compile(re.escape(RESET_PAGE) + r"#uid=([\w-]+)&token=([\w-]+)")
 
 
 @override_settings(PASSWORD_RESET_URL=RESET_PAGE)
@@ -1464,8 +1532,21 @@ class PasswordResetRequestTests(AuthTestBase):
         return c.post(RESET_URL, {"email": email}, format="json")
 
     def make_google_only(self):
-        # password=None → unusable password, 즉 Google 로그인만 되는 계정.
-        return User.objects.create_user(email="gonly@example.com", nickname="gonly")
+        # password=None → unusable password + Google 연결 = Google 로그인만 되는 계정.
+        user = User.objects.create_user(email="gonly@example.com", nickname="gonly")
+        GoogleIdentity.objects.create(user=user, google_sub="g-only", email=user.email)
+        return user
+
+    def test_password_disabled_account_without_google_gets_no_mail(self):
+        """S-2. 비밀번호가 '사용 불가'라도 Google 연결이 없다면 관리자가 비밀번호
+        로그인을 꺼 둔 계정이다. 메일함만으로 다시 열 수 있으면 그 조치가
+        무력해진다. 응답은 똑같이 둔다."""
+        User.objects.create_user(email="locked@example.com", nickname="locked")
+        baseline = self.request_reset("nobody@example.com")
+        response = self.request_reset("locked@example.com")
+        self.assertEqual(response.status_code, baseline.status_code)
+        self.assertEqual(response.content, baseline.content)
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_registered_email_is_200_and_sends_one_mail(self):
         response = self.request_reset("alpha@example.com")
@@ -1705,6 +1786,9 @@ class PasswordResetConfirmTests(AuthTestBase):
     def test_google_only_account_can_set_a_password(self):
         """결정 2(spec §7): 토큰을 가졌다는 것은 메일함 소유가 증명된 것이다."""
         google_only = User.objects.create_user(email="gonly@example.com", nickname="gonly")
+        GoogleIdentity.objects.create(
+            user=google_only, google_sub="g-only", email="gonly@example.com"
+        )
         response = self.confirm(*self.issue_link("gonly@example.com"))
         self.assertEqual(response.status_code, 200)
         google_only.refresh_from_db()
@@ -1744,6 +1828,16 @@ class PasswordResetConfirmTests(AuthTestBase):
         before = self.stored_password()
         self.assertEqual(self.confirm(uid, token).status_code, 400)
         self.assertEqual(self.stored_password(), before)
+
+    def test_password_disabled_account_cannot_be_reopened(self):
+        """S-2의 #46 쪽 방어. 메일이 안 나가도 토큰은 계산으로 만들 수 있으므로
+        확정 단계에서도 같은 조건을 잠근 행으로 다시 본다."""
+        locked = User.objects.create_user(email="locked@example.com", nickname="locked")
+        uid = urlsafe_base64_encode(force_bytes(locked.pk))
+        token = default_token_generator.make_token(locked)
+        self.assertEqual(self.confirm(uid, token).status_code, 400)
+        locked.refresh_from_db()
+        self.assertFalse(locked.has_usable_password())
 
     def test_all_link_failures_are_indistinguishable(self):
         """AC-4 핵심. 만료·위조·재사용·없는 계정·깨진 uid를 구분해 주면 어떤

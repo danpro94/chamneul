@@ -200,7 +200,9 @@ docker compose start db      # healthy까지 6초
 | 6 | **실제 경합 미재현** | 잠금의 *존재*는 SQL 수준 테스트(`StateTransitionLockingTests`)로 고정했으나, 두 요청을 실제로 동시에 보내본 적은 없다 | Phase 3 (`TransactionTestCase` + 스레드) |
 | 7 | **DB 인지 readiness 프로브 부재** | §4-2 참조. `/healthz`가 DB 장애 중에도 초록 | Phase 3 (`/healthz/db`) |
 | 8 | **`DEBUG=True`에서 500이 전체 트레이스백 HTML** | 로컬 전용. 운영은 `DEBUG=False` 강제(§10) | 의도된 동작 |
-| 9 | **`accounts`의 M4-1~M4-3 자동 테스트 0건** | 이 스모크가 회원가입(#2)·로그인(#3)·로그아웃(#4)은 실환경에서 덮는다. 그러나 **#5·#6(Google OAuth)과 #8(프로필 수정)은 자동 테스트도 스모크도 없다** — 이 프로젝트에서 **검증 수단이 0개인 유일한 영역**이다 | Phase 3 **최우선** |
+| 9 | ~~**`accounts`의 M4-1~M4-3 자동 테스트 0건**~~ | **해소 (2026-10-22, SPEC-005 TASK-001·002)**: 인증 회귀 테스트(#2·#3·#4·#7·#8·#9)와 Google OAuth 회귀 테스트(#5·#6)를 깔았다. OAuth는 mock 경계를 **네트워크(`urlopen`)**에 둬서 발급자·audience·이메일 인증 검증과 계정 연결 로직은 실제 코드가 돈다. **남은 것**: 진짜 Google과의 왕복 1회 — secret 회전(리뷰 노트 07 §3-5-1) 때 함께 확인한다 | 해소 (실제 Google 왕복만 남음) |
+| 10 | **로컬 로그에 살아 있는 재설정 토큰이 찍힌다** — local 설정은 메일을 콘솔로 보내므로, #45를 부르면 `docker compose logs app`에 재설정 링크(uid·token)가 그대로 남는다 | 그 로그를 이슈·채팅·AI 대화에 붙여넣으면 30분 안에 그 계정의 비밀번호를 바꿀 수 있다. **로그를 공유하기 전에 `token=` 이후를 가린다** | 의도된 동작(Phase 2 메일 = 콘솔, ADR-008) — 아래 §6 경고 |
+| 11 | **실행 진입점의 기본 설정이 `local`이다** — `manage.py`·`config/wsgi.py`의 기본값이 `config.settings.local`. 배포 때 `DJANGO_SETTINGS_MODULE` 지정을 빠뜨리면 운영이 `DEBUG=True` + 콘솔 메일로 돈다 | 로그 읽기 권한만으로 재설정 링크를 얻어 계정을 탈취할 수 있다(보안 리뷰 S-3) | **Phase 3 배포 체크리스트 1번** — 진입점 기본값을 prod로 바꾸거나 prod에서 콘솔 메일을 금지하는 검사 |
 
 ## 6. 운영 체크리스트
 
@@ -214,6 +216,14 @@ docker compose logs app 2>&1 | grep -iE "error|exception"
 ```
 
 운영 경로(gunicorn)에서는 요청 로그도 같은 스트림으로 나온다 — 이미지 `CMD`에 `--access-logfile -`·`--error-logfile -`이 있다(2026-09-17 추가). 이 옵션이 없으면 gunicorn은 액세스 로그를 내보내지 않아 `docker compose logs app`에 **요청 기록이 한 줄도 남지 않는다**.
+
+> ⚠️ **앱 로그를 어디에도 그대로 붙여넣지 않는다 (2026-10-22).** 로컬은 메일을 콘솔로 보내므로 비밀번호 재설정(#45)을 한 번이라도 부르면 이 로그에 **살아 있는 재설정 링크**(`#uid=…&token=…`, 30분 유효)가 남는다. 이슈·채팅·AI 대화에 공유할 때는 `token=` 뒤를 지운다. 링크만 필요하면 아래처럼 토큰을 가린 채 본다(§5 갭 10).
+>
+> ```bash
+> docker compose logs app --since 10m | sed -E 's/token=[0-9a-z]+-[0-9a-f]+/token=<가림>/'
+> ```
+>
+> `docker compose config`도 같은 이유로 공유 금지다 — `.env`의 시크릿을 평문으로 풀어 출력한다.
 
 ### DB 백업 (볼륨 삭제 전 필수)
 

@@ -46,7 +46,9 @@ def send_reset_mail(user, uid: str, token: str) -> None:
     body = template.format(
         nickname=user.nickname,
         minutes=settings.PASSWORD_RESET_TIMEOUT // 60,
-        link=f"{settings.PASSWORD_RESET_URL}?uid={uid}&token={token}",
+        # Fragment (#), not query (?): browsers never send it to the frontend
+        # server, so the token stays out of its access logs (security review S-5).
+        link=f"{settings.PASSWORD_RESET_URL}#uid={uid}&token={token}",
     )
     try:
         send_mail(SUBJECT, body, None, [user.email])

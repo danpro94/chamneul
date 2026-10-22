@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 
 from common.exceptions import Conflict
 
@@ -13,11 +14,26 @@ class SignupSerializer(serializers.ModelSerializer):
     configured validators; the manager hashes it (never stored in plaintext).
     """
 
+    # Declared explicitly to drop the model's auto UniqueValidators: those
+    # compare case-sensitively (F-1: "ALPHA@x" passed, then hit the DB unique
+    # index → 500) and answer 400 (F-2: api.md #2 says 409).
+    email = serializers.EmailField(max_length=254)
+    nickname = serializers.CharField(min_length=2, max_length=20)
     password = serializers.CharField(write_only=True, style={"input_type": "password"})
 
     class Meta:
         model = User
         fields = ("email", "nickname", "password")
+
+    def validate_email(self, value):
+        if User.objects.filter(email__iexact=value).exists():
+            raise Conflict("이미 가입된 이메일입니다.", reason="EMAIL_TAKEN")
+        return value
+
+    def validate_nickname(self, value):
+        if User.objects.filter(nickname=value).exists():
+            raise Conflict("이미 사용 중인 닉네임입니다.", reason="NICKNAME_TAKEN")
+        return value
 
     def validate_password(self, value):
         validate_password(value)
@@ -48,7 +64,9 @@ class LoginSerializer(serializers.Serializer):
         )
         if user is None:
             # Do not reveal whether the email exists (CLAUDE.md §10 / api.md #3).
-            raise serializers.ValidationError("이메일 또는 비밀번호가 올바르지 않습니다.")
+            # Inactive accounts land here too (authenticate() returns None) — the
+            # same 401 as a wrong password, never a distinct 403 (F-4).
+            raise AuthenticationFailed("이메일 또는 비밀번호가 올바르지 않습니다.")
         attrs["user"] = user
         return attrs
 

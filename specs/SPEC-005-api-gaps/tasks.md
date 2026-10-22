@@ -71,10 +71,11 @@
 
 ## TASK-006 — 마무리
 
-* [ ] SPEC-005 전체 AC 재실행 + 테스트 1:1 대조
-* [ ] TASK-001·002에서 나온 **분리 보고 항목** 정리 및 결정 요청
-* [ ] `docs/api.md` — 결정 1·2 반영(재설정 링크 설정값, Google 계정의 #46 처리)
-* [ ] STATUS.md **47/47** + README_AIUSAGE.md 항목
-* [ ] `docs/reviews/`에 SPEC-005 리뷰 노트
-* [ ] `docs/smoke-test.md` §5 갭 9 갱신 — OAuth가 더 이상 무검증 영역이 아님
+* [x] SPEC-005 전체 AC 재실행 + 테스트 1:1 대조 — spec §13
+* [x] TASK-001·002에서 나온 **분리 보고 항목** 정리 및 결정 요청 — F-1~F-4 + 보안 리뷰 S-2·S-3·S-5·F-5, **권고안 전건 승인(2026-10-22)**
+* [x] 결정 반영 구현 — F-1·F-2(가입 409 + 대소문자 무시 + 동시 가입 경합 409), F-3(로그인 401), F-5(Google 연결 시 기존 비밀번호·세션 무효화), S-2(재설정 대상 조건 — #45·#46 양쪽), S-5(링크 fragment)
+* [x] `docs/api.md` — 결정 1·2 + 위 결정 반영(#2·#3·#6·#45·#46·#47)
+* [x] STATUS.md **47/47** + README_AIUSAGE.md 항목
+* [x] `docs/reviews/`에 SPEC-005 리뷰 노트 — [08-spec-005-api-gaps.md](../../docs/reviews/08-spec-005-api-gaps.md)
+* [x] `docs/smoke-test.md` §5 갭 9 갱신 — OAuth가 더 이상 무검증 영역이 아님 (+ 갭 10·11, §6 로그 공유 경고)
 * [ ] PR → 서브에이전트 리뷰(`security-reviewer`) → 머지

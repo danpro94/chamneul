@@ -6,6 +6,46 @@
 
 ---
 
+## 2026-10-22 — SPEC-005/TASK-006: 결정 반영 + 마무리 [위임]
+
+### 작업
+
+TASK-001~005와 보안 리뷰에서 쌓인 결정 대기 항목을 **권고안대로** 반영하고 SPEC-005를 닫았다. 가장 무게 있는 것은 **F-5 사전 계정 탈취 방어** — 남이 내 이메일로 먼저 가입해 두면, 내가 나중에 Google로 들어와 그 계정에 연결돼도 그 사람의 비밀번호가 살아 있던 문제다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장). 같은 시간에 **백그라운드 에이전트 2개**가 Owner 요청 문서(OWNER-ACTIONS-GUIDE, ADR-009 + AI-TOOLING-SETUP-GUIDE)를 작성했다 — 별도 항목 참조. 중간에 세션이 끊겨 두 에이전트를 저장된 대화에서 이어서 재개했다.
+
+### Owner 결정
+
+"권고대로 승인" — F-1 수정 / F-2·F-3 코드를 계약에 / F-4 문서를 코드에 / I-1~I-3 확정 / S-2 대상 축소 / S-3 Phase 3 배포 체크리스트 / S-5 fragment / F-5 연결 순간 무효화.
+
+### 생성 산출물
+
+* `accounts/{serializers,services,views,emails}.py` — 가입 409(+경합 savepoint), 로그인 401, `_reset_allowed`, Google 연결 하드닝, fragment 링크
+* `accounts/tests.py` — 7개 추가, `@expectedFailure` 4개 해소, 계약이 바뀐 단언 3곳 갱신
+* `docs/api.md`(#2·#3·#6·#45·#46·#47) · `docs/smoke-test.md`(갭 9 해소, 갭 10·11, 로그 공유 경고) · `docs/reviews/08-spec-005-api-gaps.md` · spec §13 · acceptance 전항 판정
+
+### 검증 결과
+
+* 선-실패 확인 후 구현 → **404 tests OK, expected failures 0** / `check` / `makemigrations --check` / `ruff check` 통과
+* URL 리졸버 실측 (경로, 메서드) **47쌍**
+* **변이 검증 8건 전건 검출**(F-5 비밀번호·세션, S-2 양쪽, F-1, F-3, S-5, 경합 409)
+
+### 이번에 드러난 것
+
+1. **F-5 세션 정리 제거를 테스트가 두 번 놓쳤다.** 한 번은 Django의 세션 해시 자동 무효화 때문, 또 한 번은 **침입자의 확인 요청 자체가 세션 행을 지워버렸기** 때문이다. 행 개수를 침입자 요청 *전에* 세도록 바꿔서야 잡혔다 — 관찰이 상태를 바꾸면 관찰 순서도 테스트의 일부다.
+2. **IntegrityError를 잡는 것만으로는 부족했다** — 바깥 트랜잭션 안에서는 연결이 망가진다. INSERT를 savepoint로 감싸는 Django 정석으로 고쳤다.
+3. F-5는 사용자 경험을 바꾼다: 이메일로 가입한 뒤 같은 주소로 Google 로그인을 하면 **기존 비밀번호가 더 이상 통하지 않고** "비밀번호 찾기"로 다시 만들어야 한다. 베타 안내 문구가 필요하다(OWNER-ACTIONS-GUIDE A-5).
+
+### 잔여 리스크
+
+1. 레이트 리밋 부재(로그인·재설정·가입) — Phase 3 1순위.
+2. 진입점 기본값 `local`(smoke-test 갭 11) — 배포 전 필수.
+3. 실제 Google 왕복은 secret 회전 때 1회 확인 필요.
+
+---
+
 ## 2026-10-14 — SPEC-005/TASK-005: 고민 수정 (#47) [위임]
 
 ### 작업

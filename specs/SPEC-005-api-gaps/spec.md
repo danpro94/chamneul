@@ -184,3 +184,27 @@ TASK-004와 **병렬로 백그라운드 실행**. 판정: **Blocker 0 · High 0 
 **범위 밖 관찰 — F-5 후보 (High 후보, 기존 M4-3 동작)**: 가입(#2)은 이메일 소유를 확인하지 않는데, #6은 **검증된 이메일이 같으면 기존 계정에 연결**한다. 공격자가 피해자 주소로 먼저 로컬 계정을 만들어 두면, 피해자가 나중에 Google로 로그인할 때 그 계정에 붙고 **공격자의 비밀번호가 계속 유효**하다(사전 계정 탈취). #45가 생긴 덕분에 완화가 쉬워졌다 — 연결 순간 로컬 비밀번호를 사용 불가로 바꾸고 세션을 정리해도, 사용자는 #45로 비밀번호를 다시 만들 수 있다. **Owner 결정** (TASK-006 또는 별도 SPEC).
 
 리뷰가 #46용으로 준 체크리스트 7항은 TASK-004에 전부 반영됐다(§11).
+
+## 13. TASK-006 — 결정과 처리 (2026-10-22, 권고안 전건 승인)
+
+| ID | 결정 | 구현 | 고정한 테스트 |
+| --- | --- | --- | --- |
+| F-1 | 결함 수정 | 가입 이메일 중복 검사를 대소문자 무시(`email__iexact`)로 | `test_duplicate_email_in_other_case_is_409_not_500` |
+| F-2 | 코드를 계약에 | 가입 중복 → 409 + `reason`(`EMAIL_TAKEN`·`NICKNAME_TAKEN`). 모델 자동 `UniqueValidator`를 버리려 필드를 직접 선언(길이 규칙 2~20자 유지 확인) | `..._is_409_per_contract` ×2, `test_nickname_length_rules_still_apply` |
+| (F-1 후속) | — | 검사와 저장 사이의 **동시 가입 경합** → DB 인덱스가 판정, 409. INSERT를 savepoint(`atomic`)로 감쌌다 | `test_signup_race_past_the_checks_is_409_not_500` |
+| F-3 | 코드를 계약에 | 로그인 실패 → `AuthenticationFailed`(401) | `test_wrong_credentials_are_401_per_contract` |
+| F-4 | 문서를 코드에 | 비활성 계정 = 틀린 비밀번호와 바이트 동일 401. api.md #3의 403 삭제 | `test_inactive_account_answer_is_identical_to_wrong_password` |
+| I-1~I-3 | 확정 | (변경 없음) api.md #45에 명시 | TASK-003 테스트 |
+| S-2 | 대상 축소 | `_reset_allowed()` = 로컬 비밀번호 있음 **또는** Google 연결. #45(메일 안 보냄)와 #46(잠근 행으로 재확인) 양쪽 | `test_password_disabled_account_without_google_gets_no_mail`, `test_password_disabled_account_cannot_be_reopened` |
+| S-3 | Phase 3 배포 체크리스트 | smoke-test §5 갭 10·11 + §6 로그 공유 경고 | (문서) |
+| S-5 | 링크를 fragment로 | `{PASSWORD_RESET_URL}#uid=…&token=…` | `RESET_LINK_RE`(전 재설정 테스트가 이 형식으로 링크를 꺼낸다) |
+| F-5 | 연결 순간 무효화 | #6 (b) 경로: 사용자 행 잠금 → 연결 → `set_unusable_password()` → 세션 행 삭제. 이미 연결된 계정의 이후 로그인은 건드리지 않음 | `test_linking_disables_the_preexisting_password_and_sessions`, `test_second_login_of_a_linked_account_keeps_its_password` |
+
+**변이 검증**: F-5의 비밀번호 무효화·세션 정리, S-2 양쪽 조건, F-1 대소문자, F-3 401, S-5 링크 형식, 동시 가입 409 처리를 하나씩 지워 전부 해당 테스트가 실패함을 확인했다.
+
+**구현 중 드러난 것**
+
+1. **F-5의 세션 정리 제거를 테스트가 두 번 놓쳤다.** ① 비밀번호가 바뀌면 Django가 세션 해시 불일치로 옛 세션을 다음 요청에서 로그아웃시키므로 "침입자 → 401"은 정리 코드 없이도 참이다(§11과 같은 현상). ② "세션 행 개수"를 세도 놓쳤다 — **침입자의 그 요청 자체가** 해시 불일치로 세션 행을 지워버렸기 때문이다. 행 개수를 침입자가 요청하기 **전에** 세도록 순서를 바꿔서야 잡혔다. 교훈: *관찰 행위가 상태를 바꾸는 경우 관찰 순서가 테스트의 일부다.*
+2. **`IntegrityError`를 잡는 것만으로는 부족했다.** 바깥 트랜잭션(테스트의 `TestCase`, 장래의 `ATOMIC_REQUESTS`) 안에서 IntegrityError가 나면 그 연결은 블록이 끝날 때까지 쓸 수 없다. INSERT를 자기만의 `atomic()`으로 감싸는 것이 Django 문서의 정석이다. *기록만*: `#8 UserMeView.patch`의 같은 패턴(S8)에는 savepoint가 없다 — 지금은 autocommit이라 무해, 범위 밖이라 수정하지 않음.
+
+**AC 대조**: AC-1~AC-7 전항 판정 완료(acceptance.md). AC-1·AC-2의 "구현 파일 변경 없음"은 각 TASK 커밋 시점 기준이며, 이후 변경은 TASK-003~006 결정 반영분이다.
