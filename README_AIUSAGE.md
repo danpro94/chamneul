@@ -6,6 +6,43 @@
 
 ---
 
+## 2026-10-22 — Owner 실행 가이드 + ADR-009 AI 도구 체계 (병렬 요청 2건) [위임 · 결정은 Owner]
+
+### 작업
+
+TASK-006과 **병렬로** Owner의 요청 2건을 백그라운드 에이전트(general-purpose ×2)에 맡겼다.
+1. **OWNER-ACTIONS-GUIDE.md** — 개발 마무리·사업 운영 중 Owner만 할 수 있는 일(계정·결제·콘솔·법률)을 macOS + Chrome 클릭 단위로.
+2. **ADR-009(Proposed) + AI-TOOLING-SETUP-GUIDE.md** — 이 프로젝트에 맞는 MCP·에이전트·Claude Code 기능 10개 선정과 init → 구성 → 검증 → 사용 → 롤백 절차.
+
+### AI 도구
+
+Claude Opus 5.5 — 작성은 백그라운드 에이전트(웹 검색으로 2026-10 기준 확인), **검수는 메인 세션**. 세션이 중간에 끊겨 두 에이전트를 저장된 대화에서 재개했다.
+
+### Owner 결정
+
+요청만 함. **ADR-009는 Proposed** — 승인 전에는 아무것도 설치·등록하지 않았다(`claude mcp add` 미실행). 항목 5~10은 승인되더라도 §16 승인을 항목별로 따로 받는다.
+
+### 생성 산출물
+
+* `docs/00-project/OWNER-ACTIONS-GUIDE.md` (A 지금 / B 계정·인프라 / C 한국 법·사업 / D 나중 결정)
+* `docs/adr/ADR-009-ai-tooling-mcp-and-agents.md` · `docs/00-project/AI-TOOLING-SETUP-GUIDE.md`
+
+### 검증 결과 (메인 세션 검수에서 고친 것)
+
+* **틀린 테스트 명령 3곳**(`docker compose exec app python manage.py test`) → 이 프로젝트 표준 `uv run python manage.py test --settings=config.settings.test`로 교체.
+* **Namecheap 메일 포워딩 함정**: Route 53으로 네임서버를 위임하면 Namecheap 무료 포워딩은 멈춘다. 그런데 DMARC 보고 주소를 그 포워딩에 기대도록 쓰여 있었다 → `rua` 없이 시작하는 안으로 수정, 위임 단계에 경고 추가.
+* **ADR 본문과 hook 스크립트의 차단 목록 불일치**(CLAUDE.md·.dockerignore 누락) → 일치시킴.
+* hooks 설정의 `"args": []` 필드는 처음 보는 형식이라 공식 문서를 직접 조회해 **유효함을 확인**했다.
+* 저장소가 **공개**임을 `gh repo view`로 확인 — 두 가이드는 ADR-004 기준 Tier 3(운영 절차, 전략 IP·비밀 없음)로 판단해 `docs/00-project/`에 둔다.
+
+### 잔여 리스크
+
+* 콘솔 메뉴 라벨(AWS·GitHub·SES·Google)은 화면 개편으로 다를 수 있다 — 문서에 "(메뉴명이 다를 수 있음)"과 검색 키워드를 달았다.
+* **[미검증]**: Semgrep 바이너리 내장 MCP 명령, GitHub MCP 툴셋 정식 이름, 통신판매업 면제 기준 수치, AWS Budgets 세부 요금. 각 문서 끝 "직접 확인하지 못한 것"에 목록화.
+* C(법·사업) 절은 **법률 자문이 아니다** — 확정 전 전문가 검토.
+
+---
+
 ## 2026-10-22 — SPEC-005/TASK-006: 결정 반영 + 마무리 [위임]
 
 ### 작업
