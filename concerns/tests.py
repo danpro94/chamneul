@@ -1249,6 +1249,30 @@ class ConcernEditTests(TestCase):
                 # updated_at까지 같아야 한다 — 어떤 UPDATE도 나가지 않았다는 뜻.
                 self.assertEqual(self.snapshot(), before)
 
+    def test_once_assigned_it_stays_locked_even_after_unassignment(self):
+        """최종 리뷰 L-3 (Owner 결정 a). 배정이 전부 해제되면 고민은 SUBMITTED로
+        돌아오지만(#25), 조언가는 이미 원문을 읽었고 조언을 썼을 수도 있다.
+        한 번이라도 배정된 적 있는 고민은 고칠 수 없다 — 배정 행은 해제돼도
+        지워지지 않으므로(is_active=False) 이력으로 판정한다."""
+        advisor = User.objects.create_user(
+            email="adv-edit@example.com", nickname="advedit", password="pw12345!"
+        )
+        Assignment.objects.create(
+            concern=self.concern,
+            advisor=advisor,
+            assigned_by=self.stranger,
+            triage_decision=TriageDecision.SUITABLE,
+            is_active=False,  # #25가 남기는 상태
+        )
+        self.assertEqual(self.snapshot()["status"], ConcernStatus.SUBMITTED)
+        before = self.snapshot()
+
+        response = self.edit({"concern_summary": "배정 해제 후 고친 요약"})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.json()["error"]["details"]["reason"], "NOT_EDITABLE")
+        self.assertEqual(self.snapshot(), before)
+
     # ── 접근 제어 ────────────────────────────────────────────────────────
 
     def test_other_users_concern_is_404_and_unchanged(self):

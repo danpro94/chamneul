@@ -29,6 +29,7 @@ from django.core.signals import got_request_exception
 from django.db import connection
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.views.debug import ExceptionReporter
@@ -47,6 +48,7 @@ from concerns.models import (
 from notifications.models import Notification, NotificationType
 
 from . import oauth
+from . import services as account_services
 from .models import (
     ActiveRole,
     GoogleIdentity,
@@ -988,7 +990,18 @@ class SignupRegressionTests(AuthTestBase):
         ):
             response = self.signup(email="alpha@example.com")
         self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["details"]["reason"], "EMAIL_TAKEN")
         self.assertEqual(User.objects.filter(email="alpha@example.com").count(), 1)
+
+    def test_nickname_race_answers_with_the_nickname_reason(self):
+        """I-5: 경합으로 DB 인덱스가 판정한 409도 api.md #2의 reason enum을 지킨다."""
+        with (
+            patch("accounts.serializers.SignupSerializer.validate_email", lambda self, v: v),
+            patch("accounts.serializers.SignupSerializer.validate_nickname", lambda self, v: v),
+        ):
+            response = self.signup(email="other@example.com", nickname="alpha")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["details"]["reason"], "NICKNAME_TAKEN")
 
     def test_nickname_length_rules_still_apply(self):
         """409 처리를 위해 필드를 직접 선언하면서 모델의 길이 규칙(2~20자)을
@@ -1501,6 +1514,19 @@ class GoogleCallbackRegressionTests(TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(client.get(ME_URL).status_code, 401)
 
+    def test_inactive_local_account_is_not_linked_or_modified(self):
+        """최종 리뷰 I-2. 비활성(동결) 계정은 401로 끝나는데, 그 전에 연결·비밀번호
+        무효화·세션 삭제가 커밋되면 안 된다 — 동결된 계정은 건드리지 않는다."""
+        local = self.local_account()
+        User.objects.filter(pk=local.pk).update(is_active=False)
+
+        _, response, _ = self.callback()
+
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(GoogleIdentity.objects.filter(user=local).exists())
+        local.refresh_from_db()
+        self.assertTrue(local.check_password(STRONG_PW))
+
     @override_settings(GOOGLE_OAUTH_CLIENT_ID="", GOOGLE_OAUTH_CLIENT_SECRET="")
     def test_unconfigured_is_500(self):
         _, response, _ = self.callback()
@@ -1958,3 +1984,312 @@ class PasswordResetConfirmTests(AuthTestBase):
         self.assertIn('"updated_at"', set_clause)
         for column in ('"email"', '"nickname"', '"is_active"', '"last_login"', '"active_role"'):
             self.assertNotIn(column, set_clause)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPEC-005 최종 보안 리뷰 후속 (2026-10-25)
+#
+# H-1: #8 프로필 수정이 **인증 시점에 읽은** request.user를 통째로 저장했다.
+# 요청이 처리되는 동안 다른 곳(F-5 Google 연결, #46 재설정, 역할 회수, 관리자)이
+# 비밀번호·활성·역할을 바꿔도, 그 요청이 끝나면서 옛 값으로 되돌렸다.
+# 방어는 두 겹이고, 각 겹을 **따로** 지키는 테스트를 둔다:
+#   ① 근본 수정 — #8이 행을 잠그고 다시 읽어 보낸 필드만 쓴다
+#   ② 안전망 — User.save()가 자기가 바꾸지 않은 인증·권한 컬럼은 쓰지 않는다
+# 공격 재현 테스트(E2E)는 두 겹 중 하나만 있어도 통과한다. 그래서 겹마다
+# SQL·모델 수준 테스트를 따로 두어, 한쪽을 지워도 반드시 무언가 실패하게 한다.
+# ═══════════════════════════════════════════════════════════════════════════
+
+GUARDED_COLUMNS = (
+    '"password"',
+    '"last_login"',
+    '"email"',
+    '"is_active"',
+    '"is_staff"',
+    '"is_superuser"',
+    '"active_role"',
+)
+
+
+def error_report_of(send):
+    """send()가 일으킨 500에 대해 Django가 만드는 운영 오류 리포트(HTML)."""
+    reports = []
+
+    def capture(sender, request, **kwargs):
+        reports.append(ExceptionReporter(request, *sys.exc_info()).get_traceback_html())
+
+    got_request_exception.connect(capture)
+    try:
+        response = send()
+    finally:
+        got_request_exception.disconnect(capture)
+    return response, reports
+
+
+def during_profile_update(action):
+    """PATCH /users/me가 검증 중인 그 순간에 action()을 끼워 넣는다 — 느린
+    요청이 열려 있는 동안 다른 요청이 커밋되는 상황의 재현."""
+
+    def validate_job(self, value):
+        action()
+        return value
+
+    return patch(
+        "accounts.serializers.UserUpdateSerializer.validate_job", validate_job, create=True
+    )
+
+
+@override_settings(**GOOGLE_TEST_SETTINGS)
+class StaleProfileWriteAttackTests(AuthTestBase):
+    """H-1 공격 재현 — 세 가지 보안 조치가 #8에 의해 되돌려지지 않는가."""
+
+    def squatter_session(self):
+        client = APIClient()
+        self.login(client=client)
+        self.assertEqual(client.get(ME_URL).status_code, 200)
+        return client
+
+    def test_google_link_password_disable_survives_a_slow_profile_update(self):
+        """F-5가 끊은 먼저-가입자의 비밀번호를, 그 사람이 열어 둔 #8이 되살리면 안 된다."""
+        squatter = self.squatter_session()
+        with during_profile_update(
+            lambda: account_services.link_or_create_google_user("victim-sub", "alpha@example.com")
+        ):
+            squatter.patch(ME_URL, {"job": "squatting"}, format="json")
+
+        self.existing.refresh_from_db()
+        self.assertFalse(self.existing.has_usable_password())
+        self.assertEqual(self.login(client=APIClient()).status_code, 401)
+
+    def test_password_reset_survives_a_slow_profile_update(self):
+        """#46으로 침입자를 내보낸 직후, 침입자가 열어 둔 #8이 옛 비밀번호를 되살리면 안 된다."""
+        squatter = self.squatter_session()
+        # 로그인이 last_login을 바꿨다 — 토큰은 그 값으로 계산되므로 다시 읽고 만든다.
+        self.existing.refresh_from_db()
+        uid = urlsafe_base64_encode(force_bytes(self.existing.pk))
+        token = default_token_generator.make_token(self.existing)
+        with during_profile_update(
+            lambda: account_services.confirm_password_reset(uid, token, "Owner-reset-789")
+        ):
+            squatter.patch(ME_URL, {"job": "squatting"}, format="json")
+
+        self.assertEqual(self.login(client=APIClient()).status_code, 401)
+        relogin = self.login(password="Owner-reset-789", client=APIClient())
+        self.assertEqual(relogin.status_code, 200)
+
+    def test_role_revoke_survives_a_slow_profile_update(self):
+        """A-3: 회수된 조언가의 active_role을 #8이 ADVISOR로 되돌리면 IsActiveAdvisor를 통과한다."""
+        admin = User.objects.create_user(
+            email="boss@example.com", nickname="boss", password=STRONG_PW
+        )
+        UserRole.objects.create(user=admin, role=Role.ADMIN)
+        UserRole.objects.create(user=self.existing, role=Role.ADVISOR)
+        User.objects.filter(pk=self.existing.pk).update(active_role=ActiveRole.ADVISOR)
+        advisor = self.squatter_session()
+
+        with during_profile_update(
+            lambda: account_services.revoke_role(self.existing.id, role=Role.ADVISOR, actor=admin)
+        ):
+            advisor.patch(ME_URL, {"job": "still advising"}, format="json")
+
+        self.existing.refresh_from_db()
+        self.assertEqual(self.existing.active_role, ActiveRole.USER)
+
+
+class ProfileUpdateWriteScopeTests(AuthTestBase):
+    """방어 ① — #8의 SQL이 잠금을 걸고 보낸 컬럼만 싣는가."""
+
+    def test_locks_and_writes_only_the_sent_columns(self):
+        self.login()
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.client.patch(ME_URL, {"job": "designer"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        sqls = [q["sql"] for q in ctx.captured_queries]
+
+        self.assertTrue(any('FOR UPDATE OF "accounts_user"' in q for q in sqls), sqls)
+        updates = [q for q in sqls if q.startswith('UPDATE "accounts_user"')]
+        self.assertEqual(len(updates), 1)
+        set_clause = updates[0].split(" WHERE ")[0]
+        self.assertIn('"job"', set_clause)
+        self.assertIn('"updated_at"', set_clause)
+        for column in (*GUARDED_COLUMNS, '"nickname"', '"interest"'):
+            self.assertNotIn(column, set_clause)
+
+    def test_response_reflects_the_saved_row(self):
+        self.login()
+        response = self.client.patch(ME_URL, {"nickname": "alpha2"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["nickname"], "alpha2")
+        self.assertEqual(User.objects.get(pk=self.existing.pk).nickname, "alpha2")
+
+    def test_nickname_race_is_still_409(self):
+        """잠금·update_fields로 옮겨도 동시 닉네임 경합은 DB 인덱스가 판정하는 409다(S8)."""
+        User.objects.create_user(email="bravo@example.com", nickname="bravo", password=STRONG_PW)
+        self.login()
+        with patch(
+            "accounts.serializers.UserUpdateSerializer.validate_nickname", lambda self, v: v
+        ):
+            response = self.client.patch(ME_URL, {"nickname": "bravo"}, format="json")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(User.objects.get(pk=self.existing.pk).nickname, "alpha")
+
+
+class UserStaleWriteGuardTests(TestCase):
+    """방어 ② — 모델 수준 안전망. #8 밖의 경로(Django Admin, 앞으로 생길 코드)도
+    오래된 인스턴스로 인증·권한 컬럼을 되돌리지 못한다."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="guard@example.com", nickname="guard", password=STRONG_PW
+        )
+
+    def test_stale_full_save_cannot_restore_auth_columns(self):
+        stale = User.objects.get(pk=self.user.pk)
+        fresh = User.objects.get(pk=self.user.pk)
+        fresh.set_unusable_password()
+        fresh.is_active = False
+        fresh.is_staff = True
+        fresh.active_role = ActiveRole.ADVISOR
+        fresh.last_login = timezone.now()
+        fresh.save(update_fields=["password", "is_active", "is_staff", "active_role", "last_login"])
+
+        stale.job = "stale edit"
+        stale.save()
+
+        row = User.objects.get(pk=self.user.pk)
+        self.assertEqual(row.job, "stale edit")
+        self.assertFalse(row.has_usable_password())
+        self.assertFalse(row.is_active)
+        self.assertTrue(row.is_staff)
+        self.assertEqual(row.active_role, ActiveRole.ADVISOR)
+        self.assertEqual(row.last_login, fresh.last_login)
+
+    def test_columns_this_instance_changed_are_still_written(self):
+        """안전망이 정상 동작(관리자가 비활성화, 비밀번호 변경)을 막으면 안 된다."""
+        admin_view = User.objects.get(pk=self.user.pk)
+        admin_view.is_active = False
+        admin_view.save()
+        self.assertFalse(User.objects.get(pk=self.user.pk).is_active)
+
+        other = User.objects.get(pk=self.user.pk)
+        other.set_password("Changed-pass-456")
+        other.save()
+        self.assertTrue(User.objects.get(pk=self.user.pk).check_password("Changed-pass-456"))
+
+    def test_refresh_resets_the_baseline(self):
+        """현재 값을 다시 읽고 나서 의도적으로 바꾼 것은 쓴다."""
+        stale = User.objects.get(pk=self.user.pk)
+        User.objects.filter(pk=self.user.pk).update(is_active=False)
+        stale.refresh_from_db()
+        stale.is_active = True
+        stale.save()
+        self.assertTrue(User.objects.get(pk=self.user.pk).is_active)
+
+    def test_partial_refresh_keeps_unrelated_in_memory_changes(self):
+        user = User.objects.get(pk=self.user.pk)
+        user.is_active = False
+        user.refresh_from_db(fields=["nickname"])
+        user.save()
+        self.assertFalse(User.objects.get(pk=self.user.pk).is_active)
+
+
+@override_settings(PASSWORD_RESET_URL=RESET_PAGE)
+class ReviewFollowUpTests(AuthTestBase):
+    """M-1 · L-1 · L-2 · L-4 · I-4."""
+
+    def reset_link(self):
+        mail.outbox.clear()
+        APIClient().post(RESET_URL, {"email": "alpha@example.com"}, format="json")
+        return RESET_LINK_RE.search(mail.outbox[-1].body).groups()
+
+    def confirm(self, client, uid, token, new_password=NEW_PW):
+        body = {"uid": uid, "token": token, "new_password": new_password}
+        return client.post(CONFIRM_URL, body, format="json")
+
+    # M-1
+    def test_confirming_while_logged_in_as_that_user_logs_the_browser_out(self):
+        """결정 2의 주 경로: 로그인한 Google 사용자가 같은 브라우저에서 비밀번호를
+        만든다. 세션 행이 지워진 뒤 응답 단계의 세션 저장이 실패해 '성공했는데
+        실패로 보이던'(400) 문제. 정상 로그아웃(쿠키 제거)으로 끝나야 한다."""
+        browser = APIClient()
+        self.login(client=browser)
+        uid, token = self.reset_link()
+
+        response = self.confirm(browser, uid, token)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"detail": "비밀번호를 바꿨습니다."})
+        self.assertEqual(response.cookies["sessionid"].value, "")
+        self.assertEqual(browser.get(ME_URL).status_code, 401)
+        self.assertEqual(self.login(password=NEW_PW, client=APIClient()).status_code, 200)
+
+    def test_confirming_while_logged_in_as_someone_else_keeps_that_session(self):
+        User.objects.create_user(email="bravo@example.com", nickname="bravo", password=STRONG_PW)
+        browser = APIClient()
+        self.login(email="bravo@example.com", client=browser)
+        uid, token = self.reset_link()
+
+        self.assertEqual(self.confirm(browser, uid, token).status_code, 200)
+        self.assertEqual(browser.get(ME_URL).data["email"], "bravo@example.com")
+
+    # L-1
+    def test_lookalike_unicode_address_does_not_block_the_real_one(self):
+        """가입 검사와 저장의 정규화가 다르면(DB UPPER() vs Python lower()), 'ı'
+        (U+0131)를 쓴 주소로 먼저 가입해 진짜 주소의 가입을 막을 수 있었다."""
+        lookalike = APIClient().post(
+            SIGNUP_URL,
+            {"email": "vıctim@example.com", "nickname": "lookalike", "password": STRONG_PW},
+            format="json",
+        )
+        self.assertEqual(lookalike.status_code, 201)  # 전제: 검증기가 이 주소를 받는다
+
+        real = APIClient().post(
+            SIGNUP_URL,
+            {"email": "victim@example.com", "nickname": "victim", "password": STRONG_PW},
+            format="json",
+        )
+        self.assertEqual(real.status_code, 201)
+
+    # L-2
+    def test_signup_and_login_error_reports_do_not_carry_the_password(self):
+        signup_body = {"email": "new@example.com", "nickname": "newbie", "password": STRONG_PW}
+        login_body = {"email": "alpha@example.com", "password": STRONG_PW}
+        cases = {
+            "signup": lambda c: c.post(SIGNUP_URL, signup_body),
+            "login": lambda c: c.post(LOGIN_URL, login_body),
+        }
+        crash = patch("accounts.views.login", side_effect=RuntimeError("boom"))
+        for name, send in cases.items():
+            with self.subTest(name), crash:
+                client = APIClient(raise_request_exception=False)
+                response, reports = error_report_of(lambda: send(client))
+                self.assertEqual(response.status_code, 500)
+                self.assertEqual(len(reports), 1)
+                self.assertIn("boom", reports[0])
+                self.assertNotIn(STRONG_PW, reports[0])
+
+    # L-4
+    def test_session_purge_assumes_the_db_session_backend(self):
+        """_purge_sessions_of()는 DB 세션 테이블을 지운다. cache 백엔드로 바꾸면
+        조용히 아무것도 지우지 않는다 — 바꿀 때 이 테스트가 먼저 알려준다."""
+        self.assertEqual(settings.SESSION_ENGINE, "django.contrib.sessions.backends.db")
+
+    # I-4
+    def test_password_whitespace_is_kept_as_typed(self):
+        """Django 폼(strip=False)과 같게, 비밀번호 앞뒤 공백을 잘라내지 않는다."""
+        spaced = "  Spaced-pass-123  "
+        body = {"email": "space@example.com", "nickname": "space", "password": spaced}
+        self.assertEqual(APIClient().post(SIGNUP_URL, body, format="json").status_code, 201)
+
+        def login_as(password):
+            return self.login(email="space@example.com", password=password, client=APIClient())
+
+        self.assertEqual(login_as(spaced).status_code, 200)
+        self.assertEqual(login_as(spaced.strip()).status_code, 401)
+
+    def test_new_password_whitespace_is_kept_as_typed(self):
+        uid, token = self.reset_link()
+        spaced = " Reset-pass-789 "
+        response = self.confirm(APIClient(), uid, token, new_password=spaced)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.login(password=spaced, client=APIClient()).status_code, 200)
+        self.assertEqual(self.login(password="Reset-pass-789", client=APIClient()).status_code, 401)

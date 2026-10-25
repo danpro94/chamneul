@@ -208,3 +208,27 @@ TASK-004와 **병렬로 백그라운드 실행**. 판정: **Blocker 0 · High 0 
 2. **`IntegrityError`를 잡는 것만으로는 부족했다.** 바깥 트랜잭션(테스트의 `TestCase`, 장래의 `ATOMIC_REQUESTS`) 안에서 IntegrityError가 나면 그 연결은 블록이 끝날 때까지 쓸 수 없다. INSERT를 자기만의 `atomic()`으로 감싸는 것이 Django 문서의 정석이다. *기록만*: `#8 UserMeView.patch`의 같은 패턴(S8)에는 savepoint가 없다 — 지금은 autocommit이라 무해, 범위 밖이라 수정하지 않음.
 
 **AC 대조**: AC-1~AC-7 전항 판정 완료(acceptance.md). AC-1·AC-2의 "구현 파일 변경 없음"은 각 TASK 커밋 시점 기준이며, 이후 변경은 TASK-003~006 결정 반영분이다.
+
+## 14. 최종 보안 리뷰 — `security-reviewer`, PR 직전 (2026-10-25)
+
+TASK-004~006 범위. 판정 **Blocker 0 · High 1 · Medium 1 · Low 5 · Info 6**, "merge 차단 사유 없음". Owner 결정(2026-10-25): **H-1 보안 우선 + 안전망 함께**, **L-3 → (a)**, **L-1 → 권장안**(ASCII 제한 없이 정규화 통일). 전건 이 PR에서 처리했다.
+
+| ID | 내용 | 처리 | 고정한 테스트 |
+| --- | --- | --- | --- |
+| **H-1** | #8 프로필 수정이 인증 시점의 `request.user`를 **통째로** 저장 → 처리 중 일어난 F-5 비밀번호 무효화·#46 재설정·역할 회수(A-3)·관리자 변경을 옛 값으로 되돌림 | **두 겹 방어.** ① `update_profile()` — 행 잠금 + 재조회 + 보낸 컬럼만 `update_fields`(+ savepoint로 닉네임 경합 409) ② `User.save()` 안전망 — 인스턴스가 직접 바꾸지 않은 인증·권한 컬럼(`password`·`last_login`·`email`·`is_active`·`is_staff`·`is_superuser`·`active_role`)은 전체 저장에서 빼고 쓴다 | 공격 재현 3종(`StaleProfileWriteAttackTests`) · ① SQL 범위(`ProfileUpdateWriteScopeTests`) · ② 모델(`UserStaleWriteGuardTests`) |
+| M-1 | 같은 사용자로 로그인된 브라우저에서 #46 → 세션 행이 지워져 응답 단계 세션 저장 실패(400, 비밀번호는 이미 바뀜) | 그 경우 `logout()` — 정상 200 + 쿠키 만료 | `test_confirming_while_logged_in_as_that_user_logs_the_browser_out` 외 1 |
+| L-1 | 가입 중복 검사(DB `UPPER()`)와 저장(Python `lower()`)의 정규화 불일치 → `vıctim@`이 `victim@` 가입 차단 | `UserManager.canonical_email()` 하나로 통일(저장·가입·로그인·#45·Google 연결), 정확 일치 = 유니크 인덱스 사용 | `test_lookalike_unicode_address_does_not_block_the_real_one` |
+| L-2 | #2·#3 오류 리포트에 평문 비밀번호 | #46과 같은 가림(`sensitive_post_parameters` + `sensitive_variables()`) | `test_signup_and_login_error_reports_do_not_carry_the_password` |
+| L-3 | 배정 전부 해제 → SUBMITTED 복귀 → 조언가가 읽은 원문 수정 가능 | **(a)** 배정 이력(비활성 포함)이 있으면 409 `NOT_EDITABLE` | `test_once_assigned_it_stays_locked_even_after_unassignment` |
+| L-4 | 세션 정리가 DB 세션 백엔드를 전제 | `SESSION_ENGINE` 고정 테스트 + 주석 | `test_session_purge_assumes_the_db_session_backend` |
+| L-5 | `EMAIL_TIMEOUT`은 소켓 작업당 상한 | 주석·api.md #45 정정(근본 해결은 Phase 3 비동기) | (문서) |
+| I-1 | 같은 Google 계정의 동시 콜백 2개 → 두 번째가 오해 소지 있는 409 | **기록만** — 1:1 불변식은 지켜지고, 경합 전용 분기라 테스트 없이 넣지 않음 | — |
+| I-2 | 비활성 계정에도 연결·비밀번호 무효화가 커밋된 뒤 401 | 잠금 안에서 비활성이면 건드리지 않고 반환 | `test_inactive_local_account_is_not_linked_or_modified` |
+| I-3 | 실제 방어의 근간은 세션 인증 해시 | 주석 명시 | (주석) |
+| I-4 | 비밀번호 앞뒤 공백이 잘림(Django 폼과 불일치) | `trim_whitespace=False`(가입·로그인·확정) | `test_password_whitespace_is_kept_as_typed` 외 1 |
+| I-5 | 경합 409에 `reason` 없음 + 설정 주석 `?uid=` | DB 제약 이름으로 reason 판정 + 주석 정정 | `test_nickname_race_answers_with_the_nickname_reason`, 경합 테스트 reason 단언 |
+| I-6 | #2로 흔적 없는 가입 여부 조회 | 수용(S-7) — Phase 3 레이트 리밋 1순위 | — |
+
+**H-1을 두 겹으로 만든 이유와 검증**: 공격 재현 테스트는 두 겹 중 **하나만 있어도** 통과한다. 그래서 겹마다 자기 테스트를 따로 두고, 변이 검증으로 확인했다 — ①만 지우면 ①의 SQL 테스트만 실패(공격은 ②가 막음), ②만 지우면 ②의 모델 테스트만 실패(공격은 ①이 막음), **둘 다 지우면 공격 재현 3종이 전부 실패**. 안전망(②)이 있으면 앞으로 누가 #8과 같은 실수를 새 엔드포인트나 Admin에서 해도 비밀번호·권한은 되살아나지 않는다.
+
+**변이 검증**: 위 + M-1·L-1·L-2·L-3·I-2·I-4·I-5 — 전건 해당 테스트 실패 확인.

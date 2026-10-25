@@ -19,14 +19,20 @@ class SignupSerializer(serializers.ModelSerializer):
     # index → 500) and answer 400 (F-2: api.md #2 says 409).
     email = serializers.EmailField(max_length=254)
     nickname = serializers.CharField(min_length=2, max_length=20)
-    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+    # trim_whitespace=False: a password is kept exactly as typed, like Django's
+    # own forms (strip=False) — trimming would make "pw " and "pw" the same (I-4).
+    password = serializers.CharField(
+        write_only=True, trim_whitespace=False, style={"input_type": "password"}
+    )
 
     class Meta:
         model = User
         fields = ("email", "nickname", "password")
 
     def validate_email(self, value):
-        if User.objects.filter(email__iexact=value).exists():
+        # Same folding as storage (UserManager.canonical_email) — an exact match
+        # on the unique index, not the DB's UPPER() (L-1).
+        if User.objects.filter(email=User.objects.canonical_email(value)).exists():
             raise Conflict("이미 가입된 이메일입니다.", reason="EMAIL_TAKEN")
         return value
 
@@ -54,12 +60,14 @@ class LoginSerializer(serializers.Serializer):
     """
 
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+    password = serializers.CharField(
+        write_only=True, trim_whitespace=False, style={"input_type": "password"}
+    )
 
     def validate(self, attrs):
         user = authenticate(
             self.context.get("request"),
-            username=attrs["email"].lower(),
+            username=User.objects.canonical_email(attrs["email"]),
             password=attrs["password"],
         )
         if user is None:
@@ -85,7 +93,9 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
     uid = serializers.CharField()
     token = serializers.CharField()
-    new_password = serializers.CharField(write_only=True, style={"input_type": "password"})
+    new_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, style={"input_type": "password"}
+    )
 
 
 class UserCardSerializer(serializers.ModelSerializer):

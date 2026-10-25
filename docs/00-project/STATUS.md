@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-10-22 (SPEC-005/TASK-006 커밋 기준. PR #3~#11 머지 완료, SPEC-005 PR 리뷰 대기)
+> 마지막 실측: 2026-10-25 (SPEC-005 최종 보안 리뷰 후속 커밋 기준. PR #3~#11 머지 완료, SPEC-005 PR 오픈)
 
 ---
 
@@ -98,7 +98,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 **Owner 승인 후 처리 5건** (2026-09-17, 리뷰 노트 07 §3-5): compose app healthcheck / Dockerfile gunicorn 액세스 로그 / compose `db`의 `env_file` 제거(앱 시크릿 미주입) / `.env.example` 누락 키 3개 / `restart: unless-stopped` — **§16 불가침 파일이라 승인 후에만 수정**했고, 재빌드 후 두 서비스 `healthy` + 스모크 여정 재통과로 검증했다.
 
-> **Owner 작업 남음** (단계별 GUI 절차: [OWNER-ACTIONS-GUIDE.md](OWNER-ACTIONS-GUIDE.md)): ① Google OAuth client secret 회전 ② `.env.example`에 `PASSWORD_RESET_URL` 줄 추가 ③ SPEC-005 PR 머지. ①의 원본 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md) — 회전이 필요한 이유: Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
+> **Owner 작업 현황 (2026-10-25)** — 단계별 절차: [OWNER-ACTIONS-GUIDE.md](OWNER-ACTIONS-GUIDE.md). 완료: `.env.example` 키 추가, GitHub 2FA + ruleset, AWS 계정·루트 MFA·Identity Center·결제 알림. **남음**: ① Google OAuth secret 회전 마무리(새 secret으로 로그인 성공 확인됨 → 옛 secret 사용 중지·삭제) ② SPEC-005 PR 머지 ③ (Phase 3 직전) 도메인 B-5~B-8 — Route 53·네임서버·ACM·SES. AWS Free plan 크레딧은 소진 상태라 Phase 3 인프라는 첫날부터 과금된다. ①의 원본 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md) — 회전이 필요한 이유: Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
 
 ## 4. Active SPEC
 
@@ -113,7 +113,8 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 * **보안 리뷰 후속 (2026-10-14)** — `security-reviewer`(#45 대상) 지적 8건 중 결정이 필요 없는 3건 수정: S-1 메일 타임아웃(가입된 주소에만 502가 나는 경로 차단), S-4 로그에서 수신 주소 제거, S-8 단언 보강. 전체 **386개**. 결정 대기 4건(S-2·S-3·S-5·F-5 사전 계정 탈취)은 [spec §12](../../specs/SPEC-005-api-gaps/spec.md) → TASK-006.
 * **TASK-005 완료 (2026-10-14)** — #47 고민 수정. 테스트 11개(전체 **397개**). `SUBMITTED`에서만 200, 그 외 409 `NOT_EDITABLE`이고 **409일 때 `updated_at`까지 불변**. 서버 관리 필드는 무시(결정 3). 행 잠금 + 보낸 필드만 UPDATE(SQL 실측). 변이 검증 6건 전건 검출. 실제 컨테이너에서 200 → (배정 상태로 전환) 409 → 원문 유지 확인. **47/47 엔드포인트 구현 완료.**
 * **TASK-006 완료 (2026-10-22)** — 결정 대기 항목 **권고안 전건 승인** 후 반영. 전체 **404개**, **expected failures 0**(F-1~F-3 래칫 해소). F-1 결함 수정(대소문자만 다른 기존 주소로 가입 → 500이던 것 409) + 동시 가입 경합 409, F-2 가입 중복 409, F-3 로그인 실패 401, F-4 비활성 = 틀린 비밀번호와 동일 401(문서 수정), **F-5 Google 연결 순간 기존 로컬 비밀번호·세션 무효화(사전 계정 탈취 방어)**, S-2 재설정 대상 축소(#45·#46), S-5 링크 fragment(`#uid=…&token=…`), S-3 smoke-test 경고. 변이 검증 8건. 상세 [spec §13](../../specs/SPEC-005-api-gaps/spec.md) · [리뷰 노트 08](../reviews/08-spec-005-api-gaps.md).
-* 남은 것: PR → `security-reviewer` 최종 리뷰 → 머지.
+* **최종 보안 리뷰 후속 (2026-10-25)** — `security-reviewer`(PR 직전) High 1 · Medium 1 · Low 5 · Info 6 전건 처리. **H-1**: 기존 #8이 인증 시점 사용자 객체를 통째로 저장해 F-5·#46·역할 회수를 되돌릴 수 있었다 → ① 잠금 + 보낸 컬럼만 쓰기 ② `User.save()` 안전망(바꾸지 않은 인증·권한 컬럼은 안 씀) **두 겹**. L-3(a) 배정 이력 있는 고민 수정 409. 전체 **424개**. 상세 [spec §14](../../specs/SPEC-005-api-gaps/spec.md).
+* 남은 것: PR 리뷰 → 머지(Owner).
 
 **SPEC-004-phase2-closeout — 완료·머지 (2026-09-17, PR #8).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. 
 

@@ -70,8 +70,15 @@ def update_own_concern(user, concern_id, validated_data) -> Concern:
             Concern.objects.select_for_update(of=("self",)).filter(author=user),
             pk=concern_id,
         )
-        if concern.status != ConcernStatus.SUBMITTED:
-            raise Conflict("조언가가 배정된 뒤에는 고민을 고칠 수 없습니다.", reason="NOT_EDITABLE")
+        # SUBMITTED alone is not enough: unassigning (#25) sends a concern back
+        # to SUBMITTED, but the advisor has already read it and may have
+        # answered. Assignment rows are kept when deactivated, so "ever
+        # assigned" is decidable — and an advice cannot exist without one (#28).
+        ever_assigned = Assignment.objects.filter(concern=concern).exists()
+        if concern.status != ConcernStatus.SUBMITTED or ever_assigned:
+            raise Conflict(
+                "조언가에게 배정된 적이 있는 고민은 고칠 수 없습니다.", reason="NOT_EDITABLE"
+            )
         for field, value in validated_data.items():
             setattr(concern, field, value)
         concern.save(update_fields=[*validated_data, "updated_at"])

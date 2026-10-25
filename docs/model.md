@@ -365,6 +365,10 @@ EMAIL_FIELD = "email"
 
 **API 매핑**: 2, 3, 4, 5, 6, 7, 8.
 
+**오래된 인스턴스의 인증 컬럼 쓰기 차단 (`User.save()` 안전망, 2026-10-25, SPEC-005 최종 리뷰 H-1)**: `save()`를 `update_fields` 없이 부르면 Django는 **모든 컬럼**을 다시 쓴다. 그래서 다른 곳이 비밀번호·활성·역할을 바꾼 뒤에 그보다 먼저 읽어 둔 인스턴스를 저장하면 옛 값이 되살아났다(#8이 실제로 그랬다). `User`는 아래 컬럼을 **그 인스턴스가 직접 바꾼 경우에만** 쓴다 — `password`·`last_login`·`email`(로그인 자격과 재설정 토큰의 입력값), `is_active`·`is_staff`·`is_superuser`·`active_role`(권한). 기준값은 DB에서 읽을 때(`from_db`)·`refresh_from_db()`·저장 직후 갱신된다. 삽입과 명시적 `update_fields` 저장은 그대로이며, 마이그레이션은 없다. Django Admin의 전체 저장도 이 규칙을 따른다.
+
+**이메일 정규화는 한 함수로 (`UserManager.canonical_email`, L-1)**: 저장·가입 중복 검사·로그인·#45·Google 연결이 모두 `normalize_email(email).lower()` 하나를 쓴다. DB의 `UPPER()`(= `email__iexact`)와 Python `lower()`는 유니코드에서 결과가 달라, `vıctim@`(U+0131)이 `victim@`의 가입을 막을 수 있었다.
+
 ---
 
 ### 3.2 `UserRole` (accounts/)
@@ -779,6 +783,9 @@ DB로 표현 불가하지만 정합성에 필수인 규칙. Service Layer에서 
 | **역할 회수가 활성 배정을 해제하지 않는다** — 관리자가 #25로 명시 해제 | (부수효과 없음이 규칙) | SPEC-003 §7 결정 3 |
 | **소프트 삭제된 고민의 advice는 소유자 경로에서도 비노출** (#26·#27·#34) | `advice.services` | Owner 결정 2026-09-13 |
 | **역할 부여/회수는 알림을 발송하지 않는다** | `accounts.services` | ADR-003 §4 |
+| **#8 프로필 수정은 사용자 행을 잠그고 보낸 컬럼만 쓴다** — 인증 시점의 `request.user`를 통째로 저장하지 않는다 | `accounts.services.update_profile()` | SPEC-005 최종 리뷰 H-1 |
+| **#47 고민 수정은 한 번이라도 배정된 적 있는 고민에서 409** — 배정이 해제돼 SUBMITTED로 돌아와도(배정 행은 비활성으로 남음) | `concerns.services.update_own_concern()` | SPEC-005 최종 리뷰 L-3 (Owner 결정 a) |
+| **Google 첫 연결 시 기존 로컬 비밀번호 사용 불가 + 세션 삭제**, 단 비활성 계정은 건드리지 않음 | `accounts.services.link_or_create_google_user()` | SPEC-005 F-5 · I-2 |
 
 Service Layer의 표준 위치: 각 앱 내 `services.py`. 트랜잭션 경계는 `@transaction.atomic` (학습 문서 A.4 / api.md 매핑 참조).
 

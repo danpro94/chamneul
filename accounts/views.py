@@ -42,6 +42,15 @@ csrf_protected = method_decorator(csrf_protect, name="dispatch")
 OAUTH_STATE_COOKIE = "oauth_state"
 
 
+def _signup_conflict(exc: IntegrityError) -> Conflict:
+    constraint = getattr(getattr(exc.__cause__, "diag", None), "constraint_name", "") or ""
+    if "nickname" in constraint:
+        return Conflict("이미 사용 중인 닉네임입니다.", reason="NICKNAME_TAKEN")
+    if "email" in constraint:
+        return Conflict("이미 가입된 이메일입니다.", reason="EMAIL_TAKEN")
+    return Conflict("이미 가입된 이메일 또는 닉네임입니다.")
+
+
 class _BadGateway(APIException):
     status_code = status.HTTP_502_BAD_GATEWAY
     default_detail = "Google 인증 서버와 통신하지 못했습니다."
@@ -76,11 +85,15 @@ class CsrfView(APIView):
 
 
 @csrf_protected
+@method_decorator(sensitive_post_parameters("password"), name="dispatch")
 class SignupView(APIView):
     """POST /api/v1/auth/signup (#2) — create account and auto-login (ADR-002 §9)."""
 
     permission_classes = [AllowAny]
 
+    # The serializer's repr carries the raw password — hide every local from
+    # production error reports (L-2, same as #46).
+    @method_decorator(sensitive_variables())
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -90,19 +103,22 @@ class SignupView(APIView):
             with transaction.atomic():
                 user = serializer.save()
         except IntegrityError as exc:
-            # Two signups racing past the checks above: the DB index decides.
-            raise Conflict("이미 가입된 이메일 또는 닉네임입니다.") from exc
+            # Two signups racing past the checks above: the DB index decides,
+            # and its name tells which reason api.md #2 owes the client (I-5).
+            raise _signup_conflict(exc) from exc
         # Issue the session immediately — the response carries Set-Cookie: sessionid.
         login(request, user)
         return Response(SignupResultSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
 @csrf_protected
+@method_decorator(sensitive_post_parameters("password"), name="dispatch")
 class LoginView(APIView):
     """POST /api/v1/auth/login (#3) — email/password login, issues the session."""
 
     permission_classes = [AllowAny]
 
+    @method_decorator(sensitive_variables())
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -165,7 +181,12 @@ class PasswordResetConfirmView(APIView):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        services.confirm_password_reset(data["uid"], data["token"], data["new_password"])
+        user = services.confirm_password_reset(data["uid"], data["token"], data["new_password"])
+        if request.user.is_authenticated and request.user.pk == user.pk:
+            # The caller's own session row was just purged with the others. End
+            # it properly (flush + expired cookie) instead of letting the
+            # response-time session save fail as a 400 (final review M-1).
+            logout(request)
         return Response({"detail": "비밀번호를 바꿨습니다."}, status=status.HTTP_200_OK)
 
 
@@ -257,13 +278,9 @@ class UserMeView(APIView):
     def patch(self, request):
         serializer = UserUpdateSerializer(request.user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        try:
-            serializer.save()
-        except IntegrityError as exc:
-            # validate_nickname pre-checks, but a concurrent request can still win
-            # the unique race — the DB constraint is the final arbiter (S8).
-            raise Conflict("이미 사용 중인 닉네임입니다.") from exc
-        return Response(UserUpdateResultSerializer(request.user).data)
+        # Not serializer.save(): that saves the request.user snapshot whole (H-1).
+        user = services.update_profile(request.user, serializer.validated_data)
+        return Response(UserUpdateResultSerializer(user).data)
 
 
 class UserRolesView(APIView):

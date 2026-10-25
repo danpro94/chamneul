@@ -8,21 +8,23 @@
 
 ## 0. 한 화면 체크리스트
 
+> 상태 갱신 2026-10-25: ☑ 완료 · ◐ 진행 중 · ⏸ Owner 결정으로 연기
+
 | 순서 | 작업 | 소요 | 마감 권장 | 상태 |
 | --- | --- | --- | --- | --- |
-| A-1 | `.env.example`에 `PASSWORD_RESET_URL` 줄 추가 | 5분 | 오늘 | □ |
-| A-2 | Google OAuth client secret 회전 | 20분 | 오늘 | □ |
+| A-1 | `.env.example`에 `PASSWORD_RESET_URL` 줄 추가 | 5분 | 오늘 | ☑ |
+| A-2 | Google OAuth client secret 회전 | 20분 | 오늘 | ◐ 새 secret 로그인 성공 확인 → 옛 secret 중지·삭제만 남음 |
 | A-3 | SPEC-005 PR 리뷰·머지 (GitHub 웹) | 30분 | 이번 주 | □ |
 | A-4 | "붙여넣기 금지" 출력 2종 숙지 | 2분 | 오늘 | □ |
 | A-5 | Google 로그인 계정 연결 변화(F-5) 숙지 | 5분 | 베타 전 | □ |
-| B-1 | GitHub 계정 2FA + 저장소 보호 설정 | 30분 | 이번 주 | □ |
-| B-2 | AWS 계정 생성 + 루트 MFA | 40분 | Phase 3 시작 전 | □ |
-| B-3 | IAM Identity Center 관리자 사용자 | 30분 | B-2 직후 | □ |
-| B-4 | 결제 알림 (AWS Budgets) | 15분 | B-2 직후 (**필수**) | □ |
-| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | □ |
-| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | □ |
-| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | □ |
-| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 1일~수일) | B-7 직후 | □ |
+| B-1 | GitHub 계정 2FA + 저장소 보호 설정 | 30분 | 이번 주 | ☑ (2FA + ruleset) |
+| B-2 | AWS 계정 생성 + 루트 MFA | 40분 | Phase 3 시작 전 | ☑ (기존 계정 — Free plan 크레딧 **소진**) |
+| B-3 | IAM Identity Center 관리자 사용자 | 30분 | B-2 직후 | ☑ |
+| B-4 | 결제 알림 (AWS Budgets) | 15분 | B-2 직후 (**필수**) | ☑ |
+| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | ⏸ MVP 완료 후 Phase 3 직전 |
+| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | ⏸ MVP 완료 후 Phase 3 직전 |
+| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | ⏸ MVP 완료 후 Phase 3 직전 |
+| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 1일~수일) | B-7 직후 | ⏸ MVP 완료 후 Phase 3 직전 |
 | C-1 | 개인정보 처리방침 초안 | 반나절 | 베타 공개 전 | □ |
 | C-2 | 이용약관 초안 | 반나절 | 베타 공개 전 | □ |
 | C-3 | 민감정보·14세 미만 정책 결정 | 1시간 | 베타 공개 전 | □ |
@@ -75,6 +77,8 @@
   7. Chrome에서 `http://localhost:8000/api/v1/auth/google/authorize`로 간다. Google 로그인 후 성공 리다이렉트까지 한 번 끝까지 확인한다.
   8. 콘솔로 돌아가 **옛 secret** 행에서 **Disable(사용 중지)** 을 누른다. 로그인을 한 번 더 해 보고, 문제가 없으면 **Delete(삭제)** 를 누른다.
 - **완료 확인**: secret 목록에 활성 secret이 1개(새 것)만 남고, 로그인이 성공한다.
+  - ⚠️ **Google 로그인 뒤 `http://localhost:8000/`에서 노란 "Page not found (404)"가 뜨면 정상(성공)이다.** 로그인 성공 후 이동할 주소(`.env`의 `GOOGLE_OAUTH_SUCCESS_REDIRECT=/`)에 아직 프론트 화면이 없을 뿐이다. 진짜 성공 여부는 **같은 Chrome 창에서** `http://localhost:8000/api/v1/users/me`를 열어 확인한다 — 200과 내 이메일이 보이면 세션이 발급된 것이다. (2026-10-25 실측: 콜백 302, Google 계정 2개 연결, `last_login`이 콜백 시각과 일치)
+  - 로컬에서 착지 화면을 보고 싶으면 `.env`의 `GOOGLE_OAUTH_SUCCESS_REDIRECT=/api/v1/users/me`로 바꾸고 `docker compose up -d`(선택).
 - **흔한 실수**
   - 옛 secret을 먼저 지운다.
   - `docker compose restart`만 하면 컨테이너가 새로 만들어지지 않아 새 값이 안 들어간다. `up -d`를 쓴다.
@@ -158,6 +162,7 @@
   - 예전의 "12개월 t2.micro 750시간" 혜택은 신규 계정에 없다.
   - **EKS 컨트롤 플레인은 시간당 과금**이다. NAT Gateway와 로드밸런서도 켜 두는 동안 계속 과금되므로 크레딧이 빨리 준다. 실습이 끝나면 반드시 지운다(`terraform destroy`).
   - 최신 조건은 https://aws.amazon.com/free/ 에서 직접 확인한다. 위 내용은 2차 자료로 교차 확인했다.
+  - **이 프로젝트의 계정은 크레딧을 이미 소진했다(2026-10-25 Owner 확인).** Phase 3의 EKS·NAT·로드밸런서는 **첫날부터 실제 요금**이다 — B-4 예산 알림을 먼저 확인하고, 실습 뒤 즉시 지운다.
 - **사전 준비**: 이 용도 전용 이메일(별칭도 됨), 해외결제가 되는 카드, 휴대폰.
 - **단계**
   1. https://signin.aws.amazon.com/signup?request_type=register 에 들어가 루트 이메일과 계정 이름(예: `chamneul`)을 넣고 이메일 인증 코드를 입력한다.
