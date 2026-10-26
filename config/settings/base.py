@@ -153,6 +153,23 @@ GOOGLE_OAUTH_REDIRECT_URI = os.environ.get(
 # Where the browser lands after a successful callback (frontend entry, api.md #6).
 GOOGLE_OAUTH_SUCCESS_REDIRECT = os.environ.get("GOOGLE_OAUTH_SUCCESS_REDIRECT", "/")
 
+# --- Password reset (ADR-008, api.md #45/#46) ---------------------------
+# Tokens are computed, not stored, so this lifetime is the only knob (30 min).
+PASSWORD_RESET_TIMEOUT = 60 * 30
+# Frontend page the mailed link opens; it reads #uid=&token= (URL fragment,
+# security review S-5) and calls #46.
+PASSWORD_RESET_URL = os.environ.get("PASSWORD_RESET_URL", "http://localhost:3000/reset-password")
+# EMAIL_BACKEND is left at Django's SMTP default here: real delivery is wired at
+# deploy time (Phase 3). Until then a send failure is logged, not surfaced
+# (accounts/emails.py). local.py prints mail to the console instead.
+# Sending is synchronous, so a mail server that never answers must fail fast:
+# shorter than gunicorn's 30 s worker timeout, or the worker is killed first and
+# only registered addresses get a 502 (security review S-1, SPEC-005 §12).
+# This bounds each socket operation, not the whole send: a server that answers
+# slowly step by step can still add up past 30 s. The real fix is sending off
+# the request path (Phase 3 queue) — final review L-5.
+EMAIL_TIMEOUT = 10
+
 # --- DRF ---------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [

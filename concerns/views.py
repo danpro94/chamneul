@@ -23,6 +23,7 @@ from .serializers import (
     ConcernCreateSerializer,
     ConcernDetailSerializer,
     ConcernListSerializer,
+    ConcernUpdateSerializer,
 )
 
 # api.md §1.6 query flags are strings; treat the usual truthy spellings as true.
@@ -58,9 +59,9 @@ class ConcernListCreateView(APIView):
 
 
 class ConcernDetailView(APIView):
-    """GET (#18) / DELETE (#19) — /api/v1/users/me/concerns/{concern-id}.
+    """GET (#18) / PATCH (#47) / DELETE (#19) — /api/v1/users/me/concerns/{concern-id}.
 
-    Object-level access control (CLAUDE.md §10): both actions look the
+    Object-level access control (CLAUDE.md §10): every action looks the
     concern up scoped to `author=request.user`, so another user's concern is
     404, never 403 (its existence is not revealed).
     """
@@ -69,6 +70,12 @@ class ConcernDetailView(APIView):
 
     def get(self, request, concern_id):
         concern = services.get_own_concern(request.user, concern_id)
+        return Response(ConcernDetailSerializer(concern).data)
+
+    def patch(self, request, concern_id):
+        serializer = ConcernUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        concern = services.update_own_concern(request.user, concern_id, serializer.validated_data)
         return Response(ConcernDetailSerializer(concern).data)
 
     def delete(self, request, concern_id):

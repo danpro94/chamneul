@@ -6,6 +6,353 @@
 
 ---
 
+## 2026-10-25 — SPEC-005 최종 보안 리뷰 후속 (H-1 두 겹 방어 외 12건) [위임]
+
+### 작업
+
+PR 직전 `security-reviewer`(백그라운드, 약 19분)가 **High 1건**을 냈다. 이번 SPEC의 새 코드가 아니라 **기존 #8 프로필 수정**이 문제였다 — 인증 시점에 읽어 둔 사용자 객체를 통째로 저장해서, 그 요청이 처리되는 동안 일어난 Google 연결의 비밀번호 무효화(F-5)·비밀번호 재설정(#46)·역할 회수를 옛 값으로 되돌릴 수 있었다. 이번 SPEC이 세운 보장을 기존 쓰기 경로가 무너뜨리는 구조다.
+
+### AI 도구
+
+Claude Opus 5.5 — 리뷰는 `security-reviewer` 서브에이전트(읽기 전용), 수정·검증은 메인 세션.
+
+### Owner 결정
+
+H-1: "보안적으로 더 안전한 쪽(현업 표준 수준), 구조적 결함이면 같은 PR에서 고치되 무력화에 대한 **안전망을 함께**". L-3: (a) 배정 이력 있는 고민은 수정 불가. L-1: ASCII 제한 없이 권장안(정규화 통일).
+
+### 생성 산출물
+
+* `accounts/services.py` `update_profile()`(① 잠금 + 보낸 컬럼만) · `accounts/models.py` `User.save()` 안전망(② 바꾸지 않은 인증·권한 컬럼은 안 씀) · `accounts/managers.py` `canonical_email()`
+* `accounts/views.py` — M-1(같은 사용자 브라우저 로그아웃), L-2(가입·로그인 오류 리포트 가림), I-5(경합 409 reason)
+* `concerns/services.py` — L-3 배정 이력 판정
+* 테스트 20개 추가(전체 **424개**) · api.md · model.md · spec §14 · 리뷰 노트 08 §6-1
+
+### 검증 결과
+
+* 선-실패: 새 테스트 대부분 실패 확인(L-1은 이 DB에서 `vıctim@` 가입이 진짜 `victim@` 가입을 **실제로 409로 막는 것**까지 재현).
+* **두 겹 방어 검증**: ①만 지우면 ①의 SQL 테스트만 실패하고 공격 3종은 ②가 막는다. ②만 지우면 ②의 모델 테스트만 실패하고 공격은 ①이 막는다. **둘 다 지우면 공격 재현 3종 전부 실패** — 각 겹이 혼자서도 막고, 공격 재현이 진짜임을 함께 증명.
+* 나머지 7건(M-1·L-1·L-2·L-3·I-2·I-4·I-5)도 변이 검증 전건 검출.
+* `check` / `makemigrations --check`(No changes — 안전망은 컬럼 추가 없음) / `ruff check` / **424 tests OK**
+* 실제 컨테이너: #8 수정 200, 로그인된 같은 브라우저에서 #46 → 200 + 이후 `/users/me` 401, 닮은꼴 주소와 진짜 주소 둘 다 가입 201.
+
+### 이번에 드러난 것
+
+1. **새 보안 조치는 그것을 되돌릴 수 있는 기존 쓰기 경로까지 봐야 완성된다.** F-5·#46은 각자 정확했지만 #8이 그 위에 옛 값을 덮을 수 있었다.
+2. 테스트 하나의 실패 원인이 테스트 쪽이었다 — 로그인으로 `last_login`이 바뀐 뒤 옛 사용자 객체로 재설정 토큰을 만들어 토큰이 처음부터 무효였다. 토큰이 `last_login`을 포함한다는 Django 설계가 테스트에도 그대로 적용된다(단언은 바꾸지 않고 재조회만 추가).
+
+### 잔여 리스크
+
+* I-1(동시 콜백의 오해 소지 409)은 기록만 — 불변식은 지켜짐, 경합 전용 분기라 테스트 없이 넣지 않음.
+* I-6(가입 API로 흔적 없는 가입 여부 조회)·레이트 리밋 — Phase 3 1순위.
+* 가입 이메일 인증(F-5의 근본 해결)은 Phase 3 후보.
+
+---
+
+## 2026-10-22 — Owner 실행 가이드 + ADR-009 AI 도구 체계 (병렬 요청 2건) [위임 · 결정은 Owner]
+
+### 작업
+
+TASK-006과 **병렬로** Owner의 요청 2건을 백그라운드 에이전트(general-purpose ×2)에 맡겼다.
+1. **OWNER-ACTIONS-GUIDE.md** — 개발 마무리·사업 운영 중 Owner만 할 수 있는 일(계정·결제·콘솔·법률)을 macOS + Chrome 클릭 단위로.
+2. **ADR-009(Proposed) + AI-TOOLING-SETUP-GUIDE.md** — 이 프로젝트에 맞는 MCP·에이전트·Claude Code 기능 10개 선정과 init → 구성 → 검증 → 사용 → 롤백 절차.
+
+### AI 도구
+
+Claude Opus 5.5 — 작성은 백그라운드 에이전트(웹 검색으로 2026-10 기준 확인), **검수는 메인 세션**. 세션이 중간에 끊겨 두 에이전트를 저장된 대화에서 재개했다.
+
+### Owner 결정
+
+요청만 함. **ADR-009는 Proposed** — 승인 전에는 아무것도 설치·등록하지 않았다(`claude mcp add` 미실행). 항목 5~10은 승인되더라도 §16 승인을 항목별로 따로 받는다.
+
+### 생성 산출물
+
+* `docs/00-project/OWNER-ACTIONS-GUIDE.md` (A 지금 / B 계정·인프라 / C 한국 법·사업 / D 나중 결정)
+* `docs/adr/ADR-009-ai-tooling-mcp-and-agents.md` · `docs/00-project/AI-TOOLING-SETUP-GUIDE.md`
+
+### 검증 결과 (메인 세션 검수에서 고친 것)
+
+* **틀린 테스트 명령 3곳**(`docker compose exec app python manage.py test`) → 이 프로젝트 표준 `uv run python manage.py test --settings=config.settings.test`로 교체.
+* **Namecheap 메일 포워딩 함정**: Route 53으로 네임서버를 위임하면 Namecheap 무료 포워딩은 멈춘다. 그런데 DMARC 보고 주소를 그 포워딩에 기대도록 쓰여 있었다 → `rua` 없이 시작하는 안으로 수정, 위임 단계에 경고 추가.
+* **ADR 본문과 hook 스크립트의 차단 목록 불일치**(CLAUDE.md·.dockerignore 누락) → 일치시킴.
+* hooks 설정의 `"args": []` 필드는 처음 보는 형식이라 공식 문서를 직접 조회해 **유효함을 확인**했다.
+* 저장소가 **공개**임을 `gh repo view`로 확인 — 두 가이드는 ADR-004 기준 Tier 3(운영 절차, 전략 IP·비밀 없음)로 판단해 `docs/00-project/`에 둔다.
+
+### 잔여 리스크
+
+* 콘솔 메뉴 라벨(AWS·GitHub·SES·Google)은 화면 개편으로 다를 수 있다 — 문서에 "(메뉴명이 다를 수 있음)"과 검색 키워드를 달았다.
+* **[미검증]**: Semgrep 바이너리 내장 MCP 명령, GitHub MCP 툴셋 정식 이름, 통신판매업 면제 기준 수치, AWS Budgets 세부 요금. 각 문서 끝 "직접 확인하지 못한 것"에 목록화.
+* C(법·사업) 절은 **법률 자문이 아니다** — 확정 전 전문가 검토.
+
+---
+
+## 2026-10-22 — SPEC-005/TASK-006: 결정 반영 + 마무리 [위임]
+
+### 작업
+
+TASK-001~005와 보안 리뷰에서 쌓인 결정 대기 항목을 **권고안대로** 반영하고 SPEC-005를 닫았다. 가장 무게 있는 것은 **F-5 사전 계정 탈취 방어** — 남이 내 이메일로 먼저 가입해 두면, 내가 나중에 Google로 들어와 그 계정에 연결돼도 그 사람의 비밀번호가 살아 있던 문제다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장). 같은 시간에 **백그라운드 에이전트 2개**가 Owner 요청 문서(OWNER-ACTIONS-GUIDE, ADR-009 + AI-TOOLING-SETUP-GUIDE)를 작성했다 — 별도 항목 참조. 중간에 세션이 끊겨 두 에이전트를 저장된 대화에서 이어서 재개했다.
+
+### Owner 결정
+
+"권고대로 승인" — F-1 수정 / F-2·F-3 코드를 계약에 / F-4 문서를 코드에 / I-1~I-3 확정 / S-2 대상 축소 / S-3 Phase 3 배포 체크리스트 / S-5 fragment / F-5 연결 순간 무효화.
+
+### 생성 산출물
+
+* `accounts/{serializers,services,views,emails}.py` — 가입 409(+경합 savepoint), 로그인 401, `_reset_allowed`, Google 연결 하드닝, fragment 링크
+* `accounts/tests.py` — 7개 추가, `@expectedFailure` 4개 해소, 계약이 바뀐 단언 3곳 갱신
+* `docs/api.md`(#2·#3·#6·#45·#46·#47) · `docs/smoke-test.md`(갭 9 해소, 갭 10·11, 로그 공유 경고) · `docs/reviews/08-spec-005-api-gaps.md` · spec §13 · acceptance 전항 판정
+
+### 검증 결과
+
+* 선-실패 확인 후 구현 → **404 tests OK, expected failures 0** / `check` / `makemigrations --check` / `ruff check` 통과
+* URL 리졸버 실측 (경로, 메서드) **47쌍**
+* **변이 검증 8건 전건 검출**(F-5 비밀번호·세션, S-2 양쪽, F-1, F-3, S-5, 경합 409)
+
+### 이번에 드러난 것
+
+1. **F-5 세션 정리 제거를 테스트가 두 번 놓쳤다.** 한 번은 Django의 세션 해시 자동 무효화 때문, 또 한 번은 **침입자의 확인 요청 자체가 세션 행을 지워버렸기** 때문이다. 행 개수를 침입자 요청 *전에* 세도록 바꿔서야 잡혔다 — 관찰이 상태를 바꾸면 관찰 순서도 테스트의 일부다.
+2. **IntegrityError를 잡는 것만으로는 부족했다** — 바깥 트랜잭션 안에서는 연결이 망가진다. INSERT를 savepoint로 감싸는 Django 정석으로 고쳤다.
+3. F-5는 사용자 경험을 바꾼다: 이메일로 가입한 뒤 같은 주소로 Google 로그인을 하면 **기존 비밀번호가 더 이상 통하지 않고** "비밀번호 찾기"로 다시 만들어야 한다. 베타 안내 문구가 필요하다(OWNER-ACTIONS-GUIDE A-5).
+
+### 잔여 리스크
+
+1. 레이트 리밋 부재(로그인·재설정·가입) — Phase 3 1순위.
+2. 진입점 기본값 `local`(smoke-test 갭 11) — 배포 전 필수.
+3. 실제 Google 왕복은 secret 회전 때 1회 확인 필요.
+
+---
+
+## 2026-10-14 — SPEC-005/TASK-005: 고민 수정 (#47) [위임]
+
+### 작업
+
+조언가가 배정되기 전(`SUBMITTED`)에만 고민을 고칠 수 있게 했다. 배정 뒤에 원문이 바뀌면 조언가가 답하던 질문이 조용히 달라지므로 409로 막는다. **이로써 47개 엔드포인트가 모두 구현됐다.**
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-004에서 연속 진행 승인(중간 정지 생략). 신규 결정 없음 — 결정 3(서버 관리 필드 무시)은 2026-09-28 승인분.
+
+### 생성 산출물
+
+* `concerns/services.py` `update_own_concern` · `serializers.py` `ConcernUpdateSerializer`(#16 시리얼라이저 상속, partial) · `views.py` `ConcernDetailView.patch`
+* `concerns/tests.py` — `ConcernEditTests` 11개
+
+### 검증 결과
+
+* 선-실패 9/11(통과한 2개는 엔드포인트 부재 405에서도 참인 "익명 401"·"부수효과 없음")
+* `check` / `makemigrations --check` / `ruff check` 통과 / **397 tests OK (expected failures=4)**
+* **변이 검증 6건 전건 검출**: 잠금·`update_fields`·상태 게이트·작성자 스코프·소프트 삭제·서버 필드 쓰기 허용.
+* **실제 컨테이너**: 작성 → 수정 200(`status: "CLOSED"`를 섞어 보내도 `SUBMITTED` 유지) → 상태를 `ASSIGNED`로 전환 → 수정 409 `NOT_EDITABLE` → 재조회 시 원문 유지 → 없는 id 404. *배정 상태 전환은 관리자 API(#24) 대신 `manage.py shell`로 DB를 직접 바꿨다(관리자 계정 비밀번호를 쓰지 않기 위해).*
+
+### 이번에 드러난 것
+
+`#24` 배정이 이미 같은 고민 행을 잠그고 있었다(SPEC-001). 그래서 이번 잠금 하나로 "확인 직후 배정"의 틈이 닫힌다 — 한쪽만 잠그면 효과가 없으므로 상대편을 먼저 확인했다.
+
+### 잔여 리스크
+
+* 409의 `details.reason = "NOT_EDITABLE"`은 api.md #47에 아직 없다 — TASK-006에서 반영.
+* 빈 본문 `PATCH {}`는 200이고 `updated_at`만 갱신된다(내용 변화 없음). 계약상 문제는 없으나 기록.
+
+---
+
+## 2026-10-14 — SPEC-005 보안 리뷰 후속: #45 지적 3건 수정 [위임]
+
+### 작업
+
+TASK-004와 병렬로 돌린 `security-reviewer`(#45 대상) 결과 중 **결정이 필요 없는 3건**을 테스트 먼저 쓰고 고쳤다. 결정이 필요한 4건은 spec §12에 기록하고 TASK-006으로 넘겼다.
+
+### AI 도구
+
+Claude Opus 5.5 — 리뷰는 `security-reviewer` 서브에이전트(읽기 전용, 코드만 읽고 실행 안 함), 수정은 메인 세션.
+
+### Owner 결정
+
+리뷰 병행 승인. 3건은 계약·범위 변경이 없는 설정 1줄·로그 문구·단언 보강이라 사후 보고.
+
+### 생성 산출물
+
+* `config/settings/base.py` `EMAIL_TIMEOUT = 10` · `accounts/emails.py` 로그 문구 · `accounts/tests.py` 테스트 2개 + 단언 3개 · spec §12
+
+### 검증 결과
+
+* 선-실패 2/2 확인 — **리뷰어가 "현재 구현에서 실패할 것"이라 예측한 S-4가 실제로 실패**했다(리뷰어는 실행 권한이 없어 코드 읽기만으로 예측).
+* `check` / `makemigrations --check` / `ruff` 통과 / **386 tests OK (expected failures=4)**
+
+### 이번에 드러난 것
+
+**S-1은 TASK-003에서 내가 "Phase 3 갭(응답 시간 차이)"으로 적어 둔 것이 실제로는 더 나쁜 문제였다.** 타임아웃이 없으면 시간 차이가 아니라 워커 강제 종료 → 가입된 주소에만 502 — 계약("상태 코드 동일")을 정면으로 깨는 경로다. gunicorn의 워커 종료가 `SystemExit`라 `except Exception`이 못 잡는다는 점은 Django 코드만 봐서는 보이지 않고, Dockerfile까지 함께 읽어야 보인다.
+
+### 잔여 리스크
+
+* 결정 대기 4건 — S-2(Google 분기 범위), S-3(진입점 기본값 = local), S-5(토큰을 쿼리 대신 fragment로), **F-5 사전 계정 탈취(High 후보, 기존 M4-3 동작)**.
+
+---
+
+## 2026-10-14 — SPEC-005/TASK-004: 비밀번호 재설정 확정 (#46) [위임]
+
+### 작업
+
+메일로 받은 링크(uid + token)와 새 비밀번호로 변경을 확정한다. 성공하면 그 사용자의 **모든 세션을 끊는다** — 비밀번호를 되찾는 상황은 계정이 탈취됐을 수 있는 상황이라, 침입자의 세션이 살아 있으면 비밀번호만 바뀌고 침입자는 그대로 남는다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장). **처음으로 서브에이전트를 구현과 병렬로 썼다** — `security-reviewer`가 백그라운드에서 #45를 리뷰하는 동안 #46을 구현했다.
+
+### Owner 결정
+
+TASK-004 승인 + `security-reviewer` 백그라운드 병행 + TASK-005 연속 진행(중간 정지 생략).
+
+### 생성 산출물
+
+* `accounts/services.py` `confirm_password_reset` · `_purge_sessions_of` · `views.py` `PasswordResetConfirmView` · `serializers.py` · `urls.py`
+* `accounts/tests.py` — `PasswordResetConfirmTests` 16개
+
+### 검증 결과
+
+* 선-실패 14/15(통과한 1개는 "확정해도 로그인되지 않는다" — 엔드포인트가 없어도 참)
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / **384 tests OK (expected failures=4)**
+* **변이 검증 8건 전건 검출**: 세션 행 삭제·잠금·비활성 필터·`update_fields`·토큰 검사·사용자 필터·POST 가림·지역 변수 가림.
+* **실제 컨테이너 왕복**: 콘솔에 찍힌 링크로 확정 200 → 같은 링크 재사용 400 → 옛 세션 401 → 새 비밀번호 로그인 200 → 옛 비밀번호 실패. 출력에서 토큰은 가렸다.
+
+### 이번에 드러난 것
+
+1. **계획의 만료 테스트 방법(`TIMEOUT=0`)은 불안정했다.** Django 만료 판정이 `>`라서 같은 초 안에 만든 토큰은 0초 설정에서도 유효하다. 발급 시각을 31분 전으로 돌리는 방식으로 바꿨고, 29분은 통과하는 짝 테스트를 뒀다.
+2. **"옛 세션 → 401" 테스트는 세션 삭제 코드를 검증하지 못했다.** Django가 비밀번호 해시로 세션을 자동 무효화하기 때문이다. 변이 검증으로 이를 실측했고, "세션 행이 사라졌는가"를 별도 테스트로 고정했다.
+3. **오류 화면 가림은 DEBUG=False에서만 동작한다.** 처음 쓴 테스트(DEBUG=True 화면)는 Django 설계상 절대 통과할 수 없는 테스트였다. 운영 오류 리포트를 직접 만들어 검증하도록 바꿨다. 그 과정에서 **시리얼라이저 repr에도 비밀번호가 실린다**는 것이 드러나 뷰 지역 변수를 전부 가렸다. 서비스 쪽 가림은 변이 검증에서 "지워도 아무 테스트도 실패하지 않음"이 나와 원리를 확인한 뒤 제거했다(가장 가까운 호출자의 가림이 아래 프레임까지 덮는다).
+
+### 잔여 리스크
+
+1. 세션 삭제가 전체 세션 행을 훑는다(O(N)). Phase 2 규모에선 허용, 커지면 사용자 인덱스 필요(plan §2).
+2. `security-reviewer`의 #45 지적(S-1~S-8) 처리는 별도 커밋/결정으로 다룬다 — 아래 항목 참조.
+
+---
+
+## 2026-10-14 — SPEC-005/TASK-003: 비밀번호 재설정 요청 (#45) [위임]
+
+### 작업
+
+ADR-008의 첫 신규 엔드포인트. "비밀번호를 잊었어요"를 누르면 재설정 링크를 메일로 보낸다. **이 API의 핵심은 무엇을 하느냐보다 무엇을 알려주지 않느냐다** — 가입되지 않은 주소에도 똑같이 200을 돌려줘서, 남의 가입 여부를 캐는 도구가 되지 않게 했다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-003 착수 승인. 구현 중 판단 3건(I-1~I-3, spec §10)은 계약을 바꾸지 않는 범위라 먼저 구현하고 **사후 확인**을 요청했다.
+
+### 생성 산출물
+
+* `accounts/emails.py` (신규) — 메일 본문 2종(로컬 계정 / Google 전용 계정)
+* `accounts/services.py` `request_password_reset` · `serializers.py` · `views.py` `PasswordResetView` · `urls.py`
+* `config/settings/base.py` (`PASSWORD_RESET_TIMEOUT` 30분 · `PASSWORD_RESET_URL`) · `local.py` (console 메일)
+* `accounts/tests.py` — `PasswordResetRequestTests` 14개
+
+### 검증 결과
+
+* 선-실패: 14개 중 12개 실패 확인(엔드포인트 부재 404). 나머지 2개는 "두 응답이 같다"는 비교라 둘 다 404여도 통과 — 구현 후에도 의미가 유지된다.
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / **368 tests OK (expected failures=4)**
+* **변이 검증 5건 전건 검출**: 비활성 필터·메일 실패 처리·CSRF·Google 분기·소문자화를 하나씩 지우면 각각 해당 테스트 1개가 정확히 FAILED.
+* **실제 컨테이너**: 재빌드 후 curl로 가입/미가입 요청 → 둘 다 200, 본문 바이트 동일, 헤더도(Date 제외) 동일, CSRF 없으면 403. `docker compose logs app`에 메일이 **1통만**(가입된 주소분) 찍히고 링크가 들어 있음을 확인.
+
+### 이번에 드러난 것
+
+계약은 "응답이 같다"였지만, 구현해 보니 **응답이 갈라질 수 있는 길이 두 개 더** 있었다. ① 메일 서버가 죽으면 가입된 주소에서만 500이 난다 → 그 500이 곧 "가입됨" 신호. 실패를 로그로만 남기도록 막았다(Django 기본 폼도 같은 선택). ② 비활성 계정. 둘 다 테스트로 고정했다.
+
+### 잔여 리스크
+
+1. **응답 시간 차이** — 메일 발송이 동기라, 실제 SMTP를 붙이면 가입된 주소의 응답이 눈에 띄게 느려진다. 비동기 발송과 레이트 리밋은 Phase 3.
+2. 보내는 주소가 `webmaster@localhost`(`DEFAULT_FROM_EMAIL` 미설정) — SMTP 연결 때 함께 정한다.
+3. `.env.example`에 `PASSWORD_RESET_URL` 키가 아직 없다 — §16 승인 대기.
+4. `ruff format --check`가 기존 파일 3개(`accounts/models.py`·`services.py`·`tests.py`)에서 걸린다. HEAD에서도 동일한 기존 상태이고 이번 변경분은 정렬돼 있다. 별도 정리 커밋 후보.
+
+---
+
+## 2026-09-30 — SPEC-005/TASK-002: Google OAuth 회귀 (#5·#6) [위임]
+
+### 작업
+
+**이 프로젝트에서 자동 테스트도 스모크도 없던 유일한 영역**(Google OAuth)에 회귀 테스트 29개를 깔았다. 이미 동작하는 것을 고정하는 작업이라 구현은 바꾸지 않았다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+TASK-002 착수 승인. 신규 결정 없음.
+
+### 생성 산출물
+
+* `accounts/tests.py` — `GoogleAuthorizeRegressionTests`(5) · `GoogleCallbackRegressionTests`(24) + 가짜 구글 `FakeGoogle`
+
+### 검증 결과
+
+* `check` 0 issues / `makemigrations --check` No changes / `ruff` passed / **354 tests OK (expected failures=4 — TASK-001의 F-1~F-3)**
+* 구현 변경 0건
+* **mock 경계를 네트워크(`urlopen`)에 뒀다.** `accounts.oauth`의 함수를 mock하면 그 함수가 검증되지 않는다. 구글 응답 바이트만 가짜로 주고, 발급자·audience·이메일 인증 검증과 계정 연결·생성·닉네임 산정은 실제 코드가 돈다. 예상 밖 주소를 부르면 즉시 실패하게 해서 테스트가 실제 네트워크로 새지 않게 했다.
+* **변이 검증**: "통과했다"만으로는 mock이 검증 코드까지 가렸는지 알 수 없다. `aud`·이메일 인증·발급자 검사를 **하나씩 지우고** 돌려서 **세 번 모두 해당 테스트가 FAILED**가 나는 것을 확인했다(원본은 git으로 복구).
+
+### 이번에 드러난 것
+
+OAuth 경로에서는 **계약 불일치가 나오지 않았다.** TASK-001(가입·로그인)에서 4건이 나온 것과 대조적이다 — OAuth는 M4-3 직후 보안 리뷰(S1/S2/S8)와 409 연결 충돌 하드닝을 한 번 거쳤던 코드다.
+
+작은 함정 하나: tokeninfo 주소(`…/tokeninfo`)가 토큰 주소(`…/token`)로 **시작**한다. 가짜 라우터에서 순서를 반대로 두면 모든 호출이 토큰 교환으로 잘못 가서, 테스트가 엉뚱한 이유로 통과하거나 실패한다. 주석으로 남겼다.
+
+### 잔여 리스크
+
+1. **실제 구글과의 통신은 여전히 미검증이다.** 이 테스트는 "구글이 이런 응답을 주면 우리는 이렇게 한다"까지다. 구글 쪽 응답 형식이 바뀌면 잡지 못한다 — 실제 로그인 1회 확인은 secret 회전(리뷰 노트 07 §3-5-1) 때 함께 하면 된다.
+2. tokeninfo 방식은 로그인마다 구글 왕복 1회가 든다(D-5에서 수용). 로컬 서명 검증은 Phase 3.
+
+---
+
+## 2026-09-28 — SPEC-005/TASK-001: `accounts` 인증 회귀 기반 (#2·#3·#4·#7·#8·#9) [위임]
+
+### 작업
+
+SPEC-005(ADR-008의 #45~#47)에 앞서, 그 엔드포인트들이 건드릴 **인증 경로에 회귀 테스트를 먼저 깔았다.** #46은 성공 시 기존 세션을 전부 무효화하는데, `accounts`의 기존 테스트 55개는 전부 역할 관련이었고 **인증 경로는 0건**이었다. 이미 동작하는 것을 고정하는 작업이라 **구현은 한 줄도 바꾸지 않았다.**
+
+### AI 도구
+
+Claude Opus 5 / Opus 5.5 (Claude Code, VS Code 확장).
+
+### Owner 결정
+
+SPEC-005 §7 결정 3건 권고안대로 승인 — (1) 재설정 링크는 설정값 `PASSWORD_RESET_URL` (2) Google 전용 계정도 유효 토큰이면 비밀번호 설정 (3) #47의 서버 관리 필드는 무시.
+
+### 생성 산출물
+
+* `accounts/tests.py` — `SignupRegressionTests`·`LoginRegressionTests`·`LogoutRegressionTests`·`ProfileRegressionTests` 33개
+* `specs/SPEC-005-api-gaps/spec.md` §9 — 분리 보고 4건
+
+### 검증 결과
+
+* `check` 0 issues / `makemigrations --check` No changes / `ruff` passed / **325 tests OK (expected failures=4)**
+* **구현 변경 0건** — `git diff`에 `accounts/{views,services,serializers,models}.py` 없음
+* 테스트를 쓰기 전에 **실측부터 했다.** 계약(api.md)과 코드를 눈으로 대조해 의심 지점을 찾은 뒤, 임시 프로브 테스트로 실제 응답을 확인하고 나서 단언을 썼다.
+* 세션 관련 테스트는 `force_authenticate`를 쓰지 않고 실제 로그인으로 검증했다 — 그건 인증기를 건너뛰어 세션 발급·삭제를 검증하지 못한다. 로그아웃 후 **복사해 둔 쿠키로도 401**이 나오는지까지 확인(서버 레코드 삭제의 실효성).
+
+### 이번에 드러난 것
+
+**회귀 테스트가 구현을 건드리기 전에 결함을 찾았다.** 기존 이메일을 대소문자만 바꿔 가입하면(`ALPHA@example.com`) **500**이 난다(F-1). 가입 serializer의 중복 검사는 입력값 그대로 비교하는데 저장 시 매니저가 소문자로 바꿔서, 검사를 통과한 뒤 DB 제약에 걸린다. 같은 종류의 문제를 `#8`(프로필 수정)은 이미 409로 고쳐뒀는데 **가입 쪽만 빠져 있었다**(F-2). 그 외 로그인 실패 상태 코드(F-3), 비활성 계정 처리(F-4)가 api.md와 다르다.
+
+규칙대로 **고치지 않고 분리 보고**했다. 계약을 단언하는 테스트는 `@expectedFailure`로 두었다 — 스위트는 녹색을 유지하되, 고치는 순간 "예상치 못한 성공"으로 떠서 데코레이터를 떼라고 알려주는 래칫이다.
+
+### 잔여 리스크
+
+1. **F-1은 실제 500 경로다.** 로컬 전용이라 지금 노출은 없지만 TASK-006 전에 결정이 필요하다.
+2. OAuth(#5·#6)는 여전히 테스트 0건 — TASK-002.
+3. 검증기 메시지가 영문(`LANGUAGE_CODE = "en-us"`)이라 한 응답에 두 언어가 섞인다.
+
+---
+
 ## 2026-09-16~17 — SPEC-004 (M5): 스모크 테스트 + 문서 정리 — **Phase 2 종료** [위임]
 
 ### 작업

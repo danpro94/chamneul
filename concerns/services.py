@@ -56,6 +56,35 @@ def get_own_concern_including_deleted(user, concern_id) -> Concern:
     return get_object_or_404(Concern.objects.with_deleted().filter(author=user), pk=concern_id)
 
 
+def update_own_concern(user, concern_id, validated_data) -> Concern:
+    """#47 — edit a concern while no advisor has it yet (ADR-008 §4).
+
+    The row is locked and the status read from the locked copy: #24 locks the
+    same row, so an assignment cannot slip in between our check and our write
+    (otherwise the advisor starts answering text that then silently changes).
+    Only the sent fields are written — a full save would overwrite a status
+    changed concurrently with this request's stale copy (.claude/rules/coding.md).
+    """
+    with transaction.atomic():
+        concern = get_object_or_404(
+            Concern.objects.select_for_update(of=("self",)).filter(author=user),
+            pk=concern_id,
+        )
+        # SUBMITTED alone is not enough: unassigning (#25) sends a concern back
+        # to SUBMITTED, but the advisor has already read it and may have
+        # answered. Assignment rows are kept when deactivated, so "ever
+        # assigned" is decidable — and an advice cannot exist without one (#28).
+        ever_assigned = Assignment.objects.filter(concern=concern).exists()
+        if concern.status != ConcernStatus.SUBMITTED or ever_assigned:
+            raise Conflict(
+                "조언가에게 배정된 적이 있는 고민은 고칠 수 없습니다.", reason="NOT_EDITABLE"
+            )
+        for field, value in validated_data.items():
+            setattr(concern, field, value)
+        concern.save(update_fields=[*validated_data, "updated_at"])
+    return concern
+
+
 def soft_delete_concern(concern: Concern) -> None:
     """#19 — soft delete (CLAUDE.md §6.6): set deleted_at, nothing else.
     Advice/Assignment rows are untouched (audit trail preserved)."""

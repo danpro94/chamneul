@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 
 from common.exceptions import Conflict
 
@@ -13,11 +14,32 @@ class SignupSerializer(serializers.ModelSerializer):
     configured validators; the manager hashes it (never stored in plaintext).
     """
 
-    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+    # Declared explicitly to drop the model's auto UniqueValidators: those
+    # compare case-sensitively (F-1: "ALPHA@x" passed, then hit the DB unique
+    # index → 500) and answer 400 (F-2: api.md #2 says 409).
+    email = serializers.EmailField(max_length=254)
+    nickname = serializers.CharField(min_length=2, max_length=20)
+    # trim_whitespace=False: a password is kept exactly as typed, like Django's
+    # own forms (strip=False) — trimming would make "pw " and "pw" the same (I-4).
+    password = serializers.CharField(
+        write_only=True, trim_whitespace=False, style={"input_type": "password"}
+    )
 
     class Meta:
         model = User
         fields = ("email", "nickname", "password")
+
+    def validate_email(self, value):
+        # Same folding as storage (UserManager.canonical_email) — an exact match
+        # on the unique index, not the DB's UPPER() (L-1).
+        if User.objects.filter(email=User.objects.canonical_email(value)).exists():
+            raise Conflict("이미 가입된 이메일입니다.", reason="EMAIL_TAKEN")
+        return value
+
+    def validate_nickname(self, value):
+        if User.objects.filter(nickname=value).exists():
+            raise Conflict("이미 사용 중인 닉네임입니다.", reason="NICKNAME_TAKEN")
+        return value
 
     def validate_password(self, value):
         validate_password(value)
@@ -38,19 +60,42 @@ class LoginSerializer(serializers.Serializer):
     """
 
     email = serializers.EmailField()
-    password = serializers.CharField(write_only=True, style={"input_type": "password"})
+    password = serializers.CharField(
+        write_only=True, trim_whitespace=False, style={"input_type": "password"}
+    )
 
     def validate(self, attrs):
         user = authenticate(
             self.context.get("request"),
-            username=attrs["email"].lower(),
+            username=User.objects.canonical_email(attrs["email"]),
             password=attrs["password"],
         )
         if user is None:
             # Do not reveal whether the email exists (CLAUDE.md §10 / api.md #3).
-            raise serializers.ValidationError("이메일 또는 비밀번호가 올바르지 않습니다.")
+            # Inactive accounts land here too (authenticate() returns None) — the
+            # same 401 as a wrong password, never a distinct 403 (F-4).
+            raise AuthenticationFailed("이메일 또는 비밀번호가 올바르지 않습니다.")
         attrs["user"] = user
         return attrs
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """#45 input. Only the format is checked here — whether the address has an
+    account is deliberately never reported back (ADR-008 §2)."""
+
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """#46 input. Only presence is checked here: the token needs the user and
+    the password validators need the user too (similarity check), so both are
+    judged in `services.confirm_password_reset`."""
+
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, style={"input_type": "password"}
+    )
 
 
 class UserCardSerializer(serializers.ModelSerializer):

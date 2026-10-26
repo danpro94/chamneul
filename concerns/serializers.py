@@ -38,6 +38,16 @@ class ConcernCreateSerializer(serializers.ModelSerializer):
         )
 
 
+class ConcernUpdateSerializer(ConcernCreateSerializer):
+    """PATCH /api/v1/users/me/concerns/{concern-id} (#47) request body.
+
+    Same writable fields and validation as #16, used with partial=True. Server
+    fields (`status`/`author`/`deleted_at`) are not declared, so DRF drops them
+    silently — SPEC-005 decision 3: a client that PATCHes back the object it
+    read must not get a 400.
+    """
+
+
 class ConcernCreateResultSerializer(serializers.ModelSerializer):
     """#16 response — concern_id, status, message only (api.md #16)."""
 

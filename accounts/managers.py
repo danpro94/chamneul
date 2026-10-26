@@ -11,12 +11,24 @@ class UserManager(BaseUserManager):
 
     use_in_migrations = True
 
+    @classmethod
+    def canonical_email(cls, email):
+        """The one stored form of an address: Django's normalization + full lowercase.
+
+        Every lookup by email (signup duplicate check, login, #45, Google
+        linking) must fold with this same function. Comparing with a different
+        folding — e.g. the database UPPER() behind `email__iexact` — let a
+        look-alike such as 'vıctim@' (U+0131) block the real 'victim@'
+        (SPEC-005 final review L-1).
+        """
+        return cls.normalize_email(email).lower()
+
     def _create_user(self, email, nickname, password, **extra_fields):
         if not email:
             raise ValueError("email is required")
         if not nickname:
             raise ValueError("nickname is required")
-        email = self.normalize_email(email).lower()
+        email = self.canonical_email(email)
         user = self.model(email=email, nickname=nickname, **extra_fields)
         user.set_password(password)  # PBKDF2 hashing (CLAUDE.md §10)
         user.save(using=self._db)

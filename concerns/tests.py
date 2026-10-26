@@ -6,7 +6,9 @@ implementation).
 """
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -1148,3 +1150,207 @@ class AdminBypassGuardTests(TestCase):
         for field in ("status", "reviewed_by", "reviewed_at", "score", "content"):
             self.assertIn(field, ma.readonly_fields)
         self.assertNotIn("memo", ma.readonly_fields)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPEC-005 / TASK-005 — 고민 수정 (#47)
+#
+# 고칠 수 있는 건 **아무도 아직 읽지 않은 글**뿐이다(ADR-008 §4). 배정 뒤에
+# 원문이 바뀌면 조언가가 답하던 질문이 조용히 달라진다 — 그래서 SUBMITTED
+# 밖에서는 409이고, 409일 때는 어떤 컬럼도 바뀌지 않았는지까지 본다.
+# ═══════════════════════════════════════════════════════════════════════════
+
+EDITABLE_FIELDS = (
+    "concern_summary",
+    "concern_type",
+    "concern_type_secondary",
+    "preferred_advisor_lane",
+    "decision_context",
+    "display_alias",
+    "is_anonymous",
+)
+
+
+class ConcernEditTests(TestCase):
+    """PATCH /api/v1/users/me/concerns/{concern-id} (#47)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.author = User.objects.create_user(
+            email="editor@example.com", nickname="editor", password="pw12345!"
+        )
+        self.stranger = User.objects.create_user(
+            email="stranger@example.com", nickname="stranger", password="pw12345!"
+        )
+        self.concern = Concern.objects.create(
+            author=self.author,
+            concern_summary="처음 쓴 요약",
+            concern_type=ConcernType.BURNOUT,
+            decision_context="처음 쓴 맥락",
+        )
+        self.client.force_authenticate(self.author)
+
+    def url(self, concern_id=None):
+        return f"{CONCERNS_URL}/{concern_id or self.concern.id}"
+
+    def edit(self, body, client=None):
+        return (client or self.client).patch(self.url(), body, format="json")
+
+    def snapshot(self):
+        """DB에 실제로 저장된 값 — 응답이 아니라 행을 본다."""
+        row = Concern.all_objects.get(pk=self.concern.pk)
+        columns = (*EDITABLE_FIELDS, "status", "author_id", "deleted_at", "updated_at")
+        return {name: getattr(row, name) for name in columns}
+
+    # ── 성공 경로 ────────────────────────────────────────────────────────
+
+    def test_submitted_own_concern_is_200_and_updates_fields(self):
+        response = self.edit({"concern_summary": "고친 요약", "decision_context": "고친 맥락"})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = self.snapshot()
+        self.assertEqual(row["concern_summary"], "고친 요약")
+        self.assertEqual(row["decision_context"], "고친 맥락")
+        self.assertEqual(row["status"], ConcernStatus.SUBMITTED)
+
+    def test_response_has_the_same_shape_as_detail(self):
+        """api.md #47: 응답은 #18(고민 상세)과 같은 형태."""
+        response = self.edit({"concern_summary": "고친 요약"})
+        self.assertEqual(response.json(), self.client.get(self.url()).json())
+
+    def test_partial_update_leaves_other_fields_unchanged(self):
+        before = self.snapshot()
+        self.edit({"is_anonymous": False})
+        after = self.snapshot()
+
+        self.assertFalse(after["is_anonymous"])
+        for name in EDITABLE_FIELDS:
+            if name != "is_anonymous":
+                self.assertEqual(after[name], before[name], name)
+
+    def test_edit_has_no_side_effects(self):
+        """상태 전이·알림 없음(api.md #47 Side Effect)."""
+        self.edit({"concern_summary": "고친 요약"})
+        self.assertEqual(self.snapshot()["status"], ConcernStatus.SUBMITTED)
+        self.assertEqual(Notification.objects.count(), 0)
+
+    # ── 상태 게이트 ──────────────────────────────────────────────────────
+
+    def test_after_assignment_is_409_and_nothing_changes(self):
+        for state in (ConcernStatus.ASSIGNED, ConcernStatus.ANSWERED, ConcernStatus.CLOSED):
+            with self.subTest(state=state):
+                Concern.objects.filter(pk=self.concern.pk).update(status=state)
+                before = self.snapshot()
+
+                response = self.edit({"concern_summary": "몰래 고친 요약", "is_anonymous": False})
+
+                self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+                self.assertEqual(response.json()["error"]["details"]["reason"], "NOT_EDITABLE")
+                # updated_at까지 같아야 한다 — 어떤 UPDATE도 나가지 않았다는 뜻.
+                self.assertEqual(self.snapshot(), before)
+
+    def test_once_assigned_it_stays_locked_even_after_unassignment(self):
+        """최종 리뷰 L-3 (Owner 결정 a). 배정이 전부 해제되면 고민은 SUBMITTED로
+        돌아오지만(#25), 조언가는 이미 원문을 읽었고 조언을 썼을 수도 있다.
+        한 번이라도 배정된 적 있는 고민은 고칠 수 없다 — 배정 행은 해제돼도
+        지워지지 않으므로(is_active=False) 이력으로 판정한다."""
+        advisor = User.objects.create_user(
+            email="adv-edit@example.com", nickname="advedit", password="pw12345!"
+        )
+        Assignment.objects.create(
+            concern=self.concern,
+            advisor=advisor,
+            assigned_by=self.stranger,
+            triage_decision=TriageDecision.SUITABLE,
+            is_active=False,  # #25가 남기는 상태
+        )
+        self.assertEqual(self.snapshot()["status"], ConcernStatus.SUBMITTED)
+        before = self.snapshot()
+
+        response = self.edit({"concern_summary": "배정 해제 후 고친 요약"})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.json()["error"]["details"]["reason"], "NOT_EDITABLE")
+        self.assertEqual(self.snapshot(), before)
+
+    # ── 접근 제어 ────────────────────────────────────────────────────────
+
+    def test_other_users_concern_is_404_and_unchanged(self):
+        """§1.8: 남의 고민은 존재조차 알리지 않는다(403 아님)."""
+        before = self.snapshot()
+        intruder = APIClient()
+        intruder.force_authenticate(self.stranger)
+
+        response = self.edit({"concern_summary": "남이 고친 요약"}, client=intruder)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_soft_deleted_concern_is_404(self):
+        Concern.objects.filter(pk=self.concern.pk).update(deleted_at=timezone.now())
+        response = self.edit({"concern_summary": "삭제 후 수정"})
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_anonymous_is_401(self):
+        response = self.edit({"concern_summary": "익명 수정"}, client=APIClient())
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    # ── 입력 ─────────────────────────────────────────────────────────────
+
+    def test_server_managed_fields_are_ignored(self):
+        """결정 3(spec §7): 조회한 객체를 통째로 PATCH하는 정상 클라이언트를
+        깨지 않도록 400이 아니라 무시한다. 무시가 '저장 안 됨'인지 확인한다."""
+        response = self.edit(
+            {
+                "concern_summary": "고친 요약",
+                "status": ConcernStatus.CLOSED,
+                "author": str(self.stranger.id),
+                "deleted_at": "2026-01-01T00:00:00Z",
+                "created_at": "2020-01-01T00:00:00Z",
+            }
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = self.snapshot()
+        self.assertEqual(row["concern_summary"], "고친 요약")
+        self.assertEqual(row["status"], ConcernStatus.SUBMITTED)
+        self.assertEqual(row["author_id"], self.author.id)
+        self.assertIsNone(row["deleted_at"])
+
+    def test_invalid_values_are_400_and_unchanged(self):
+        """#16과 같은 검증(분류 11종, 요약 100자, 보조 분류 최대 2개)."""
+        cases = {
+            "unknown type": {"concern_type": "not_a_type"},
+            "summary too long": {"concern_summary": "가" * 101},
+            "three secondary types": {
+                "concern_type_secondary": [
+                    ConcernType.JOB_CHANGE,
+                    ConcernType.RELOCATION,
+                    ConcernType.LEADERSHIP,
+                ]
+            },
+        }
+        before = self.snapshot()
+        for label, body in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.edit(body).status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.snapshot(), before)
+
+    # ── 상태 전이 규칙(.claude/rules/coding.md) ──────────────────────────
+
+    def test_locks_the_row_and_writes_only_the_sent_fields(self):
+        """잠금이 없으면 'SUBMITTED 확인 직후 관리자가 배정'하는 틈에 조언가가
+        읽기 시작한 글을 고치게 된다. 받은 필드만 쓰지 않으면 동시에 바뀐
+        status를 이 요청의 오래된 값으로 덮어쓴다."""
+        with CaptureQueriesContext(connection) as ctx:
+            self.assertEqual(self.edit({"concern_summary": "고친 요약"}).status_code, 200)
+        sqls = [q["sql"] for q in ctx.captured_queries]
+
+        self.assertTrue(any('FOR UPDATE OF "concerns_concern"' in s for s in sqls), sqls)
+        updates = [s for s in sqls if s.startswith('UPDATE "concerns_concern"')]
+        self.assertEqual(len(updates), 1)
+        set_clause = updates[0].split(" WHERE ")[0]
+        self.assertIn('"concern_summary"', set_clause)
+        self.assertIn('"updated_at"', set_clause)
+        for column in ('"status"', '"decision_context"', '"author_id"', '"deleted_at"'):
+            self.assertNotIn(column, set_clause)

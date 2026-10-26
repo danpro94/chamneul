@@ -15,6 +15,26 @@ class ActiveRole(models.TextChoices):
     # "worn" as the active context (api.md §2).
 
 
+# Columns that decide who can log in, with what authority, and what a password
+# reset token is computed from (password, last_login, email). See User.save().
+STALE_WRITE_GUARDED = (
+    "password",
+    "last_login",
+    "email",
+    "is_active",
+    "is_staff",
+    "is_superuser",
+    "active_role",
+)
+
+
+def _guarded_among(field_names):
+    """Guarded columns among `field_names` (all of them when None = every field)."""
+    if field_names is None:
+        return STALE_WRITE_GUARDED
+    return [name for name in STALE_WRITE_GUARDED if name in field_names]
+
+
 class User(AbstractBaseUser, PermissionsMixin):
     """Authentication subject. Email is the single login identifier.
 
@@ -51,6 +71,45 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f"{self.nickname} <{self.email}>"
+
+    # --- stale-write safety net (SPEC-005 final review H-1) ----------------
+    # save() without update_fields writes every column, so an instance loaded
+    # before someone else changed one of the guarded columns would silently put
+    # the old value back. #8 did exactly that: a slow profile PATCH could undo
+    # F-5's password disable, #46's lock-out and a role revocation. #8 itself
+    # now writes only what it was sent; this net covers every other full save
+    # (Django Admin, future code) by leaving out guarded columns that this
+    # instance did not change. Inserts and explicit update_fields are untouched.
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._remember_guarded(STALE_WRITE_GUARDED)
+        return instance
+
+    def _remember_guarded(self, names):
+        baseline = getattr(self, "_guarded_baseline", {})
+        for name in names:
+            if name in self.__dict__:  # deferred columns are not loaded
+                baseline[name] = self.__dict__[name]
+        self._guarded_baseline = baseline
+
+    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
+        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
+        self._remember_guarded(_guarded_among(fields))
+
+    def save(self, *args, **kwargs):
+        baseline = getattr(self, "_guarded_baseline", None)
+        if baseline and not args and not self._state.adding and kwargs.get("update_fields") is None:
+            untouched = {n for n, v in baseline.items() if self.__dict__.get(n) == v}
+            if untouched:
+                kwargs["update_fields"] = [
+                    f.name
+                    for f in self._meta.concrete_fields
+                    if not f.primary_key and f.attname in self.__dict__ and f.name not in untouched
+                ]
+        super().save(*args, **kwargs)
+        self._remember_guarded(_guarded_among(kwargs.get("update_fields")))
 
 
 class Role(models.TextChoices):

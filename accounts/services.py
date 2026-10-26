@@ -8,14 +8,23 @@ only ADVISOR/ADMIN are stored as UserRole rows (model.md §3.2).
 
 import re
 import secrets
+import uuid
 
+from django.contrib.auth import SESSION_KEY
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.contrib.sessions.models import Session
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from common.exceptions import Conflict
 from common.uuid7 import uuid7
 
+from .emails import send_reset_mail
 from .models import ActiveRole, Role, RoleGrant, RoleGrantAction, User, UserRole
 
 # advisor_status exposes only these (api.md #9). WITHDRAWN is unreachable in
@@ -86,6 +95,30 @@ def set_active_role(user, target: str) -> None:
 # --- Google OAuth account linking / creation (C-11, ADR-002 §7) -----------
 
 
+def update_profile(user, validated_data) -> "User":
+    """#8 — partial profile update (SPEC-005 final review H-1).
+
+    `request.user` was loaded at authentication time, before the body was read.
+    Saving that snapshot wrote back *every* column — a password, is_active or
+    active_role changed meanwhile (F-5, #46, a role revoke, an admin) came back.
+    So the row is locked and re-read, and only the sent columns are written.
+    """
+    with transaction.atomic():
+        locked = User.objects.select_for_update(of=("self",)).get(pk=user.pk)
+        for field, value in validated_data.items():
+            setattr(locked, field, value)
+        try:
+            # Savepoint: an IntegrityError would otherwise leave the connection
+            # unusable for the rest of the request (session save included).
+            with transaction.atomic():
+                locked.save(update_fields=[*validated_data, "updated_at"])
+        except IntegrityError as exc:
+            # validate_nickname pre-checks, but a concurrent request can still
+            # win the unique race — the DB constraint is the final arbiter (S8).
+            raise Conflict("이미 사용 중인 닉네임입니다.") from exc
+    return locked
+
+
 def _derive_nickname_base(name: str, email: str) -> str:
     """C-11 base value: Google name -> email local part -> "user".
     Trim, collapse internal whitespace, truncate to 15 chars (leaves room for a
@@ -131,22 +164,37 @@ def link_or_create_google_user(google_sub: str, email: str, name: str = ""):
     """
     from .models import GoogleIdentity, User
 
-    email = email.lower()
+    email = User.objects.canonical_email(email)
 
     identity = GoogleIdentity.objects.filter(google_sub=google_sub).select_related("user").first()
     if identity is not None:
         return identity.user
 
-    existing = User.objects.filter(email=email).first()
-    if existing is not None:
-        # Reaching here means this google_sub is NOT yet linked (step 1 missed).
-        # If the matched account already has a Google link, it is a different
-        # account — refuse rather than silently overwrite or violate the
-        # OneToOne (which would surface as an opaque 500).
-        if GoogleIdentity.objects.filter(user=existing).exists():
-            raise Conflict("이 계정은 이미 다른 Google 계정과 연결되어 있습니다.")
-        GoogleIdentity.objects.create(user=existing, google_sub=google_sub, email=email)
-        return existing
+    with transaction.atomic():
+        existing = User.objects.select_for_update(of=("self",)).filter(email=email).first()
+        if existing is not None and not existing.is_active:
+            # A frozen account is answered 401 by the view; it must not be
+            # linked or have its password and sessions changed first (I-2).
+            return existing
+        if existing is not None:
+            # Reaching here means this google_sub is NOT yet linked (step 1 missed).
+            # If the matched account already has a Google link, it is a different
+            # account — refuse rather than silently overwrite or violate the
+            # OneToOne (which would surface as an opaque 500).
+            if GoogleIdentity.objects.filter(user=existing).exists():
+                raise Conflict("이 계정은 이미 다른 Google 계정과 연결되어 있습니다.")
+            GoogleIdentity.objects.create(user=existing, google_sub=google_sub, email=email)
+            # F-5 (pre-account takeover): signup (#2) never proved ownership of
+            # this address, so whoever created the local account may not be the
+            # person Google just verified. Their password and sessions must not
+            # survive the link. The real owner can set a password again via #45.
+            existing.set_unusable_password()
+            existing.save(update_fields=["password", "updated_at"])
+            # Row deletion is the cleanup; the real backstop is Django's session
+            # auth hash — a session opened by a login racing this transaction is
+            # rejected on its next request because the password hash changed (I-3).
+            _purge_sessions_of(existing)
+            return existing
 
     return _create_with_nickname(email, google_sub, _derive_nickname_base(name, email))
 
@@ -275,3 +323,102 @@ def revoke_role(target_user_id, role, actor, reason=""):
             target.save(update_fields=["active_role", "updated_at"])
 
     return target
+
+
+def _reset_allowed(user) -> bool:
+    """Local accounts, and Google accounts (decision 2). An unusable password
+    with no Google link means an admin switched password login off — the
+    mailbox alone must not reopen it (security review S-2)."""
+    from .models import GoogleIdentity
+
+    return user.has_usable_password() or GoogleIdentity.objects.filter(user=user).exists()
+
+
+def request_password_reset(email: str) -> None:
+    """#45 — mail a reset link if the address belongs to an active account.
+
+    Returns nothing on purpose: the caller cannot tell whether a mail went out,
+    so the view has no way to let it leak into the response (ADR-008 §2).
+    Inactive accounts are skipped, as Django's own reset form does — they could
+    not log in with the new password anyway (#3).
+
+    Nothing is written: the token is computed from the password hash and
+    last_login, so changing the password is what invalidates it (#46).
+    """
+    user = User.objects.filter(email=User.objects.canonical_email(email), is_active=True).first()
+    if user is None or not _reset_allowed(user):
+        return
+    token = default_token_generator.make_token(user)
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    send_reset_mail(user, uid, token)
+
+
+# One message for every way a link can be bad (expired, used, forged, unknown
+# account). Telling them apart would reveal that a token or account existed.
+_INVALID_RESET_LINK = "링크가 만료됐거나 올바르지 않습니다. 비밀번호 재설정을 다시 요청해 주세요."
+
+
+def _user_id_from_uid(uidb64: str):
+    try:
+        return uuid.UUID(urlsafe_base64_decode(uidb64).decode())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _purge_sessions_of(user) -> None:
+    """Delete every server-side session row of `user`.
+
+    Django already logs those sessions out on their next request (the session
+    carries a hash derived from the password), but the rows would linger until
+    expiry. Deleting them follows the logout rule (ADR-002 §4): invalidation is
+    a server-side fact, not something we wait for.
+
+    Full scan because the DB session table has no user column — acceptable at
+    Phase 2 size; a user index is the next step if it grows (SPEC-005 plan §2).
+    Assumes the DB session backend (Django's default): with the cache backend
+    this would silently delete nothing — a test pins SESSION_ENGINE (L-4).
+    """
+    user_id = str(user.pk)
+    stale = [
+        session.session_key
+        for session in Session.objects.iterator()
+        if session.get_decoded().get(SESSION_KEY) == user_id
+    ]
+    Session.objects.filter(session_key__in=stale).delete()
+
+
+def confirm_password_reset(uidb64: str, token: str, new_password: str) -> "User":
+    """#46 — set a new password from a mailed link, then end every session.
+
+    The user row is locked and re-read before the token check: two requests
+    with the same link would otherwise both see the old password and both pass.
+    The token needs no explicit revocation — it is derived from the password
+    hash, so changing the password is what makes it fail next time.
+    """
+    with transaction.atomic():
+        # A malformed uid becomes None, which matches no row — same path as an
+        # unknown account, so the two cannot be told apart.
+        user_id = _user_id_from_uid(uidb64)
+        user = (
+            User.objects.select_for_update(of=("self",)).filter(pk=user_id, is_active=True).first()
+        )
+        if (
+            user is None
+            or not _reset_allowed(user)
+            or not default_token_generator.check_token(user, token)
+        ):
+            raise ValidationError({"token": [_INVALID_RESET_LINK]})
+
+        try:
+            validate_password(new_password, user=user)
+        except DjangoValidationError as exc:
+            raise ValidationError({"new_password": list(exc.messages)}) from exc
+
+        user.set_password(new_password)
+        user.save(update_fields=["password", "updated_at"])
+
+        # Recovering a password = the account may have been taken over. A
+        # surviving session would leave the intruder logged in (api.md #46).
+        # As in linking, the session auth hash is the real backstop (I-3).
+        _purge_sessions_of(user)
+    return user

@@ -1,0 +1,234 @@
+# SPEC-005 — API 공백 3건 + `accounts` 회귀 기반
+
+> 대상: [docs/api.md](../../docs/api.md) #45·#46·#47 ([ADR-008](../../docs/adr/ADR-008-password-reset-and-concern-edit.md)) + `accounts`의 M4-1~M4-3 회귀 테스트.
+> Status: **Approved (2026-09-28)** — §7 결정 3건 권고안대로 승인. TASK-001 완료.
+
+## 1. 배경 — 왜 두 가지를 한 SPEC에 묶는가
+
+ADR-008이 엔드포인트 3건을 추가했다. 그중 둘(#45·#46)이 **`accounts` 앱의 인증 경로**를 건드리는데, 그 앱의 인증 관련 자동 테스트는 **0건**이다.
+
+| 앱 영역 | 엔드포인트 | 현재 테스트 |
+| --- | --- | --- |
+| 역할 (#10·#42·#43) | 3 | **55개** (SPEC-003) |
+| **인증 (#2·#3·#4)** | 3 | **0** |
+| **OAuth (#5·#6)** | 2 | **0** |
+| **프로필 (#7·#8·#9)** | 3 | **0** |
+
+#46은 **성공 시 기존 세션을 전부 무효화**한다. 즉 로그인·로그아웃 동작을 직접 건드린다. **그 동작을 지키는 테스트가 없는 상태에서 건드리는 것은 눈 감고 수술하는 것과 같다.**
+
+또 `#5·#6`(Google OAuth)은 이 프로젝트에서 **자동 테스트도 스모크도 없는 유일한 영역**이다([smoke-test.md](../../docs/smoke-test.md) §5 갭 9). Phase 2 종료 리뷰에서 `devops-local-platform`이 Phase 3 최우선으로 올린 항목이기도 하다.
+
+따라서 순서는 **회귀 기반을 먼저 깔고, 그 위에서 새 엔드포인트를 만든다.**
+
+## 2. 대상
+
+### 2-1. 새 엔드포인트 3건
+
+| # | Method | Endpoint | Permission |
+| --- | --- | --- | --- |
+| 45 | POST | `/api/v1/auth/password-reset` | Anonymous |
+| 46 | POST | `/api/v1/auth/password-reset/confirm` | Anonymous |
+| 47 | PATCH | `/api/v1/users/me/concerns/{concern-id}` | User(본인) |
+
+### 2-2. 회귀 테스트를 덮을 기존 엔드포인트 8건
+
+`#2` 회원가입 · `#3` 로그인 · `#4` 로그아웃 · `#5` OAuth authorize · `#6` OAuth callback · `#7` 프로필 조회 · `#8` 프로필 수정 · `#9` 역할 목록
+
+**구현을 바꾸지 않는다.** 이미 동작하는 것을 고정하는 작업이다. 테스트를 쓰다가 결함이 나오면 **별도로 보고하고 결정을 받은 뒤** 고친다.
+
+## 3. 핵심 도메인 규칙
+
+| 규칙 | 출처 |
+| --- | --- |
+| #45는 **가입되지 않은 주소에도 200** — 응답 본문·상태 코드가 동일 | ADR-008 §2, CLAUDE.md §10 |
+| 토큰은 **저장하지 않는다** — Django 기본 생성기가 계산으로 검증 | ADR-008 §2 |
+| 토큰 유효기간 **30분**, 사용 후 무효 | ADR-008 §2 |
+| #46 성공 시 **해당 사용자의 기존 세션 전부 무효화** | api.md #46 |
+| 만료·위조·재사용 토큰은 **전부 400**으로 같게 | api.md #46 |
+| #47은 **`SUBMITTED` 상태에서만**, 그 외 409 | ADR-008 §4 |
+| #47은 `status`·`author`·`deleted_at`을 바꿀 수 없다 | api.md #47 |
+| 메일 발송은 **local/test = 콘솔**, prod는 Phase 3 | ADR-008 §3 |
+
+## 4. GIVEN/WHEN/THEN (요약)
+
+### #45 재설정 요청
+
+* GIVEN 가입된 이메일 / THEN 200 + 메일 1통 발송
+* GIVEN **가입되지 않은** 이메일 / THEN **200, 본문 동일**, 메일 미발송
+* GIVEN Google 전용 계정(사용 불가 비밀번호) / THEN 200, 메일 본문이 **다름**
+* GIVEN 형식이 이메일이 아님 / THEN 400
+* GIVEN CSRF 토큰 없음 / THEN 403
+* **응답 바이트 비교**: 가입/미가입 응답이 완전히 동일한지 테스트로 고정
+
+### #46 재설정 확정
+
+* GIVEN 유효한 `uid`+`token`+새 비밀번호 / THEN 200, 비밀번호 변경, **새 비밀번호로 로그인 성공**
+* GIVEN 같은 토큰 재사용 / THEN 400, **비밀번호 불변**
+* GIVEN 만료된 토큰(30분 초과) / THEN 400
+* GIVEN 위조된 토큰 / THEN 400 — 위 셋의 응답이 **서로 구분되지 않아야** 한다
+* GIVEN 약한 비밀번호(검증기 미통과) / THEN 400, 비밀번호 불변
+* GIVEN 재설정 성공 / THEN **그 사용자의 기존 세션으로 `/users/me` 호출 시 401**
+
+### #47 고민 수정
+
+* GIVEN `SUBMITTED` 고민 + 본인 / THEN 200, 필드 갱신
+* GIVEN 부분 필드만 전송 / THEN 그 필드만 바뀌고 나머지 불변
+* GIVEN `ASSIGNED`/`ANSWERED`/`CLOSED` / THEN **409, 어느 필드도 불변**
+* GIVEN 타인의 고민 / THEN **404**(§1.8)
+* GIVEN 소프트 삭제된 고민 / THEN 404
+* GIVEN `status`·`author`·`deleted_at` 포함 전송 / THEN 200이되 **그 필드는 무시**(§7 결정 3)
+* GIVEN 비로그인 / THEN 401
+
+### 회귀 테스트 (기존 8건)
+
+* `#2` 가입 → 201 + `sessionid` 발급 + 중복 이메일/닉네임 409 + 약한 비밀번호 400
+* `#3` 로그인 성공/실패 · `#4` 로그아웃 후 **서버 세션 삭제** 확인
+* `#5`/`#6` OAuth — Google 응답을 **mock**하여 신규 생성 / 기존 연결 / 409 충돌 3경로
+* `#7`/`#8` 프로필 조회·수정 · `#9` 역할 목록
+
+## 5. Non-Goals
+
+* **실제 메일 발송** — 인프라(발송 서비스·도메인 인증). Phase 3. 로컬은 콘솔 출력으로 검증.
+* **레이트 리밋** — 재설정 요청 반복 차단. 브루트포스 방어와 함께 Phase 3.
+* **고민 덧붙이기** — 배정 이후 추가 설명. 모델 추가 필요, 실사용 수요 확인 후(ADR-008 Trade-offs).
+* **프론트엔드** — 재설정 링크가 가리킬 화면. 설정값으로만 둔다(§7 결정 1).
+* **기존 구현 변경** — 회귀 테스트는 고정이 목적이다. 결함 발견 시 분리 보고.
+
+## 6. 의존성
+
+* `django.contrib.auth.tokens.PasswordResetTokenGenerator` — Django 내장, **패키지 추가 없음**(§16 게이트 해당 없음).
+* `django.core.mail` + `console` 백엔드 — 내장.
+* `AUTH_PASSWORD_VALIDATORS` 4종 이미 설정됨 — #46이 그대로 재사용.
+* **마이그레이션 없음** — 토큰은 저장하지 않고, 고민 수정은 기존 컬럼만 건드린다.
+* `config/settings/`에 `PASSWORD_RESET_TIMEOUT`·`EMAIL_BACKEND`·`PASSWORD_RESET_URL` 추가 — **셋 다 현재 미설정**.
+
+## 7. Owner 결정 — 3건 전부 승인 (2026-09-28)
+
+**결정 1 → (a) 설정값 `PASSWORD_RESET_URL`.** **결정 2 → (a) 비밀번호를 설정해준다.** **결정 3 → (a) 무시.**
+
+아래는 결정 당시의 쟁점 원문이다.
+
+| # | 쟁점 | 후보 | 권고 |
+| --- | --- | --- | --- |
+| **1** | **재설정 링크는 어디를 가리키는가?** 프론트엔드가 아직 없다. 메일 본문에 넣을 URL을 정해야 한다 | (a) **설정값 `PASSWORD_RESET_URL`** — 기본값은 로컬 자리표시자, 프론트가 생기면 교체 (b) 백엔드가 Django 템플릿으로 폼을 직접 띄움 | **(a).** 백엔드가 HTML을 서빙하기 시작하면 API 서버가 아니게 되고, 프론트가 생겼을 때 두 벌이 남는다. `GOOGLE_OAUTH_SUCCESS_REDIRECT`가 이미 같은 패턴이다 |
+| **2** | **Google 전용 계정이 토큰을 들고 #46에 오면?** 그 계정은 로컬 비밀번호가 없다(`set_password(None)`) | (a) **비밀번호를 설정해준다** — 이후 로컬 로그인도 가능 (b) 400으로 거부 | **(a).** 토큰을 가졌다는 것은 **그 메일함의 소유가 증명**된 것이고, 사용자가 원하는 건 "로컬 비밀번호로도 들어가기"다. 거부하면 막다른 길이 되고, Phase 2엔 계정 설정 화면도 없다. ADR-008은 #45의 메일 본문만 다루고 이 경우는 정하지 않았다 |
+| **3** | **#47에 서버 관리 필드가 섞여 오면?** 클라이언트가 조회한 객체를 통째로 PATCH하는 건 흔한 패턴이다 | (a) **무시** (serializer에 없는 필드) (b) 400 | **(a).** DRF 기본 동작이고, 400으로 하면 "받은 걸 그대로 돌려보내는" 정상적인 클라이언트가 깨진다. api.md는 "바꿀 수 없다"까지만 적고 방식은 미정이었다 |
+
+세 결정 모두 CLAUDE.md 조항과 충돌하지 않는다 — **ADR 불필요**(§16). 다만 결정 1·2는 api.md에 반영해야 한다.
+
+## 8. 리스크
+
+| # | 리스크 | 대응 |
+| --- | --- | --- |
+| 1 | **회귀 테스트를 쓰다가 기존 결함이 나올 수 있다.** `accounts`의 인증 경로는 test-first 도입 전(2026-07-09)에 구현됐다 | 고치지 말고 **분리 보고 → 결정 후 처리**. SPEC-004에서 `data-modeler`의 코드 지적 5건을 분리했던 것과 같은 방식 |
+| 2 | **OAuth 테스트는 외부 호출을 mock해야 한다.** Google `tokeninfo`를 실제로 부르면 테스트가 네트워크에 의존한다 | `accounts/oauth.py`의 호출 지점을 `unittest.mock.patch`로 대체. **mock 경계를 우리 코드의 함수에 두지 말고 `urllib` 호출에 둔다** — 우리 코드를 mock하면 우리 코드가 검증되지 않는다 |
+| 3 | 토큰 만료 테스트가 30분을 기다릴 수 없다 | `PASSWORD_RESET_TIMEOUT`을 `override_settings`로 0초로 낮춰 검증 |
+| 4 | #46의 세션 무효화가 **다른 사용자의 세션까지** 지울 수 있다 | 해당 사용자의 세션만 지우는지 **다른 계정 세션이 살아 있는지**로 함께 검증 |
+| 5 | 이 SPEC은 SPEC-003(13 엔드포인트)보다 작지만 **테스트 수는 많다**(기존 8 + 신규 3) | TASK를 6개로 나누고 각 TASK 후 정지·확인 |
+
+## 9. 회귀 테스트가 찾은 것 — 분리 보고 (TASK-001, 2026-09-28)
+
+구현을 바꾸지 않고 기존 동작을 고정하다가 **api.md 계약과 다른 동작 4건**이 나왔다. §8 리스크 1이 예상한 그대로이며, 규칙대로 **고치지 않고 분리**했다. 계약을 단언하는 테스트는 `@expectedFailure`로 두어 스위트를 녹색으로 유지하되, 누군가 고치는 순간 "예상치 못한 성공"으로 떠서 데코레이터를 떼게 만든다.
+
+| ID | 경로 | 실측 | api.md | 성격 |
+| --- | --- | --- | --- | --- |
+| **F-1** | `#2` 기존 이메일을 **대소문자만 바꿔** 가입 | **500** (IntegrityError 미처리) | 409 | **결함.** 중복 검사는 입력값 그대로(대소문자 구분) 비교하고, 저장 시 매니저가 소문자로 바꾼다 → 검사 통과 후 DB 제약 충돌. 사용자 입력으로 서버가 죽는 경로 |
+| **F-2** | `#2` 중복 이메일 / 중복 닉네임 | 400 + 영문 Django 기본 메시지 | 409 | 계약 불일치. `SignupSerializer`가 모델의 자동 `UniqueValidator`를 그대로 씀. `#8`은 같은 문제를 이미 409로 고쳐뒀다(`validate_nickname`) — 가입 쪽만 빠졌다 |
+| **F-3** | `#3` 틀린 비밀번호 / 없는 계정 | 400 | 401 (§1.8 "인증 필요/실패") | 계약 불일치. 두 경우가 **서로 구분되지 않는다는 핵심 불변식은 지켜지고 있다**(테스트로 고정) |
+| **F-4** | `#3` 비활성 계정 | 400 (F-3과 동일 응답) | 403 | **문서 쪽 재검토 대상.** 403을 따로 주면 "계정이 있고 비밀번호도 맞다"가 샌다. Phase 2엔 정지 기능도 없다. 현재 동작이 더 안전할 수 있다 |
+
+관찰(결함 아님): `LANGUAGE_CODE = "en-us"`라 검증기 메시지가 영문이다("This password is too short…"). 응답 봉투의 `message`는 한국어라 한 응답 안에 두 언어가 섞인다.
+
+**이 4건은 TASK-006에서 Owner 결정을 받는다.** F-1은 결함이라 수정이 필요하고, F-2·F-3은 코드를 계약에 맞출지 계약을 코드에 맞출지, F-4는 api.md를 고칠지의 문제다.
+
+## 10. TASK-003 구현 중 판단 — Owner 확인 대상 (2026-10-14)
+
+계약(api.md #45)을 바꾸지 않는 범위의 구현 판단이다. 셋 다 "응답으로 계정 존재를 알리지 않는다"는 ADR-008 §2에서 나왔다.
+
+| # | 판단 | 이유 | 검증 |
+| --- | --- | --- | --- |
+| I-1 | **비활성 계정(`is_active=False`)에는 메일을 보내지 않는다.** 응답은 동일 | 새 비밀번호로도 로그인할 수 없다(#3). Django 기본 `PasswordResetForm`도 같은 이유로 건너뛴다 | `test_inactive_account_gets_identical_response_and_no_mail` |
+| I-2 | **메일 발송 실패는 응답에 반영하지 않는다.** 로그(pk만, 주소 없음)로만 남기고 200 | 가입된 주소에만 500이 나면 그 500이 "가입됨" 신호가 된다. Django 기본 폼과 같은 선택. api.md의 500은 다른 서버 오류용으로 남는다 | `test_mail_failure_does_not_change_the_response` |
+| I-3 | `config/settings/test.py`에 `EMAIL_BACKEND`를 두지 않는다(plan §1 대비 변경) | Django 테스트 러너가 항상 locmem으로 바꿔치기한다. 두면 동작하지 않는 설정이 된다 | 주석으로 명시 |
+
+I-1·I-2는 TASK-006의 api.md 반영(결정 1·2) 때 #45 Side Effect 행에 함께 적는다.
+
+**남은 갭 (Phase 3)**
+
+* **응답 시간 차이** — 메일 발송이 동기라 가입된 주소의 응답이 더 느릴 수 있다(콘솔 백엔드에서는 무시할 수준, 실제 SMTP에서는 커진다). 발송을 비동기(큐)로 넘기면 닫힌다. 레이트 리밋과 함께 Phase 3. *(2026-10-14 보안 리뷰 S-1: 타임아웃이 없으면 시간 차이가 아니라 **상태 코드(502) 차이 + 워커 고갈**로 커진다 → `EMAIL_TIMEOUT = 10`으로 막았다. 시간 차이 자체는 남는다 — §12)*
+* **보내는 주소** — `DEFAULT_FROM_EMAIL` 미설정이라 `webmaster@localhost`로 나간다. SMTP 연결과 함께 배포 시점에 정한다.
+* **`.env.example`에 `PASSWORD_RESET_URL` 키 추가** — §16(`.env*`) 승인 대기. 기본값이 settings에 있어 로컬 동작에는 지장이 없다.
+
+## 11. TASK-004 구현 중 확인한 것 (2026-10-14)
+
+* **세션 무효화는 두 겹이다.** ① Django는 세션에 비밀번호 파생 해시를 넣고 요청마다 대조하므로, 비밀번호가 바뀌면 옛 세션은 다음 요청에서 저절로 로그아웃된다. ② 서비스가 그 사용자의 세션 **행**을 서버에서 지운다(ADR-002 §4 로그아웃 원칙). ①만으로 401이 나오기 때문에 "옛 세션 → 401" 테스트는 ②를 지워도 통과한다 — 변이 검증으로 실측했다. ②는 "세션 행이 사라졌고 다른 사용자 행은 남았는가"로 따로 고정했다.
+* **만료 테스트 방법 변경** — tasks.md TASK-004 참조(0초 설정은 같은 초 안의 토큰을 통과시킨다).
+* **오류 리포트 가림** — DRF는 form 인코딩 본문도 받으므로, 운영(DEBUG=False) 오류 리포트에 `request.POST`와 프레임 지역 변수(시리얼라이저 repr 포함)가 실린다. `sensitive_post_parameters` + 뷰의 `sensitive_variables()`로 가렸다. Django는 가장 가까운 *호출자*의 데코레이터를 아래 프레임에도 적용하므로 서비스 함수에는 따로 달지 않았다(달아도 테스트가 잡지 못하는 중복). **DEBUG=True 화면은 Django가 일부러 가리지 않는다**(로컬 전용).
+* 확정은 **로그인시키지 않는다** — 새 비밀번호로 #3을 거친다. 비활성 계정의 링크는 같은 400(I-1의 짝).
+
+## 12. 보안 리뷰 — `security-reviewer`, #45 대상 (2026-10-14)
+
+TASK-004와 **병렬로 백그라운드 실행**. 판정: **Blocker 0 · High 0 · Medium 3 · Low 3 · Info 2**. #45 응답으로 가입 여부가 드러나는 경로는 찾지 못했다(DB 오류·NUL·서로게이트·320자 초과·닉네임 `{}`·세션/CSRF 헤더까지 점검).
+
+| ID | 심각도 | 내용 | 처리 |
+| --- | --- | --- | --- |
+| S-1 | Medium | 메일 소켓 타임아웃 없음 → 응답 없는 메일 서버 앞에서 gunicorn 워커(30초)가 먼저 죽음. `SystemExit`라 `except Exception`이 못 잡아 **가입된 주소에만 502** + 워커 고갈 | **수정** — `EMAIL_TIMEOUT = 10` + 테스트 |
+| S-2 | Medium | 메일 분기가 `has_usable_password()`라 결정 2(Google 전용)보다 넓다 — Admin이 비밀번호 로그인을 **꺼 둔** 비-Google 계정도 링크를 받아 다시 연다. 본문도 "Google 로그인을 쓰고 있어요"로 사실과 다름 | **Owner 결정** (TASK-006) |
+| S-3 | Medium | 진입점 기본값이 `config.settings.local` — 배포 시 지정을 빠뜨리면 콘솔 메일 → **로그 읽기 권한만으로 계정 탈취**. 로컬 `docker compose logs app`에도 살아 있는 토큰이 찍힌다 | **Owner 결정** (Phase 3 배포 체크리스트) + smoke-test 경고 문구(TASK-006) |
+| S-4 | Low | `logger.exception`의 traceback에 SMTP 거부 예외 문자열(수신 주소 포함)이 실림 | **수정** — 예외 타입명만 기록 + `SMTPRecipientsRefused` 회귀 테스트 |
+| S-5 | Low | 토큰이 쿼리스트링(`?token=`) → 프론트 접근 로그·분석 스크립트·브라우저 기록으로 샐 수 있음. fragment(`#`)면 서버에 가지 않음 | **Owner 결정** (결정 1의 링크 형식, 프론트 계약) |
+| S-6 | Low | prod에서 `PASSWORD_RESET_URL` 누락 시 조용히 `http://localhost` | Phase 3 (prod 필수화 + https 검사) |
+| S-7 | Info | #45는 은닉하지만 #2 가입(F-1·F-2)이 같은 정보를 다른 길로 노출 | TASK-006 — ADR-008 §2의 범위를 #45·#46으로 명시 |
+| S-8 | Info | 장점(저장된 주소로 발송 — CVE-2019-19844 유형 회피)을 지키는 단언이 없음 + 헤더·상태 코드 비교 누락 | **수정** — 단언 3개 추가 |
+
+**범위 밖 관찰 — F-5 후보 (High 후보, 기존 M4-3 동작)**: 가입(#2)은 이메일 소유를 확인하지 않는데, #6은 **검증된 이메일이 같으면 기존 계정에 연결**한다. 공격자가 피해자 주소로 먼저 로컬 계정을 만들어 두면, 피해자가 나중에 Google로 로그인할 때 그 계정에 붙고 **공격자의 비밀번호가 계속 유효**하다(사전 계정 탈취). #45가 생긴 덕분에 완화가 쉬워졌다 — 연결 순간 로컬 비밀번호를 사용 불가로 바꾸고 세션을 정리해도, 사용자는 #45로 비밀번호를 다시 만들 수 있다. **Owner 결정** (TASK-006 또는 별도 SPEC).
+
+리뷰가 #46용으로 준 체크리스트 7항은 TASK-004에 전부 반영됐다(§11).
+
+## 13. TASK-006 — 결정과 처리 (2026-10-22, 권고안 전건 승인)
+
+| ID | 결정 | 구현 | 고정한 테스트 |
+| --- | --- | --- | --- |
+| F-1 | 결함 수정 | 가입 이메일 중복 검사를 대소문자 무시(`email__iexact`)로 | `test_duplicate_email_in_other_case_is_409_not_500` |
+| F-2 | 코드를 계약에 | 가입 중복 → 409 + `reason`(`EMAIL_TAKEN`·`NICKNAME_TAKEN`). 모델 자동 `UniqueValidator`를 버리려 필드를 직접 선언(길이 규칙 2~20자 유지 확인) | `..._is_409_per_contract` ×2, `test_nickname_length_rules_still_apply` |
+| (F-1 후속) | — | 검사와 저장 사이의 **동시 가입 경합** → DB 인덱스가 판정, 409. INSERT를 savepoint(`atomic`)로 감쌌다 | `test_signup_race_past_the_checks_is_409_not_500` |
+| F-3 | 코드를 계약에 | 로그인 실패 → `AuthenticationFailed`(401) | `test_wrong_credentials_are_401_per_contract` |
+| F-4 | 문서를 코드에 | 비활성 계정 = 틀린 비밀번호와 바이트 동일 401. api.md #3의 403 삭제 | `test_inactive_account_answer_is_identical_to_wrong_password` |
+| I-1~I-3 | 확정 | (변경 없음) api.md #45에 명시 | TASK-003 테스트 |
+| S-2 | 대상 축소 | `_reset_allowed()` = 로컬 비밀번호 있음 **또는** Google 연결. #45(메일 안 보냄)와 #46(잠근 행으로 재확인) 양쪽 | `test_password_disabled_account_without_google_gets_no_mail`, `test_password_disabled_account_cannot_be_reopened` |
+| S-3 | Phase 3 배포 체크리스트 | smoke-test §5 갭 10·11 + §6 로그 공유 경고 | (문서) |
+| S-5 | 링크를 fragment로 | `{PASSWORD_RESET_URL}#uid=…&token=…` | `RESET_LINK_RE`(전 재설정 테스트가 이 형식으로 링크를 꺼낸다) |
+| F-5 | 연결 순간 무효화 | #6 (b) 경로: 사용자 행 잠금 → 연결 → `set_unusable_password()` → 세션 행 삭제. 이미 연결된 계정의 이후 로그인은 건드리지 않음 | `test_linking_disables_the_preexisting_password_and_sessions`, `test_second_login_of_a_linked_account_keeps_its_password` |
+
+**변이 검증**: F-5의 비밀번호 무효화·세션 정리, S-2 양쪽 조건, F-1 대소문자, F-3 401, S-5 링크 형식, 동시 가입 409 처리를 하나씩 지워 전부 해당 테스트가 실패함을 확인했다.
+
+**구현 중 드러난 것**
+
+1. **F-5의 세션 정리 제거를 테스트가 두 번 놓쳤다.** ① 비밀번호가 바뀌면 Django가 세션 해시 불일치로 옛 세션을 다음 요청에서 로그아웃시키므로 "침입자 → 401"은 정리 코드 없이도 참이다(§11과 같은 현상). ② "세션 행 개수"를 세도 놓쳤다 — **침입자의 그 요청 자체가** 해시 불일치로 세션 행을 지워버렸기 때문이다. 행 개수를 침입자가 요청하기 **전에** 세도록 순서를 바꿔서야 잡혔다. 교훈: *관찰 행위가 상태를 바꾸는 경우 관찰 순서가 테스트의 일부다.*
+2. **`IntegrityError`를 잡는 것만으로는 부족했다.** 바깥 트랜잭션(테스트의 `TestCase`, 장래의 `ATOMIC_REQUESTS`) 안에서 IntegrityError가 나면 그 연결은 블록이 끝날 때까지 쓸 수 없다. INSERT를 자기만의 `atomic()`으로 감싸는 것이 Django 문서의 정석이다. *기록만*: `#8 UserMeView.patch`의 같은 패턴(S8)에는 savepoint가 없다 — 지금은 autocommit이라 무해, 범위 밖이라 수정하지 않음.
+
+**AC 대조**: AC-1~AC-7 전항 판정 완료(acceptance.md). AC-1·AC-2의 "구현 파일 변경 없음"은 각 TASK 커밋 시점 기준이며, 이후 변경은 TASK-003~006 결정 반영분이다.
+
+## 14. 최종 보안 리뷰 — `security-reviewer`, PR 직전 (2026-10-25)
+
+TASK-004~006 범위. 판정 **Blocker 0 · High 1 · Medium 1 · Low 5 · Info 6**, "merge 차단 사유 없음". Owner 결정(2026-10-25): **H-1 보안 우선 + 안전망 함께**, **L-3 → (a)**, **L-1 → 권장안**(ASCII 제한 없이 정규화 통일). 전건 이 PR에서 처리했다.
+
+| ID | 내용 | 처리 | 고정한 테스트 |
+| --- | --- | --- | --- |
+| **H-1** | #8 프로필 수정이 인증 시점의 `request.user`를 **통째로** 저장 → 처리 중 일어난 F-5 비밀번호 무효화·#46 재설정·역할 회수(A-3)·관리자 변경을 옛 값으로 되돌림 | **두 겹 방어.** ① `update_profile()` — 행 잠금 + 재조회 + 보낸 컬럼만 `update_fields`(+ savepoint로 닉네임 경합 409) ② `User.save()` 안전망 — 인스턴스가 직접 바꾸지 않은 인증·권한 컬럼(`password`·`last_login`·`email`·`is_active`·`is_staff`·`is_superuser`·`active_role`)은 전체 저장에서 빼고 쓴다 | 공격 재현 3종(`StaleProfileWriteAttackTests`) · ① SQL 범위(`ProfileUpdateWriteScopeTests`) · ② 모델(`UserStaleWriteGuardTests`) |
+| M-1 | 같은 사용자로 로그인된 브라우저에서 #46 → 세션 행이 지워져 응답 단계 세션 저장 실패(400, 비밀번호는 이미 바뀜) | 그 경우 `logout()` — 정상 200 + 쿠키 만료 | `test_confirming_while_logged_in_as_that_user_logs_the_browser_out` 외 1 |
+| L-1 | 가입 중복 검사(DB `UPPER()`)와 저장(Python `lower()`)의 정규화 불일치 → `vıctim@`이 `victim@` 가입 차단 | `UserManager.canonical_email()` 하나로 통일(저장·가입·로그인·#45·Google 연결), 정확 일치 = 유니크 인덱스 사용 | `test_lookalike_unicode_address_does_not_block_the_real_one` |
+| L-2 | #2·#3 오류 리포트에 평문 비밀번호 | #46과 같은 가림(`sensitive_post_parameters` + `sensitive_variables()`) | `test_signup_and_login_error_reports_do_not_carry_the_password` |
+| L-3 | 배정 전부 해제 → SUBMITTED 복귀 → 조언가가 읽은 원문 수정 가능 | **(a)** 배정 이력(비활성 포함)이 있으면 409 `NOT_EDITABLE` | `test_once_assigned_it_stays_locked_even_after_unassignment` |
+| L-4 | 세션 정리가 DB 세션 백엔드를 전제 | `SESSION_ENGINE` 고정 테스트 + 주석 | `test_session_purge_assumes_the_db_session_backend` |
+| L-5 | `EMAIL_TIMEOUT`은 소켓 작업당 상한 | 주석·api.md #45 정정(근본 해결은 Phase 3 비동기) | (문서) |
+| I-1 | 같은 Google 계정의 동시 콜백 2개 → 두 번째가 오해 소지 있는 409 | **기록만** — 1:1 불변식은 지켜지고, 경합 전용 분기라 테스트 없이 넣지 않음 | — |
+| I-2 | 비활성 계정에도 연결·비밀번호 무효화가 커밋된 뒤 401 | 잠금 안에서 비활성이면 건드리지 않고 반환 | `test_inactive_local_account_is_not_linked_or_modified` |
+| I-3 | 실제 방어의 근간은 세션 인증 해시 | 주석 명시 | (주석) |
+| I-4 | 비밀번호 앞뒤 공백이 잘림(Django 폼과 불일치) | `trim_whitespace=False`(가입·로그인·확정) | `test_password_whitespace_is_kept_as_typed` 외 1 |
+| I-5 | 경합 409에 `reason` 없음 + 설정 주석 `?uid=` | DB 제약 이름으로 reason 판정 + 주석 정정 | `test_nickname_race_answers_with_the_nickname_reason`, 경합 테스트 reason 단언 |
+| I-6 | #2로 흔적 없는 가입 여부 조회 | 수용(S-7) — Phase 3 레이트 리밋 1순위 | — |
+
+**H-1을 두 겹으로 만든 이유와 검증**: 공격 재현 테스트는 두 겹 중 **하나만 있어도** 통과한다. 그래서 겹마다 자기 테스트를 따로 두고, 변이 검증으로 확인했다 — ①만 지우면 ①의 SQL 테스트만 실패(공격은 ②가 막음), ②만 지우면 ②의 모델 테스트만 실패(공격은 ①이 막음), **둘 다 지우면 공격 재현 3종이 전부 실패**. 안전망(②)이 있으면 앞으로 누가 #8과 같은 실수를 새 엔드포인트나 Admin에서 해도 비밀번호·권한은 되살아나지 않는다.
+
+**변이 검증**: 위 + M-1·L-1·L-2·L-3·I-2·I-4·I-5 — 전건 해당 테스트 실패 확인.
