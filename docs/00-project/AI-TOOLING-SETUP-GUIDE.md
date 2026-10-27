@@ -1,6 +1,6 @@
 # AI 도구 설정 가이드 (ADR-009 실행 절차)
 
-> 상태: **ADR-009가 Proposed인 동안에는 참고용이다.** Owner가 ADR-009를 승인하고, §16 승인이 필요한 항목(5~10)을 개별 승인한 뒤에만 이 절차를 실행한다.
+> 상태 (2026-10-27): **항목 5~8 적용 완료**(§5~§8 — "이미 된 것"과 "Owner가 할 일"로 나눠 적었다). 항목 9·10은 Phase 3에서 승인 예정, 항목 1~4는 미결정이라 §1~§4는 아직 참고용이다.
 > 환경: macOS + Chrome + VS Code(Claude Code 확장) + 터미널(zsh). 작성일 2026-10-22.
 > 표기: **[미검증]** = 이번 조사에서 공식 문서로 확인하지 못한 내용. 실행 전에 해당 출처를 다시 확인한다.
 
@@ -235,131 +235,171 @@ claude mcp add --transport http --scope project context7 \
 
 ---
 
-## 5. Dependabot + secret scanning / push protection (now, §16 승인 필요)
+## 5. Dependabot + secret scanning / push protection — ✅ 적용됨 (2026-10-27)
 
-### 5.1 GUI 설정 (Chrome)
+### 5.1 이미 된 것
 
-`github.com/danpro94/chamneul` → **Settings** → 왼쪽 **Advanced Security**(예전 이름 "Code security and analysis") **[미검증: 현재 라벨]**에서 다음을 켠다.
+| 항목 | 상태 | 어떻게 |
+| --- | --- | --- |
+| Dependabot alerts | 켬 | `gh api -X PUT repos/danpro94/chamneul/vulnerability-alerts` → 204 |
+| Dependabot security updates | 켬 | `gh api -X PUT repos/danpro94/chamneul/automated-security-fixes` → `{"enabled":true}` |
+| Secret scanning · Push protection | 켜져 있었음 | 공개 저장소 기본값 (`security_and_analysis` 조회로 확인) |
+| 버전 업데이트 `.github/dependabot.yml` | 이 PR에 포함 | **main에 머지되는 순간부터 동작한다** |
 
-* **Dependabot alerts** → Enable
-* **Dependabot security updates** → Enable(보안 패치 PR만 자동으로 연다)
-* **Secret Protection**(secret scanning) 및 **Push protection** → Enable(공개 저장소는 무료로 제공된다는 것이 일반적인 안내다 **[미검증: 2026-10 요금 정책]**)
+`dependabot.yml`의 핵심: `uv`(pyproject + uv.lock)·`docker`(Dockerfile)·`docker-compose`(postgres 이미지)를 **매주 월요일 09:00 KST**에 확인, PR 수 상한(3·2·1), Django·DRF·psycopg는 한 PR로 묶음. **봇이 열지 않는 것**: PostgreSQL 메이저(16→17은 덤프·복원 계획이 필요), Python 마이너(3.13→3.14는 계획된 업그레이드). `github-actions`는 워크플로가 생기는 Phase 3에 주석을 푼다.
 
-### 5.2 버전 업데이트 설정 (Owner가 직접 작성)
+### 5.2 Owner가 할 일 — 머지 후 확인 (Chrome, 3분)
 
-`.github/dependabot.yml`:
+1. https://github.com/danpro94/chamneul → 상단 **Security** 탭 → 왼쪽 **Dependabot** 항목이 보이면 alerts가 켜진 것이다. (메뉴명이 다를 수 있음)
+2. 상단 **Insights** → 왼쪽 **Dependency graph** → **Dependabot** 탭 → `uv`·`docker`·`docker-compose` 세 줄이 보이고 "Last checked"가 찍혀 있으면 설정 파일이 읽힌 것이다. 오류가 있으면 그 줄에 빨간 표시가 나온다.
+3. 첫 실행은 머지 직후 또는 다음 월요일이다. **Pull requests** 탭에 `chore(deps)` / `chore(docker)`로 시작하는 PR이 열린다.
 
-```yaml
-version: 2
-updates:
-  - package-ecosystem: "uv"          # pyproject.toml + uv.lock
-    directory: "/"
-    schedule: { interval: "weekly" }
-    open-pull-requests-limit: 3
-  - package-ecosystem: "docker"      # Dockerfile 베이스 이미지
-    directory: "/"
-    schedule: { interval: "weekly" }
-    open-pull-requests-limit: 2
-  # Phase 3에서 .github/workflows/ 가 생기면 github-actions 생태계를 추가한다
-```
+### 5.3 봇 PR을 받았을 때 (매주 10분)
 
-* Dependabot의 uv 지원은 2025년에 시작됐고, 일부 사용 사례는 아직 지원되지 않는다(astral-sh/uv#2512).
-* **자동 머지는 설정하지 않는다.** Dockerfile 관련 PR은 Owner가 내용을 읽고 직접 반영한다(소유권 정책).
+1. PR 본문의 **Release notes / Changelog**를 열어 "breaking"·"deprecated"를 찾는다.
+2. 로컬에서 그 브랜치를 받아 테스트한다:
+   ```bash
+   cd ~/projects/personal/chamneul
+   gh pr checkout <PR번호>
+   uv sync && uv run python manage.py test --settings=config.settings.test
+   ```
+3. 통과하면 머지, 실패하면 PR에 결과를 남기고 닫는다(다음 버전에서 다시 온다).
+4. **Dockerfile·compose PR은 소유권 정책상 Owner가 내용을 이해하고 직접 반영한다** — 이미지 태그 한 줄이라도 `docker compose up -d --build`로 기동까지 확인한다.
 
-### 5.3 검증 · 사용 · 롤백
+* **자동 머지는 설정하지 않는다.** 업데이트 PR은 공급망 공격의 입구다.
+* AI 보조 예: `이 Dependabot PR(#N)의 changelog를 요약하고, 우리 코드에서 영향받는 부분이 있는지 찾아 줘. 파일은 고치지 마.`
 
-* 검증: Insights → Dependency graph → **Dependabot** 탭에 마지막 체크 시각이 보이면 된다. push protection은 테스트용 가짜 토큰 형식 커밋으로 확인할 수 있지만, **실제 토큰으로는 절대 시험하지 않는다.**
-* 사용: `github MCP로 Dependabot PR #N 의 changelog 요약하고, uv.lock 변경이 Django/psycopg 메이저 버전을 건드리는지 알려 줘.`
-* 롤백: 같은 Settings 화면에서 Disable, `.github/dependabot.yml` 삭제(파일 삭제는 §16 승인 사항이다).
+### 5.4 롤백
 
----
-
-## 6. Semgrep MCP, 로컬 SAST (now, §16 승인 필요)
-
-> 현황: 독립 저장소 `semgrep/mcp`는 **deprecated(아카이브)**이고, 기능은 공식 `semgrep` 바이너리로 옮겨졌다. 바이너리 내장 MCP의 정확한 명령은 이번 조사에서 확인하지 못했다 **[미검증]**.
-
-### 6.1 설치 및 확인
-
-```bash
-brew install semgrep
-semgrep --version
-semgrep mcp --help          # [미검증] 이 하위 명령이 존재하는지 먼저 확인
-```
-
-### 6.2 등록 (6.1에서 하위 명령이 확인된 경우에만)
-
-```bash
-claude mcp add --scope local --transport stdio semgrep -- semgrep mcp     # [미검증]
-```
-
-* 아카이브된 `uvx semgrep-mcp`는 쓰지 않는다(업데이트되지 않는다).
-* 처음에는 `SEMGREP_APP_TOKEN` 없이(로그인 없이) 쓴다. 토큰은 Semgrep 클라우드 findings를 조회할 때만 필요하다.
-* **MCP 없이도 같은 효과를 낼 수 있다.** 터미널에서 `semgrep scan --config p/django --config p/python --error`를 직접 돌리면 된다. MCP 등록이 막히면 이 방법을 쓴다.
-
-### 6.3 검증 · 사용 · 롤백
-
-* `/mcp` → semgrep ✔, 툴 목록에 scan 계열 툴이 보여야 한다.
-* 사용 예: `semgrep MCP로 accounts/ 와 concerns/ 를 스캔하고, 결과 중 security-reviewer 관점에서 실제로 위험한 것만 추려 줘. 오탐은 사유와 함께 분리해.`
-* 롤백: `claude mcp remove semgrep`, 필요하면 `brew uninstall semgrep`
+`.github/dependabot.yml` 삭제(§16 승인) → 버전 업데이트 중지. 알림·보안 업데이트는 Settings → Advanced Security에서 **Disable**, 또는 `gh api -X DELETE repos/danpro94/chamneul/vulnerability-alerts`.
 
 ---
 
-## 7. PostgreSQL 읽기 전용 MCP, 로컬 compose DB 전용 (now·선택, §16 승인 필요)
+## 6. Semgrep MCP, 로컬 SAST — ✅ 적용됨 (2026-10-27)
 
-> **절대 규칙**: 접속 대상은 `localhost:15432`(compose `db` 서비스)뿐이다. dev/prod(RDS) 연결 문자열은 이 도구에 절대 넣지 않는다. 서버의 "restricted" 플래그는 보조 수단일 뿐이고, **진짜 경계는 DB role 권한**이다.
-
-### 7.1 SELECT 전용 role 만들기 (Owner가 직접 입력)
+### 6.1 이미 된 것
 
 ```bash
-docker compose exec db psql -U chamneul -d chamneul
+# 등록된 명령 (local scope = ~/.claude.json, 이 프로젝트에서만)
+claude mcp add -e SEMGREP_SEND_METRICS=off --scope local semgrep -- uvx --from semgrep==1.182.1 semgrep mcp
 ```
 
-```sql
-CREATE ROLE chamneul_ro LOGIN PASSWORD '로컬전용-임의값';
-GRANT CONNECT ON DATABASE chamneul TO chamneul_ro;
-GRANT USAGE ON SCHEMA public TO chamneul_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO chamneul_ro;
-ALTER DEFAULT PRIVILEGES FOR ROLE chamneul IN SCHEMA public GRANT SELECT ON TABLES TO chamneul_ro;
-ALTER ROLE chamneul_ro SET default_transaction_read_only = on;
--- 민감 테이블 제외: 세션 키와 비밀번호 해시
-REVOKE SELECT ON django_session FROM chamneul_ro;
--- \dt 로 사용자 테이블 이름을 확인한 뒤, password 컬럼을 뺀 컬럼 단위 GRANT로 바꾼다
-```
+* `semgrep mcp`는 공식 `semgrep` 바이너리에 들어 있는 MCP 서버다(독립 저장소 `semgrep/mcp`는 아카이브됨 — 쓰지 않는다).
+* **버전 고정**: Homebrew의 `semgrep`(1.146.0, 자동 갱신)과 별개로 `uvx`가 1.182.1을 격리 설치해 쓴다. 올릴 때는 이 명령의 버전 숫자만 바꿔 다시 등록한다.
+* 사용 통계 전송 끔(`SEMGREP_SEND_METRICS=off`). 로그인(토큰) 없이 OSS 규칙만 쓴다 — 도구 중 `semgrep_findings`는 Semgrep 클라우드 로그인이 필요해 지금은 쓰지 않는다.
+* 도구 7종: `semgrep_scan`, `semgrep_scan_with_custom_rule`, `semgrep_scan_supply_chain`, `get_abstract_syntax_tree`, `semgrep_rule_schema`, `get_supported_languages`, `semgrep_findings`.
 
-* `docker compose down -v`로 볼륨을 지우면 role도 사라진다. 그때마다 다시 만든다.
-* 검증: `psql`에서 `SET ROLE chamneul_ro; INSERT INTO django_migrations(app,name,applied) VALUES ('x','x',now());` → `permission denied`가 나와야 한다. 확인 후 `RESET ROLE;`
+**기준선 스캔 결과 (2026-10-27)**: 앱 코드 61개 파일, `p/django`·`p/python`·`p/secrets` → **1건, 오탐**. `accounts/emails.py`의 로그 문구에 "Password"라는 단어가 있어 반응했지만 실제로는 pk와 예외 이름만 남긴다. 사유를 적고 바로 윗줄에 `# nosemgrep: python-logger-credential-disclosure`를 달아 **0건**. (주석은 **해당 줄 바로 위**에 있어야 먹는다 — 두 줄 위에 두면 무시된다.)
 
-### 7.2 등록
+### 6.2 Owner가 확인할 것
 
-```bash
-claude mcp add --scope local \
-  -e DATABASE_URI='postgresql://chamneul_ro:로컬전용-임의값@localhost:15432/chamneul' \
-  --transport stdio postgres-ro -- uvx postgres-mcp==<고정버전> --access-mode=restricted
-```
+1. VS Code의 Claude Code 입력창에 `/mcp` → `semgrep` 옆 ✔ 확인. (✘면 `/mcp` 화면에서 해당 서버를 선택해 **Reconnect**)
+2. 같은 스캔을 터미널에서 직접 돌려 볼 수 있다(MCP 없이도 동일):
+   ```bash
+   cd ~/projects/personal/chamneul
+   SEMGREP_SEND_METRICS=off uvx --from semgrep==1.182.1 semgrep scan --metrics off \
+     --config p/django --config p/python --config p/secrets \
+     --exclude '*/tests.py' --exclude '*/migrations/*' \
+     accounts advisors concerns advice notifications common config
+   ```
+   마지막 줄 `Ran N rules on 61 files: 0 findings.`이면 기준선 그대로다.
 
-* 후보 서버는 crystaldba/postgres-mcp다. restricted 모드는 read-only 트랜잭션을 쓰고 `COMMIT`/`ROLLBACK`이 들어간 문장을 파싱 단계에서 거부한다. `<고정버전>`은 PyPI에서 확인한 버전으로 고정한다.
-* `-e` 바로 뒤에 서버 이름이 오면 CLI가 이름을 env 쌍으로 잘못 읽는다. 그래서 `--transport stdio`를 사이에 둔다(공식 문서의 주의 사항).
-* 이 비밀번호는 `~/.claude.json`에 평문으로 저장된다. local scope(커밋 안 됨)이고 로컬 전용 DB라서 허용하는 것이다.
+### 6.3 일상 사용
 
-### 7.3 사용 · 롤백
+* `semgrep MCP로 이번 브랜치에서 바뀐 파일만 스캔하고, 실제 위험과 오탐을 사유와 함께 나눠 줘.`
+* `semgrep MCP로 "View에서 select_for_update 없이 save()를 부르는 패턴"을 잡는 커스텀 규칙을 만들어 concerns/·advice/를 스캔해 줘.` — `.claude/rules/coding.md`의 상태 전이 규칙을 **기계 검사로 바꾸는** 용도다.
+* 오탐 처리 원칙: **사유를 적은 주석 + 정확한 규칙 ID**로만 억제한다. 이유 없는 `# nosemgrep`(전 규칙 억제)은 쓰지 않는다.
 
-* 사용 예: `postgres-ro로 concerns 테이블의 partial unique index 정의와 deleted_at 이 채워진 행 수를 보여 줘. 결과를 docs/model.md §soft delete 설명과 대조해 줘.`
-* 롤백: `claude mcp remove postgres-ro`, 그 뒤 psql에서 `DROP OWNED BY chamneul_ro; DROP ROLE chamneul_ro;`
+### 6.4 롤백
+
+`claude mcp remove semgrep -s local` (uvx 캐시는 `uv cache clean semgrep`으로 정리).
 
 ---
 
-## 8. Playwright MCP, 로컬 UI 스모크 (now·선택, §16 승인 필요)
+## 7. PostgreSQL 읽기 전용 MCP, 로컬 compose DB 전용 — ✅ 적용됨 (2026-10-27)
+
+> **절대 규칙**: 접속 대상은 로컬 compose DB(`127.0.0.1:15432`)뿐이다. **dev/prod(RDS) 정보는 이 도구에 절대 넣지 않는다.** 진짜 경계는 서버 설정이 아니라 **DB 역할의 권한**이다.
+
+### 7.1 서버를 바꾼 이유 (ADR-009 결정 기록 7번)
+
+ADR 초안의 1순위였던 crystaldba/postgres-mcp는 PyPI 최신 릴리스(0.3.0, 2025-05)가 의존성(`pglast==7.2.0`)이 PyPI에서 사라져 **설치 자체가 안 된다**. 대신 **Google MCP Toolbox**(`@toolbox-sdk/server@1.15.0`, googleapis 조직이 관리, 2026-10-23 릴리스)를 쓴다 — ADR 원칙 2(공식·벤더 관리)에 더 맞다.
+
+### 7.2 이미 된 것 — 구성 3개 파일 (저장소 `.claude/mcp/`, 비밀값 없음)
+
+| 파일 | 역할 |
+| --- | --- |
+| `setup-postgres-ro-role.sh` | DB 역할 `chamneul_ro` 생성·권한 부여 + 무작위 비밀번호를 **키체인**에 저장. 몇 번 실행해도 안전(비밀번호 교체 겸용) |
+| `postgres-ro.tools.yaml` | 도구를 **2개만** 연다(`list_tables`·`execute_sql`, 프리빌트는 20+). 접속 대상을 **로컬 DB로 고정** — 환경변수 실수로 운영 DB를 가리킬 수 없다 |
+| `postgres-ro.sh` | 실행 시 키체인에서 비밀번호를 읽어 서버를 띄운다 — 비밀번호가 `~/.claude.json`에도 저장소에도 없다 |
 
 ```bash
-npm view @playwright/mcp version                  # 현재 버전 확인 후 아래에 고정
-claude mcp add --scope local --transport stdio playwright -- npx -y @playwright/mcp@<고정버전>
-npx -y @playwright/mcp@<고정버전> --help           # --isolated, --allowed-origins 등 옵션 확인 [미검증: 옵션명]
+# 등록된 명령
+claude mcp add --scope local postgres-ro -- ~/projects/personal/chamneul/.claude/mcp/postgres-ro.sh
 ```
 
-* 검증: `/mcp` → playwright ✔. 처음 쓸 때는 "playwright mcp로"라고 명시해야 Bash로 우회하지 않는다.
-* 사용 예: `playwright mcp로 http://localhost:8000/admin 에 접속해 로그인 화면이 뜨는지, GET /api/v1/csrf 응답 뒤 csrftoken 쿠키가 생기는지 확인해 줘. localhost 외 사이트는 열지 마.`
-* 개인 Chrome 프로필(쿠키·로그인 세션)을 연결하지 않는다.
-* 롤백: `claude mcp remove playwright`
+**`chamneul_ro`가 할 수 있는 것과 없는 것 (실제 로그인으로 검증)**
+
+| 시도 | 결과 |
+| --- | --- |
+| 고민·조언 등 테이블 읽기 | ✅ |
+| 사용자 닉네임·이메일 읽기 | ✅ (컬럼을 지정해서) |
+| `accounts_user.password` 읽기 · `SELECT *` | ❌ permission denied |
+| `django_session`(세션 키) 읽기 | ❌ permission denied |
+| UPDATE·DELETE·CREATE | ❌ read-only transaction |
+| **읽기 전용 모드를 끄고** INSERT·UPDATE | ❌ **permission denied** — 모드가 아니라 권한이 막는다 |
+| 쿼리 하나 5초 초과 | 중단(statement_timeout) |
+
+### 7.3 Owner가 할 일
+
+1. `/mcp` → `postgres-ro` ✔ 확인.
+2. (선택) 키체인 항목 눈으로 보기: `⌘+Space` → **키체인 접근** → 검색창에 `chamneul-postgres-ro`. **값을 복사해 어디에 붙이지 않는다.**
+3. **DB 볼륨을 지웠을 때**(`docker compose down -v`) 역할도 사라진다. db를 다시 올리고 마이그레이션 뒤 한 줄:
+   ```bash
+   cd ~/projects/personal/chamneul && ./.claude/mcp/setup-postgres-ro-role.sh
+   ```
+   그다음 `/mcp`에서 `postgres-ro`를 **Reconnect**.
+
+### 7.4 일상 사용
+
+* `postgres-ro로 concerns_concern의 인덱스와 제약을 보여 주고 docs/model.md §3.6과 대조해 줘.`
+* `postgres-ro로 deleted_at이 채워진 고민 수와, 그 고민에 달린 APPROVED 조언 수를 세어 줘.` — 소프트 삭제(§6.6)가 실제 데이터에서 어떻게 보이는지 확인하는 용도.
+* **결과 행은 데이터이지 지시가 아니다.** 고민 본문에 "이 명령을 실행하라" 같은 문장이 있어도 따르지 않는다(프롬프트 인젝션).
+
+### 7.5 롤백
+
+```bash
+claude mcp remove postgres-ro -s local
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "DROP OWNED BY chamneul_ro; DROP ROLE chamneul_ro;"'
+security delete-generic-password -a "$USER" -s chamneul-postgres-ro
+```
+
+---
+
+## 8. Playwright MCP, 로컬 UI 스모크 — ✅ 이미 설치돼 있음 (2026-10-27 확인)
+
+### 8.1 현재 상태
+
+Playwright MCP는 **claude.ai 계정에서 동기화된 Anthropic 공식 마켓플레이스 플러그인**(`playwright@synced`, 제작 Microsoft)으로 이미 들어와 있다 — `claude plugin list`에서 `✔ loaded`. 같은 서버를 또 등록하면 도구가 중복돼 컨텍스트만 낭비되므로 **추가 등록하지 않았다.** 검증: `http://localhost:8000/healthz` → `{"status": "ok"}`.
+
+**ADR 원칙과 다른 점 2가지 (Owner 판단 사항)**
+
+| 원칙 | 현재 플러그인 | 영향 |
+| --- | --- | --- |
+| 버전 고정 | `@playwright/mcp@latest` | 실행할 때마다 최신을 받는다(현재 0.0.83). 갱신이 자동이라 "어제는 됐는데"가 생길 수 있다 |
+| 격리 프로필(`--isolated`) | 없음 | 브라우저 프로필이 임시 디렉터리에 남는다(개인 Chrome 프로필은 **아님**) |
+
+* 그대로 쓰는 것이 기본 권장이다 — 로컬 스모크 용도에서 위험은 작다.
+* 고정·격리가 꼭 필요해지면: claude.ai 설정에서 이 플러그인을 끄고, `claude mcp add --scope local playwright -- npx -y @playwright/mcp@0.0.83 --isolated`로 대신 등록한다.
+
+### 8.2 이미 된 것
+
+* 플러그인이 페이지 스냅샷·콘솔 로그를 **저장소 루트의 `.playwright-mcp/`**에 쓴다 → `.gitignore`에 추가했다(로컬 화면 내용이 커밋되지 않게).
+
+### 8.3 일상 사용
+
+* `playwright로 http://localhost:8000/api/v1/csrf 를 열고 csrftoken 쿠키가 생기는지 확인해 줘. localhost 외 사이트는 열지 마.`
+* `playwright로 Django Admin 로그인 화면을 열어 스크린샷을 찍어 줘.`
+* 규칙: **localhost만 연다.** 외부 사이트 내용은 인젝션 경로다.
 
 ---
 
@@ -446,3 +486,12 @@ git status                                        # .mcp.json / .claude/settings
 * METR 2025 RCT: https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/ — 재조회하지 않음 **[재확인 권장]**
 * OWASP LLM01 Prompt Injection: https://genai.owasp.org/llmrisk/llm01-prompt-injection/ — 재조회하지 않음 **[재확인 권장]**
 * MCP Security Best Practices: https://modelcontextprotocol.io/specification/draft/basic/security_best_practices — 재조회하지 않음 **[재확인 권장: 경로]**
+
+### 추가 검증 출처 (적용 시점, 접근일 2026-10-27)
+
+* Dependabot `package-ecosystem` 값(`uv`·`docker`·`docker-compose`·`github-actions`): https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+* Dependabot 켜기 API: `PUT /repos/{owner}/{repo}/vulnerability-alerts`, `PUT /repos/{owner}/{repo}/automated-security-fixes` — 실제 호출 결과 204·`{"enabled":true}`로 확인
+* Semgrep: `semgrep mcp --help`(1.146.0·1.182.1 실행 확인), PyPI `semgrep` 최신 1.182.1
+* Google MCP Toolbox: https://github.com/googleapis/mcp-toolbox (v1.15.0, 2026-10-23), npm `@toolbox-sdk/server`(관리자 google.com 계정), 프리빌트 `internal/prebuiltconfigs/tools/postgres.yaml`(환경변수·도구 목록 확인)
+* crystaldba/postgres-mcp 설치 실패 재현: `uvx postgres-mcp==0.3.0` → `pglast==7.2.0` 해석 불가(Python 3.12·기본 모두)
+* Playwright MCP: npm `@playwright/mcp` 0.0.83(관리자 Microsoft), `--isolated`·`--allowed-origins` 옵션 `--help`로 확인, 동기화 플러그인 정의(`@playwright/mcp@latest`) 직접 열람

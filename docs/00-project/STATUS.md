@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-10-25 (SPEC-005 최종 보안 리뷰 후속 커밋 기준. PR #3~#11 머지 완료, SPEC-005 PR 오픈)
+> 마지막 실측: 2026-10-27 (ADR-009 도구 적용 기준. PR #3~#12 머지 완료 — SPEC-005 머지됨)
 
 ---
 
@@ -10,9 +10,9 @@
 | 항목 | 값 |
 | --- | --- |
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
-| 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현 완료** — PR 리뷰·머지 대기 |
+| 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현·머지 완료(PR #12)** |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | SPEC-005 PR 머지 → (Owner) [OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md) A항목 → ADR-009 AI 도구 도입 결정 → 프론트엔드 1개 여정 → Phase 3. 진입 전 확인 목록은 [리뷰 노트 07 §3](../reviews/07-phase2-closeout.md)·[리뷰 노트 08](../reviews/08-spec-005-api-gaps.md) |
+| 다음 | **Owner 결정 대기 (2026-10-27)**: Phase 2 마무리 범위(레이트 리밋·운영 경로 1회 기동·진입점 기본값·프론트엔드 1개 여정)와 Phase 3 착수 순서(CI → 이미지 → IaC → 배포). 진입 전 확인 목록은 [리뷰 노트 07 §3](../reviews/07-phase2-closeout.md)·[리뷰 노트 08](../reviews/08-spec-005-api-gaps.md) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -100,9 +100,22 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 > **Owner 작업 현황 (2026-10-25)** — 단계별 절차: [OWNER-ACTIONS-GUIDE.md](OWNER-ACTIONS-GUIDE.md). 완료: `.env.example` 키 추가, GitHub 2FA + ruleset, AWS 계정·루트 MFA·Identity Center·결제 알림. **남음**: ① Google OAuth secret 회전 마무리(새 secret으로 로그인 성공 확인됨 → 옛 secret 사용 중지·삭제) ② SPEC-005 PR 머지 ③ (Phase 3 직전) 도메인 B-5~B-8 — Route 53·네임서버·ACM·SES. AWS Free plan 크레딧은 소진 상태라 Phase 3 인프라는 첫날부터 과금된다. ①의 원본 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md) — 회전이 필요한 이유: Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
 
+## 3-2. AI 도구 (ADR-009, 2026-10-27 부분 Accepted)
+
+| 항목 | 상태 |
+| --- | --- |
+| Dependabot alerts·security updates / secret scanning·push protection | **켜짐** (저장소 설정) · 버전 업데이트 `.github/dependabot.yml`(uv·docker·docker-compose) |
+| Semgrep MCP (`semgrep==1.182.1`, local) | **연결됨** · 기준선 스캔 0건(오탐 1건 사유와 함께 억제) |
+| PostgreSQL 읽기 전용 MCP (Google MCP Toolbox 1.15.0, local) | **연결됨** · 역할 `chamneul_ro`(SELECT만, 비밀번호·세션 제외) · 재생성 `.claude/mcp/setup-postgres-ro-role.sh` |
+| Playwright MCP | **이미 설치됨**(claude.ai 동기화 공식 플러그인, `@latest`) |
+| CodeQL · Sentry MCP | Phase 3 승인 예정 |
+| hooks · GitHub MCP · Context7 · 내장 리뷰 명령(항목 1~4) | 미결정 |
+
+절차·롤백: [AI-TOOLING-SETUP-GUIDE.md](AI-TOOLING-SETUP-GUIDE.md) §5~§8.
+
 ## 4. Active SPEC
 
-**SPEC-005-api-gaps — 구현 완료, PR 리뷰 대기 (2026-10-22).** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
+**SPEC-005-api-gaps — 완료·머지 (2026-10-27, PR #12).** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
 
 §7 결정 3건 승인(2026-09-28): (1) 재설정 링크는 설정값 `PASSWORD_RESET_URL` (2) Google 전용 계정도 유효 토큰이면 비밀번호 설정 (3) #47의 서버 관리 필드는 무시.
 
@@ -114,7 +127,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 * **TASK-005 완료 (2026-10-14)** — #47 고민 수정. 테스트 11개(전체 **397개**). `SUBMITTED`에서만 200, 그 외 409 `NOT_EDITABLE`이고 **409일 때 `updated_at`까지 불변**. 서버 관리 필드는 무시(결정 3). 행 잠금 + 보낸 필드만 UPDATE(SQL 실측). 변이 검증 6건 전건 검출. 실제 컨테이너에서 200 → (배정 상태로 전환) 409 → 원문 유지 확인. **47/47 엔드포인트 구현 완료.**
 * **TASK-006 완료 (2026-10-22)** — 결정 대기 항목 **권고안 전건 승인** 후 반영. 전체 **404개**, **expected failures 0**(F-1~F-3 래칫 해소). F-1 결함 수정(대소문자만 다른 기존 주소로 가입 → 500이던 것 409) + 동시 가입 경합 409, F-2 가입 중복 409, F-3 로그인 실패 401, F-4 비활성 = 틀린 비밀번호와 동일 401(문서 수정), **F-5 Google 연결 순간 기존 로컬 비밀번호·세션 무효화(사전 계정 탈취 방어)**, S-2 재설정 대상 축소(#45·#46), S-5 링크 fragment(`#uid=…&token=…`), S-3 smoke-test 경고. 변이 검증 8건. 상세 [spec §13](../../specs/SPEC-005-api-gaps/spec.md) · [리뷰 노트 08](../reviews/08-spec-005-api-gaps.md).
 * **최종 보안 리뷰 후속 (2026-10-25)** — `security-reviewer`(PR 직전) High 1 · Medium 1 · Low 5 · Info 6 전건 처리. **H-1**: 기존 #8이 인증 시점 사용자 객체를 통째로 저장해 F-5·#46·역할 회수를 되돌릴 수 있었다 → ① 잠금 + 보낸 컬럼만 쓰기 ② `User.save()` 안전망(바꾸지 않은 인증·권한 컬럼은 안 씀) **두 겹**. L-3(a) 배정 이력 있는 고민 수정 409. 전체 **424개**. 상세 [spec §14](../../specs/SPEC-005-api-gaps/spec.md).
-* 남은 것: PR 리뷰 → 머지(Owner).
+* PR #12 머지 완료(Owner, 2026-10-27).
 
 **SPEC-004-phase2-closeout — 완료·머지 (2026-09-17, PR #8).** M5. 신규 엔드포인트 없음 — CLAUDE.md §1의 Phase 2 완료 조건 9개 중 **열려 있는 2개**(스모크 문서 부재, model.md drift)를 닫는다. §5 결정 5건 Owner 승인 완료: **(1) 산출물은 `specs/`(ADR-006 §30·§59) (2) 백엔드 전 구간 UTC — DB 저장·API 전송 모두 ISO 8601 UTC, 현지 변환은 클라이언트 책임 (3) #21을 403→404로 변경 (4) 학습 부채 14건 폐기·종결 (5) 고민 종료는 Django Admin으로만, 신규 API 없음**. 
 
