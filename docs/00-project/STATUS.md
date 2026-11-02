@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-10-27 (ADR-009 도구 적용 기준. PR #3~#12 머지 완료 — SPEC-005 머지됨)
+> 마지막 실측: 2026-11-02 (SPEC-006 명세 작성 기준. PR #3~#16 머지 완료 — Dependabot 보안 PR #13~#15 포함)
 
 ---
 
@@ -12,7 +12,7 @@
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
 | 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현·머지 완료(PR #12)** |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | **Owner 결정 대기 (2026-10-27)**: Phase 2 마무리 범위(레이트 리밋·운영 경로 1회 기동·진입점 기본값·프론트엔드 1개 여정)와 Phase 3 착수 순서(CI → 이미지 → IaC → 배포). 진입 전 확인 목록은 [리뷰 노트 07 §3](../reviews/07-phase2-closeout.md)·[리뷰 노트 08](../reviews/08-spec-005-api-gaps.md) |
+| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) — §7 결정 6건 승인 대기** → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5·B-7 시작([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md) "B-5~B-8 시작 순서") |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -114,6 +114,8 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 절차·롤백: [AI-TOOLING-SETUP-GUIDE.md](AI-TOOLING-SETUP-GUIDE.md) §5~§8.
 
 ## 4. Active SPEC
+
+**SPEC-006-pre-phase3-hardening — Draft (2026-11-02), §7 결정 6건 Owner 승인 대기.** Phase 3 전에 앱이 localhost를 떠나면 처음 깨지는 넷을 닫는다: ① 요청 횟수 제한(#2·#3·#45·#46, 공유 카운터, `NUM_PROXIES` 명시) ② 운영 경로(prod 가드·진입점·정적파일·실제 이미지 기동) ③ readiness `/readyz`(ADR-010 필요) ④ 스모크 여정 15단계 맨바닥 재통과. 명세 작성 중 확인한 추가 위험: **DRF가 `NUM_PROXIES` 미설정 시 `X-Forwarded-For`를 그대로 식별자로 써 IP 제한이 우회 가능**, **캐시가 프로세스별(LocMem)이라 제한이 워커·파드 수만큼 풀림**. 상세 [specs/SPEC-006-pre-phase3-hardening/](../../specs/SPEC-006-pre-phase3-hardening/spec.md).
 
 **SPEC-005-api-gaps — 완료·머지 (2026-10-27, PR #12).** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
 

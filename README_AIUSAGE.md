@@ -6,6 +6,44 @@
 
 ---
 
+## 2026-11-02 — SPEC-006 명세(Phase 3 진입 전 하드닝) + 도메인·메일 시작 준비 [위임 · 결정은 Owner]
+
+### 작업
+
+Owner 승인 순서("①~④ 하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수")에 따라 SPEC-006 명세 4종을 썼다. 병행 요청(도메인·인증서·메일을 Phase 3 직전에 시작하는 방법 + Playwright로 직접 진행)에 대해 가이드의 시작 순서를 확정하고, Playwright 창에 AWS·Namecheap 로그인 페이지를 열어 Owner 로그인을 기다리는 상태로 두었다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code) + Playwright MCP(동기화 플러그인). 로그인 대기 시간 동안 명세를 병렬로 작성했다.
+
+### Owner 결정
+
+진행 순서 승인. SPEC-006 §7 결정 6건(카운터 저장소·제한 수치·정적파일·진입점 기본값·readiness·스모크 방식)은 **승인 대기**.
+
+### 생성 산출물
+
+* `specs/SPEC-006-pre-phase3-hardening/{spec,plan,tasks,acceptance}.md`
+* `docs/00-project/OWNER-ACTIONS-GUIDE.md` — "B-5~B-8 시작 순서"(지금 할 것 vs 미룰 것), B-6 ACM을 Phase 3 Terraform으로, B-8 시점 확정
+
+### 검증 결과 (명세를 쓰며 코드·문서로 확인한 사실)
+
+* **DRF 3.18.2 `get_ident()`**: `NUM_PROXIES` 미설정이면 클라이언트가 보낸 `X-Forwarded-For` 전체를 식별자로 쓴다 → 요청마다 XFF를 바꾸면 IP 기준 제한 우회. 명세 §1·§3에 반영.
+* `CACHES` 미설정 = 프로세스별 `LocMemCache` → 제한이 워커·파드 수만큼 풀림.
+* `prod.py`의 `SECURE_SSL_REDIRECT` + `ALLOWED_HOSTS` → kubelet·ALB 헬스체크(파드 IP, HTTP)가 301·400을 받는다 → 헬스 미들웨어 설계.
+* **AWS ACM 문서**: 다른 AWS 서비스에 연결되지 않은 공인 인증서는 **자동 갱신 대상이 아님** → 콘솔 선발급 대신 Phase 3 Terraform으로.
+* readiness 신설은 CLAUDE.md §5·§7과 충돌 → **ADR-010 선행**을 명세에 박았다(ADR-007의 교훈).
+
+### 이번에 드러난 것
+
+**로컬 main이 PR #16 머지를 당겨오지 않은 상태**였다(behind 2). 그 결과 `.claude/mcp/`가 작업 트리에 없어 `postgres-ro` MCP의 실행 스크립트가 사라진 상태였다 — `git pull --ff-only`로 복구 후 `claude mcp list` ✔ 재확인. 머지 후 `git pull`을 빠뜨리면 **설정이 저장소에 있는 도구가 조용히 꺼진다.**
+
+### 잔여 리스크
+
+* 도메인·메일 작업(B-5·B-7)은 Owner 로그인 대기로 미착수.
+* SPEC-006 결정 3(WhiteNoise)은 서드파티 패키지 추가 — §16 승인 필요.
+
+---
+
 ## 2026-10-27 — ADR-009 AI 도구 적용: Dependabot · Semgrep MCP · Postgres 읽기 전용 MCP · Playwright [위임 · 승인은 Owner]
 
 ### 작업
