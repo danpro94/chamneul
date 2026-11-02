@@ -35,3 +35,7 @@ media/
 # .claude/agents/ 는 의도적으로 커밋한다(Owner 결정 2026-09-09): 서브에이전트 정의는
 # 이 프로젝트의 리뷰 하네스이므로 Git이 기억해야 한다. 머신별 로컬 설정만 제외한다.
 .claude/settings.local.json
+
+# Playwright MCP writes page snapshots / console logs here (ADR-009 item 8).
+# They can contain local page content — never commit them.
+.playwright-mcp/

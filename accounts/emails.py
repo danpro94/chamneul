@@ -57,4 +57,7 @@ def send_reset_mail(user, uid: str, token: str) -> None:
         # would reveal which ones exist (ADR-008 §2). Django's own reset form
         # makes the same choice. Log the pk and the exception type only — no
         # traceback, because SMTP exceptions embed the recipient address.
+        # Semgrep python-logger-credential-disclosure is a false positive here
+        # (triaged 2026-10-27): only the pk and the exception class name are logged.
+        # nosemgrep: python-logger-credential-disclosure
         logger.error("Password reset mail failed for user %s (%s)", user.pk, type(exc).__name__)

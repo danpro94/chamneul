@@ -1,0 +1,68 @@
+# Dependabot version updates (ADR-009 item 5, Owner 승인 2026-10-27).
+# Security updates and alerts are switched on in the repo settings, not here.
+#
+# Rules this file follows:
+#  * Bots open PRs; a human reads and merges them. No auto-merge — an update PR
+#    is a supply-chain entry point.
+#  * Small, predictable batches: weekly, Monday morning KST, a few PRs at most.
+#  * Dockerfile / compose updates are applied by the Owner (ownership policy):
+#    Dependabot only proposes the new tag.
+
+version: 2
+updates:
+  - package-ecosystem: "uv" # pyproject.toml + uv.lock
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Django/DRF minor+patch bumps arrive as one PR so they are tested together.
+      django-stack:
+        patterns: ["django", "djangorestframework", "psycopg*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "docker" # Dockerfile base image (python:3.13-slim)
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(docker)"
+    ignore:
+      # 3.13 -> 3.14 is a runtime upgrade to plan and test, not a weekly bump.
+      # Patch releases of the same Python still arrive.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: "docker-compose" # docker-compose.yml (postgres:16)
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 1
+    commit-message:
+      prefix: "chore(docker)"
+    ignore:
+      # A PostgreSQL major upgrade needs a dump/restore plan, not a bot PR
+      # (CLAUDE.md §4: PostgreSQL 16+). Minor/patch only.
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions: approved, but there are no workflows yet (CI arrives in
+  # Phase 3). Enabling it now would only produce "no dependency files" errors.
+  # Uncomment together with the first .github/workflows/*.yml.
+  # - package-ecosystem: "github-actions"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+  #   open-pull-requests-limit: 2

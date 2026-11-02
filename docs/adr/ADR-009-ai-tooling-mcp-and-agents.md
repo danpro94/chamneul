@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed (Owner 승인 대기)
+**Accepted — 부분 (2026-10-27).** 항목 5·6·7·8 승인·적용, 항목 9·10은 Phase 3에서 승인 예정, 항목 1~4는 미결정. 상세는 아래 "Owner 결정 기록".
 
 ## Date
 
-2026-10-22 (Proposed)
+2026-10-22 (Proposed) · 2026-10-27 (부분 Accepted, 적용)
 
 ## Supersedes
 
@@ -84,7 +84,7 @@ Proposed (Owner 승인 대기)
 
 * **하는 일**: 로컬에서 Django/Python 규칙(SQL 인젝션, `mark_safe`, CSRF 예외, 하드코딩된 비밀값 등)으로 SAST 스캔을 한다.
 * **chamneul에 맞는 이유**: LLM 리뷰(#2)는 확률적이고, 규칙 기반 스캐너는 결정적이다. 둘은 서로를 헷지한다. 이 조합은 Django 프로젝트에 특히 잘 맞는다.
-* **리스크**: 이 서버는 beta이고 배포 방식이 바뀌었다. 독립 저장소 `semgrep/mcp`는 deprecated(아카이브)되었고, 이후 업데이트는 공식 `semgrep` 바이너리로 나간다고 README에 적혀 있다. 바이너리 내장 MCP의 정확한 실행 명령은 **미검증**이다. `SEMGREP_APP_TOKEN`으로 로그인하면 결과가 Semgrep AppSec Platform과 연동된다.
+* **리스크**: 이 서버는 beta이고 배포 방식이 바뀌었다. 독립 저장소 `semgrep/mcp`는 deprecated(아카이브)되었고, 이후 업데이트는 공식 `semgrep` 바이너리로 나간다고 README에 적혀 있다. 바이너리 내장 명령은 `semgrep mcp`다(2026-10-27 확인). `SEMGREP_APP_TOKEN`으로 로그인하면 결과가 Semgrep AppSec Platform과 연동된다.
 * **완화**: 버전을 고정한다. 처음에는 로그인 없이(토큰 없이) OSS 규칙으로 시작한다. 아카이브된 `uvx semgrep-mcp`는 쓰지 않는다. 도입 전에 공식 문서로 현재 설치법을 다시 확인한다.
 
 #### 7. PostgreSQL 읽기 전용 MCP(로컬 전용)
@@ -92,7 +92,7 @@ Proposed (Owner 승인 대기)
 * **하는 일**: 로컬 compose DB의 스키마와 행을 조회한다. 마이그레이션 결과, partial unique index, soft delete 행을 확인할 때 쓴다.
 * **chamneul에 맞는 이유**: §6.6 soft delete와 partial unique, §6.7 advice history 같은 규칙은 "DB에 실제로 어떻게 들어갔는가"로 검증해야 한다.
 * **리스크(중요)**: Anthropic 레퍼런스 Postgres 서버는 "read-only 트랜잭션"으로 읽기 전용을 흉내 냈다. 그런데 다중 문장 입력의 `COMMIT`으로 이를 우회할 수 있었다는 보고가 있다(Datadog Security Labs 사례로 인용됨, 원문 **미검증**). 서버 측 플래그는 신뢰 경계가 아니다.
-* **완화**: ① 접속 계정은 **SELECT만 GRANT된 전용 role**(`chamneul_ro`)을 쓴다. 이것만이 실패해도 안전한 경계다. ② 접속 대상은 `localhost` compose DB로만 한정한다. **dev/prod(RDS)에는 절대 연결하지 않는다.** ③ 연결 문자열은 환경변수로만 넘긴다. ④ 1순위 후보는 crystaldba/postgres-mcp의 `--access-mode=restricted`다(read-only 트랜잭션 + `COMMIT`/`ROLLBACK` 파싱 차단). 그래도 ①을 생략하지 않는다. 벤더 공식 서버가 아니라 전문 업체(Crystal DBA) 관리 OSS이므로 원칙 2의 예외이며, Owner 승인 사항이다.
+* **완화**: ① 접속 계정은 **SELECT만 GRANT된 전용 role**(`chamneul_ro`)을 쓴다. 이것만이 실패해도 안전한 경계다. ② 접속 대상은 `localhost` compose DB로만 한정한다. **dev/prod(RDS)에는 절대 연결하지 않는다.** ③ 연결 문자열은 환경변수로만 넘긴다. ④ ~~1순위 후보는 crystaldba/postgres-mcp~~ → **2026-10-27 Google MCP Toolbox로 교체**(위 결정 기록 7번: crystaldba PyPI 릴리스가 설치 불가). Toolbox에는 SQL 파싱 단계의 쓰기 차단이 없으므로 ①(DB 역할 권한)이 유일하고 충분한 경계다 — 실제로 읽기 전용 모드를 끈 상태의 쓰기가 권한으로 거부됨을 검증했다.
 
 #### 8. Playwright MCP
 
@@ -125,6 +125,18 @@ Proposed (Owner 승인 대기)
 | Snyk / Socket | 보류 | 1인 무료 범위에서는 Dependabot + Semgrep(Supply Chain 포함)과 기능이 겹친다. 외부 계정이 늘어난다. 필요해지면 재평가한다 |
 | 커뮤니티 포크 MCP(semgrep, postgres 비공식 등) | 금지 | 관리 주체와 업데이트 경로를 보장할 수 없다 |
 | 쓰기 도구 자동 승인(`--dangerously-skip-permissions`, MCP 쓰기 툴 allowlist) | 금지 | 인젝션 한 번이 곧 실행으로 이어진다 |
+
+## Owner 결정 기록 (2026-10-27)
+
+| # | 항목 | 결정 | 실제 적용 (2026-10-27, 검증 결과) |
+| --- | --- | --- | --- |
+| 1~4 | hooks · 내장 리뷰 명령 · GitHub MCP · Context7 | **미결정** (이번 승인 목록에 없음) | 적용 안 함 |
+| 5 | Dependabot + secret scanning / push protection | **승인** | 저장소 설정: Dependabot alerts·security updates **켬**(API 204 확인), secret scanning·push protection은 이미 켜져 있었음. `.github/dependabot.yml`: `uv`·`docker`·`docker-compose`(생태계 이름은 GitHub 공식 표로 확인), 주 1회 월 09:00 KST, PR 수 상한, Django 묶음, postgres 메이저·python 마이너 업그레이드는 봇 PR 제외. **`github-actions`는 주석으로 대기** — 워크플로가 없어 켜면 "의존성 파일 없음" 오류만 낸다. Phase 3 첫 워크플로와 함께 해제 |
+| 6 | Semgrep MCP | **승인** | `semgrep mcp` 하위 명령 **존재 확인**(앞선 [미검증] 해소). `uvx --from semgrep==1.182.1`로 **버전 고정**, `SEMGREP_SEND_METRICS=off`, local scope. 도구 7종. **기준선 스캔**(p/django·p/python·p/secrets, 앱 코드 61개 파일): 1건 → `accounts/emails.py`의 로그 문구 "Password"에 반응한 **오탐**(pk·예외 타입만 기록)으로 판정, 사유와 함께 `nosemgrep` → 0건 |
+| 7 | PostgreSQL 읽기 전용 MCP | **승인** | **서버 교체: crystaldba/postgres-mcp → Google MCP Toolbox(`@toolbox-sdk/server@1.15.0`, googleapis 관리).** 사유: crystaldba의 PyPI 최신(0.3.0, 2025-05)이 의존성 `pglast==7.2.0`의 PyPI 삭제로 **설치 불가**, 17개월간 릴리스 없음 — 원칙 2(공식·벤더 관리)에 Toolbox가 더 부합. 도구는 **2개만**(`list_tables`·`execute_sql`; 프리빌트는 20+), 접속 대상은 tools 파일에 **로컬 DB로 고정**. 경계 = DB 역할 `chamneul_ro`: SELECT만, `accounts_user.password`·`django_session` 제외, `default_transaction_read_only`, 5초 제한, 연결 3개. 비밀번호는 **키체인**에서 실행 시 읽음(`~/.claude.json`·저장소에 없음). 검증: 읽기 허용 / 비밀번호 해시·세션 키·`SELECT *`·쓰기·DDL 거부 — **읽기 전용 모드를 꺼도 쓰기는 권한으로 거부**됨을 확인 |
+| 8 | Playwright MCP | **승인** | **이미 설치돼 있었다** — claude.ai 계정에서 동기화된 Anthropic 공식 마켓플레이스 플러그인(`playwright@synced`, Microsoft). 중복 등록하지 않음. **원칙과 다른 점 2가지**: `@playwright/mcp@latest`(버전 미고정)·`--isolated` 없음. 산출물이 저장소 루트 `.playwright-mcp/`에 쓰여 **`.gitignore`에 추가**. 검증: `/healthz` → `{"status": "ok"}` |
+| 9 | CodeQL default setup | **Phase 3에서 승인 예정** | — |
+| 10 | Sentry MCP | **Phase 3에서 승인 예정** | — |
 
 ## Options considered
 

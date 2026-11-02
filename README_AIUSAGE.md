@@ -6,6 +6,49 @@
 
 ---
 
+## 2026-10-27 — ADR-009 AI 도구 적용: Dependabot · Semgrep MCP · Postgres 읽기 전용 MCP · Playwright [위임 · 승인은 Owner]
+
+### 작업
+
+Owner가 ADR-009 항목 5~8을 승인했고(9·10은 Phase 3), "직접 구성이 가능하면 진행하고 보고"를 요청했다. 4개 모두 이 세션에서 구성·검증까지 끝냈다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code). 검증에 새로 붙인 MCP 서버 자체를 썼다(MCP stdio 프로브 스크립트로 initialize → tools/list → tools/call 직접 호출).
+
+### Owner 결정
+
+항목 5·6·7·8 승인, 9·10 Phase 3, 1~4는 이번 목록에 없음(미결정).
+
+### 생성 산출물
+
+* GitHub 설정: Dependabot alerts·security updates **켬**(secret scanning·push protection은 이미 켜져 있었음) · `.github/dependabot.yml`
+* `.claude/mcp/` — `setup-postgres-ro-role.sh`(DB 역할 + 키체인, 재실행 안전) · `postgres-ro.tools.yaml`(도구 2개, 로컬 DB 고정) · `postgres-ro.sh`(키체인에서 비밀번호를 읽어 실행)
+* MCP 등록(local scope): `semgrep`(1.182.1 고정) · `postgres-ro`(Google MCP Toolbox 1.15.0 고정)
+* `.gitignore`에 `.playwright-mcp/` · `accounts/emails.py`에 오탐 억제 주석 1줄 · ADR-009 결정 기록 · 설정 가이드 §5~§8 재작성
+
+### 검증 결과
+
+* `claude mcp list` → `postgres-ro ✔ Connected`, `semgrep ✔ Connected`
+* **DB 역할을 실제 로그인으로 검증**: 읽기 ✅ / 비밀번호 해시·세션 키·`SELECT *` ❌ / 쓰기·DDL ❌ / **읽기 전용 모드를 끄고 쓰기 → 권한으로 ❌**(진짜 경계 확인), DB 변경 0건
+* MCP 경유 검증: 도구 2개만 노출, `select count(*)` 성공, 비밀번호·세션 조회와 DELETE는 거부
+* Semgrep 기준선: 61개 파일 1건 → 오탐 판정·억제 → 0건 / `ruff check` 통과 / 재설정 테스트 17개 OK
+* Playwright 플러그인으로 `/healthz` → `{"status": "ok"}`
+
+### 이번에 드러난 것
+
+1. **ADR이 고른 1순위 서버(crystaldba/postgres-mcp)가 설치되지 않았다.** PyPI 최신 릴리스의 의존성 버전이 PyPI에서 사라졌다. "도입 직전에 재검증한다"(ADR Trade-offs)가 실제로 필요했다 — 대안 3개를 비교해 Google 공식 Toolbox로 바꾸고 ADR에 사유를 남겼다.
+2. **Playwright는 이미 계정 동기화 플러그인으로 들어와 있었다.** 중복 등록 대신 그대로 쓰되, 버전 미고정·비격리라는 원칙과의 차이를 문서에 남겼다. 그리고 그 플러그인이 **저장소 루트에 산출물을 쓴다**는 것을 첫 사용에서 발견해 `.gitignore`에 넣었다.
+3. `nosemgrep` 주석은 **해당 줄 바로 위**에 있어야 먹는다 — 두 줄 위에 두면 조용히 무시된다.
+
+### 잔여 리스크
+
+* Playwright 플러그인은 `@latest`(버전 미고정) — Owner 판단 사항(가이드 §8.1).
+* DB 볼륨을 지우면 읽기 전용 역할도 사라진다 — `setup-postgres-ro-role.sh` 한 줄로 복구.
+* `github-actions` Dependabot은 Phase 3 첫 워크플로와 함께 켠다.
+
+---
+
 ## 2026-10-25 — SPEC-005 최종 보안 리뷰 후속 (H-1 두 겹 방어 외 12건) [위임]
 
 ### 작업
