@@ -170,6 +170,23 @@ PASSWORD_RESET_URL = os.environ.get("PASSWORD_RESET_URL", "http://localhost:3000
 # the request path (Phase 3 queue) — final review L-5.
 EMAIL_TIMEOUT = 10
 
+# --- Cache (SPEC-006 결정 1) -------------------------------------------
+# Rate-limit counters must be shared by every gunicorn worker and pod. Django's
+# default LocMemCache lives inside one process (3 workers x N pods = limits 3N
+# times looser), so the cache is a PostgreSQL table. `manage.py
+# createcachetable` creates it — not a migration, so it is a deploy step next
+# to `migrate` (smoke-test §2-1). The test runner creates it by itself.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+        # Past MAX_ENTRIES (default 300) Django deletes a third of the rows in
+        # key order. Anyone can add rows (one per address tried), so a low cap
+        # would let an attacker wipe other people's counters.
+        "OPTIONS": {"MAX_ENTRIES": 100_000},
+    }
+}
+
 # --- DRF ---------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -184,4 +201,19 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     # api.md §1.5: errors are {error: {code, message, details}}.
     "EXCEPTION_HANDLER": "common.exceptions.api_exception_handler",
+    # SPEC-006 결정 2 — the only place the numbers live (common/throttling.py
+    # reads it per request). DRF counts every request, failed logins included.
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_login_ip": "20/min",
+        "auth_login_email": "10/hour",
+        "auth_signup_ip": "10/hour",
+        "password_reset_ip": "10/hour",
+        "password_reset_email": "3/hour",
+        "password_reset_confirm_ip": "20/hour",
+    },
+    # X-Forwarded-For hops to trust when finding the client IP: 0 = ignore the
+    # header (local: nothing sits in front of Django), 1 behind one ALB. Left
+    # unset, DRF trusts the whole client-supplied header — a new "IP" per
+    # request, i.e. no IP limit at all.
+    "NUM_PROXIES": int(os.environ.get("DRF_NUM_PROXIES", "0")),
 }

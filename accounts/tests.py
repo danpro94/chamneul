@@ -11,6 +11,7 @@ either one is an operational incident rather than a bug:
   * the system must never end up with zero administrators (ADR-003 §2).
 """
 
+import hashlib
 import json
 import re
 import smtplib
@@ -25,6 +26,7 @@ from django.contrib.auth import SESSION_KEY, get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sessions.models import Session
 from django.core import mail
+from django.core.cache import cache
 from django.core.signals import got_request_exception
 from django.db import connection
 from django.test import TestCase, override_settings
@@ -1720,7 +1722,14 @@ class PasswordResetRequestTests(AuthTestBase):
 
         self.assertEqual(response.status_code, 200)
         writes = [q["sql"] for q in ctx.captured_queries if not q["sql"].startswith("SELECT")]
-        self.assertEqual(writes, [])
+        # SPEC-006 결정 1(2026-11-04 승인): 요청 횟수 카운터만은 캐시 테이블에
+        # 쓴다 — 키는 HMAC, 값은 시각뿐이다(RateLimitTests). 그 밖의 쓰기
+        # (사용자·세션·토큰)는 여전히 0이어야 한다.
+        savepoints = ("SAVEPOINT", "RELEASE SAVEPOINT")
+        data_writes = [
+            sql for sql in writes if not sql.startswith(savepoints) and '"django_cache"' not in sql
+        ]
+        self.assertEqual(data_writes, [])
         self.assertNotIn("sessionid", response.cookies)
         self.existing.refresh_from_db()
         self.assertEqual(self.existing.password, password_before)
@@ -2293,3 +2302,247 @@ class ReviewFollowUpTests(AuthTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.login(password=spaced, client=APIClient()).status_code, 200)
         self.assertEqual(self.login(password="Reset-pass-789", client=APIClient()).status_code, 401)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SPEC-006 TASK-001 — 요청 횟수 제한 (#2·#3·#45·#46)
+#
+# 한도 표는 settings 한 곳(REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"])에 있고,
+# 테스트 설정은 다른 테스트가 걸리지 않게 한도를 아주 크게 덮어쓴다. 그래서
+# 여기서는 테스트마다 작은 수치를 직접 넣는다(with_rates). 카운터는 공유
+# 캐시(DB 테이블)에 쌓인다 — TransactionTestCase가 커밋한 행이 남아 있을 수
+# 있으므로 테스트마다 비운다.
+# ═══════════════════════════════════════════════════════════════════════════
+
+LIMITED_MESSAGE = "요청이 너무 많습니다. 잠시 후 다시 시도해주세요."
+WRONG_PW = "Wrong-pass-123"
+
+
+def with_rates(**rates):
+    """작은 한도를 실제 표 위에 덮는다. NUM_PROXIES 등 나머지는 설정값 그대로
+    둔다 — XFF 우회 테스트는 실제 설정값을 검증해야 하기 때문이다."""
+    rest = settings.REST_FRAMEWORK
+    table = {**rest.get("DEFAULT_THROTTLE_RATES", {}), **rates}
+    return override_settings(REST_FRAMEWORK={**rest, "DEFAULT_THROTTLE_RATES": table})
+
+
+class RateLimitTests(AuthTestBase):
+    """SPEC-006 AC-1."""
+
+    def setUp(self):
+        super().setUp()
+        cache.clear()
+
+    def login_from(self, ip, email="alpha@example.com", password=WRONG_PW, **extra):
+        body = {"email": email, "password": password}
+        return self.client.post(LOGIN_URL, body, format="json", REMOTE_ADDR=ip, **extra)
+
+    def request_reset(self, email, ip="192.0.2.10"):
+        return self.client.post(RESET_URL, {"email": email}, format="json", REMOTE_ADDR=ip)
+
+    @with_rates(auth_login_ip="3/min")
+    def test_login_over_the_ip_limit_is_429_with_retry_after(self):
+        """같은 IP에서 한도를 넘으면 맞는 비밀번호여도 429다. 앞의 3번은
+        **틀린** 비밀번호(401)였다 — 실패한 시도도 센다는 뜻이다."""
+        for n in range(3):
+            response = self.login_from("192.0.2.1", email=f"guess{n}@example.com")
+            self.assertEqual(response.status_code, 401)
+
+        response = self.login_from("192.0.2.1", password=STRONG_PW)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(
+            response.json(), {"error": {"code": "RATE_LIMITED", "message": LIMITED_MESSAGE}}
+        )
+        self.assertGreater(int(response["Retry-After"]), 0)
+        self.assertNotIn("sessionid", response.cookies)
+
+    @with_rates(auth_login_ip="3/min")
+    def test_requests_within_the_limit_are_untouched(self):
+        for _ in range(3):
+            self.assertEqual(self.login_from("192.0.2.2", password=STRONG_PW).status_code, 200)
+
+    @with_rates(auth_login_email="3/hour")
+    def test_account_limit_holds_when_the_ip_changes(self):
+        """계정 표적 공격: IP를 바꿔 가며 한 계정에 비밀번호를 대입한다. IP
+        한도는 매번 새로 시작하지만 계정 한도는 이어서 센다."""
+        for n in range(3):
+            self.assertEqual(self.login_from(f"198.51.100.{n}").status_code, 401)
+
+        response = self.login_from("198.51.100.99", password=STRONG_PW)
+
+        self.assertEqual(response.status_code, 429)
+
+    @with_rates(auth_login_ip="3/min")
+    def test_rotating_x_forwarded_for_does_not_reset_the_ip_count(self):
+        """NUM_PROXIES가 없으면 DRF는 클라이언트가 보낸 X-Forwarded-For를 그대로
+        IP로 믿는다 — 요청마다 바꾸면 매번 새 IP다. 로컬·테스트는 0(헤더 무시)."""
+        for n in range(3):
+            response = self.login_from(
+                "192.0.2.3", email=f"guess{n}@example.com", HTTP_X_FORWARDED_FOR=f"203.0.113.{n}"
+            )
+            self.assertEqual(response.status_code, 401)
+
+        response = self.login_from(
+            "192.0.2.3", email="guess9@example.com", HTTP_X_FORWARDED_FOR="203.0.113.99"
+        )
+
+        self.assertEqual(response.status_code, 429)
+
+    @with_rates(auth_login_ip="3/min")
+    def test_behind_one_proxy_only_the_hop_it_appended_counts(self):
+        """운영 모양(ALB 하나 → DRF_NUM_PROXIES=1). 클라이언트가 XFF 왼쪽에 무엇을
+        써 넣든, ALB가 맨 끝에 붙인 실제 IP로 센다."""
+
+        def attempt(n, client_ip):
+            xff = f"10.9.9.{n}, {client_ip}"
+            return self.login_from(
+                "10.0.0.5", email=f"guess{n}@example.com", HTTP_X_FORWARDED_FOR=xff
+            )
+
+        with override_settings(REST_FRAMEWORK={**settings.REST_FRAMEWORK, "NUM_PROXIES": 1}):
+            for n in range(3):
+                self.assertEqual(attempt(n, "203.0.113.7").status_code, 401)
+            self.assertEqual(attempt(9, "203.0.113.7").status_code, 429)
+            self.assertEqual(attempt(9, "203.0.113.8").status_code, 401)
+
+    @with_rates(password_reset_email="2/hour")
+    def test_reset_429_is_identical_for_registered_and_unknown_addresses(self):
+        """가입 여부와 무관한 429. 카운터는 계정이 아니라 **입력한 문자열**로
+        세고, 스로틀은 뷰(계정 조회)보다 먼저 돈다 — 그래서 3번째에는 메일도 없다."""
+        for _ in range(2):
+            self.request_reset("alpha@example.com")
+            self.request_reset("nobody@example.com")
+        self.assertEqual(len(mail.outbox), 2)
+
+        registered = self.request_reset("alpha@example.com")
+        unknown = self.request_reset("nobody@example.com")
+
+        self.assertEqual(registered.status_code, 429)
+        self.assertEqual(unknown.status_code, registered.status_code)
+        self.assertEqual(unknown.content, registered.content)
+        self.assertEqual(set(unknown.cookies), set(registered.cookies))
+        # 값까지 비교하지 않는다: Retry-After 초는 시각에 따라 1초 다를 수 있다.
+        self.assertEqual(set(dict(unknown.items())), set(dict(registered.items())))
+        self.assertEqual(len(mail.outbox), 2)
+
+    @with_rates(password_reset_email="3/hour")
+    def test_case_and_whitespace_variants_share_one_counter(self):
+        """계정 조회와 같은 정규화(canonical_email)로 센다 — 대소문자를 바꿔
+        한도를 새로 받을 수 없다(SPEC-005 L-1)."""
+        for variant in ("Alpha@Example.com", "ALPHA@EXAMPLE.COM", " alpha@example.com "):
+            self.assertEqual(self.request_reset(variant).status_code, 200)
+
+        self.assertEqual(self.request_reset("alpha@example.com").status_code, 429)
+
+    @with_rates(password_reset_email="3/hour")
+    def test_counter_keys_hold_neither_the_address_nor_the_ip(self):
+        """캐시 테이블은 DB에 남는다. 키에 주소를 그대로 쓰면 '누가 재설정을
+        시도했나'가 개인정보로 쌓인다. 그냥 sha256이면 후보 주소를 해시해 보는
+        것만으로 되돌릴 수 있어서 SECRET_KEY를 섞은 HMAC이어야 한다."""
+        self.request_reset("Alpha@Example.com", ip="192.0.2.77")
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT cache_key FROM django_cache")
+            keys = " ".join(row[0] for row in cursor.fetchall())
+
+        self.assertIn("password_reset_email", keys)  # 카운터가 실제로 쓰였다
+        self.assertNotIn("alpha@example.com", keys.lower())
+        self.assertNotIn(hashlib.sha256(b"alpha@example.com").hexdigest(), keys)
+        self.assertNotIn("192.0.2.77", keys)
+
+    @with_rates(auth_login_ip="1/min")
+    def test_login_limit_does_not_spill_into_other_endpoints(self):
+        """한도는 스코프별이다. 로그인이 막혀도 이미 로그인된 세션의 다른 API와
+        재설정 요청(#45)은 그대로 동작한다."""
+        self.assertEqual(self.login_from("192.0.2.4", password=STRONG_PW).status_code, 200)
+        self.assertEqual(self.login_from("192.0.2.4", password=STRONG_PW).status_code, 429)
+
+        self.assertEqual(self.client.get(ME_URL, REMOTE_ADDR="192.0.2.4").status_code, 200)
+        self.assertEqual(self.request_reset("alpha@example.com", ip="192.0.2.4").status_code, 200)
+
+    def test_signup_reset_and_confirm_each_have_their_own_ip_limit(self):
+        """#2·#45·#46의 IP 한도가 각 뷰에 실제로 붙어 있는지. 스코프 하나씩
+        1회로 줄이고, 두 번째 요청이 429인지 본다."""
+        ip = "192.0.2.5"
+
+        def signup(n):
+            body = {"email": f"s{n}@example.com", "nickname": f"signup{n}", "password": STRONG_PW}
+            return self.client.post(SIGNUP_URL, body, format="json", REMOTE_ADDR=ip)
+
+        def confirm(n):
+            body = {"uid": "x", "token": f"t{n}", "new_password": NEW_PW}
+            return self.client.post(CONFIRM_URL, body, format="json", REMOTE_ADDR=ip)
+
+        cases = {
+            "auth_signup_ip": signup,
+            "password_reset_ip": lambda n: self.request_reset(f"r{n}@example.com", ip=ip),
+            "password_reset_confirm_ip": confirm,
+        }
+        for scope, send in cases.items():
+            with self.subTest(scope), with_rates(**{scope: "1/hour"}):
+                cache.clear()
+                self.assertNotEqual(send(1).status_code, 429)
+                self.assertEqual(send(2).status_code, 429)
+
+    def test_odd_bodies_still_get_the_serializer_400(self):
+        """이메일 한도는 본문에서 주소를 꺼낸다. 본문이 객체가 아니거나 주소가
+        문자열이 아니면 세지 않고 넘긴다 — 500이 아니라 원래의 400이어야 한다."""
+        for body in ([], {"email": 123, "password": "x"}, {"password": "x"}):
+            with self.subTest(body=body):
+                response = self.client.post(LOGIN_URL, body, format="json")
+                self.assertEqual(response.status_code, 400)
+
+    def test_a_crash_inside_the_limiter_does_not_report_the_password(self):
+        """이메일 한도는 뷰보다 **먼저** 본문을 읽는다. 그 프레임은 뷰의
+        sensitive_variables가 덮지 못한다(L-2와 같은 위험) — 그러니 그 프레임이
+        비밀번호를 쥐고 있으면 안 된다."""
+        crash = patch(
+            "accounts.managers.UserManager.canonical_email", side_effect=RuntimeError("boom")
+        )
+        client = APIClient(raise_request_exception=False)
+        body = {"email": "alpha@example.com", "password": STRONG_PW}
+
+        with crash:
+            response, reports = error_report_of(lambda: client.post(LOGIN_URL, body, format="json"))
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(len(reports), 1)
+        self.assertIn("boom", reports[0])
+        self.assertIn("LoginEmailThrottle", reports[0])  # 전제: 한도 검사 중에 터졌다
+        self.assertNotIn(STRONG_PW, reports[0])
+
+    def test_counters_live_in_a_store_every_worker_shares(self):
+        """결정 1. Django 기본 LocMemCache는 프로세스마다 따로라, gunicorn 워커
+        3개 × 파드 N개면 한도가 3N배로 풀린다."""
+        default = settings.CACHES["default"]
+        self.assertEqual(default["BACKEND"], "django.core.cache.backends.db.DatabaseCache")
+        self.assertEqual(default["LOCATION"], "django_cache")
+
+    def test_many_live_counters_are_not_culled(self):
+        """DatabaseCache는 기본적으로 300개를 넘으면 키 순서로 1/3을 지운다.
+        누구나 키를 늘릴 수 있으므로(시도한 주소마다 1개) 기본값이면 공격자가
+        **남의 카운터를 지워** 한도를 우회할 수 있다."""
+        for n in range(350):
+            cache.set(f"spray-{n}", [0.0], 3600)
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM django_cache")
+            self.assertEqual(cursor.fetchone()[0], 350)
+
+    def test_real_table_matches_decision_2(self):
+        """결정 2(2026-11-04 승인). 테스트 설정은 한도를 크게 덮어쓰므로 원본
+        설정 모듈을 직접 본다 — 누가 한도를 슬쩍 풀면 여기서 걸린다."""
+        from config.settings import base
+
+        self.assertEqual(
+            base.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"],
+            {
+                "auth_login_ip": "20/min",
+                "auth_login_email": "10/hour",
+                "auth_signup_ip": "10/hour",
+                "password_reset_ip": "10/hour",
+                "password_reset_email": "3/hour",
+                "password_reset_confirm_ip": "20/hour",
+            },
+        )

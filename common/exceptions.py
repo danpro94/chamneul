@@ -1,5 +1,5 @@
 from rest_framework import status
-from rest_framework.exceptions import APIException, ValidationError
+from rest_framework.exceptions import APIException, Throttled, ValidationError
 from rest_framework.views import exception_handler as drf_default_handler
 
 
@@ -76,6 +76,12 @@ def api_exception_handler(exc, context):
     if isinstance(exc, ValidationError):
         message = "입력값을 확인해주세요."
         details = response.data  # {field: [messages]} shape from DRF
+    elif isinstance(exc, Throttled):
+        # DRF's text embeds the wait in seconds. The body stays fixed (two
+        # throttled #45 requests must be byte-identical, ADR-008 §2); the wait
+        # is in the Retry-After header DRF already set.
+        message = "요청이 너무 많습니다. 잠시 후 다시 시도해주세요."
+        details = None
     else:
         # Non-validation errors expose a single `detail` string.
         detail = response.data.get("detail") if isinstance(response.data, dict) else None

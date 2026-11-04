@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-11-04 — SPEC-006/TASK-001 요청 횟수 제한 + Owner 도메인 작업 현황 기록 [위임 · 결정은 Owner]
+
+### 작업
+
+1. Owner가 SPEC-006 §7 결정 6건을 전부 권고안대로 승인 → 명세에 기록.
+2. Owner가 직접 진행한 B-5~B-8(Route 53·ACM·SES·프로덕션 액세스)의 현황을 **git이 추적하지 않는 로컬 문서**로 정리(`docs/00-project/OWNER-ACTIONS-STATUS.local.md`, `.gitignore` 등록 — Owner 요청). 공개 DNS 실측을 함께 넣었다.
+3. TASK-001(요청 횟수 제한)을 테스트 먼저 구현.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code). `dig`로 공개 DNS 실측(읽기 전용). 변이 검증·쿼리 수 측정 스크립트는 저장소 밖(scratchpad)에서 돌렸다.
+
+### Owner 결정
+
+* SPEC-006 결정 1~6 승인. WhiteNoise 패키지 추가(§16)와 ADR-010·`/readyz` 포함.
+* 도메인 작업은 Owner가 직접 진행했다. ACM(B-6)과 SES 프로덕션 액세스(B-8)는 가이드가 미루자고 했던 단계지만 Owner 판단으로 진행했다 — 결과와 주의점은 로컬 문서에 정리했다.
+
+### 생성 산출물
+
+* 코드: `common/throttling.py`(신규), `accounts/views.py`, `common/exceptions.py`, `config/settings/{base,test}.py`
+* 테스트: `accounts/tests.py` `RateLimitTests` 15개 + 기존 1개 단언 범위 조정
+* 문서: api.md §1.10 신설 + #2·#3·#45·#46, smoke-test §2-1·§5·§6, 리뷰 노트 09(신규), SPEC-006 plan·tasks·acceptance, STATUS, OWNER-ACTIONS-GUIDE(B-5 완료 확인 기준 정정, B-6·B-8 보강), `.gitignore`
+
+### 검증 결과
+
+* 선-실패: 15개 중 13개 실패 확인. 나머지 2개는 회귀 방지용이라 처음부터 통과.
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / `test` **439개 OK**.
+* 변이 15건 전건 검출 — 그중 **M14**(스로틀이 본문을 지역변수에 담으면 오류 리포트에 비밀번호가 찍힌다)는 실제 노출 경로를 테스트가 잡은 것이다.
+* 실제 compose 앱: 같은 계정으로 10×401 → 11번째 **429**, `Retry-After: 3599`. 캐시 테이블에는 HMAC 키만 있고 원문 주소는 0행.
+* 비용: 스로틀 1개 = SQL 6문. #3·#45는 요청당 +12문.
+
+### 이번에 드러난 것
+
+* **DatabaseCache의 기본 컬링(300개 초과 시 키 순서로 1/3 삭제)은 보안 카운터를 지우는 우회가 된다.** 명세에도 없던 위험으로, Django 소스를 읽다가 찾았다 → `MAX_ENTRIES` 100,000 + 테스트.
+* **B-5 위임 불일치(레임 위임)**: .com 레지스트리는 Route 53 NS 4개를 가리키는데, 그 4곳이 모두 `REFUSED`를 돌려준다. 가이드의 완료 확인(`dig NS +short` 한 줄)으로는 이 상태를 걸러내지 못했다 → 부모·자식 분리 점검으로 가이드를 정정했다. 원인 확인·수정은 Owner 콘솔 작업이다.
+* `.claude/settings.json`(프로젝트 공용 권한 파일)이 승인 창의 "항상 허용"으로 생기고 있다 — `docker compose *`·`uv run *` 같은 넓은 규칙 포함. 커밋하지 않았다.
+
+### 잔여 리스크
+
+* 계정 기준 한도는 남이 일부러 다 써 버릴 수 있다(잠금형 DoS, 1시간) — Phase 3에서 실패만 세기·CAPTCHA.
+* 기존 테스트 1개의 단언 범위 조정은 Owner 확인 대상이다.
+* `DRF_NUM_PROXIES`는 Phase 3 배포 구성(ALB 수)과 맞춰야 한다. `.env.example` 추가는 Owner 손코딩.
+
+---
+
 ## 2026-11-02 — SPEC-006 명세(Phase 3 진입 전 하드닝) + 도메인·메일 시작 준비 [위임 · 결정은 Owner]
 
 ### 작업

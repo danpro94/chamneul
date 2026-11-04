@@ -15,6 +15,14 @@ from rest_framework.views import APIView
 
 from common.exceptions import Conflict
 from common.permissions import IsAdmin
+from common.throttling import (
+    LoginEmailThrottle,
+    LoginIPThrottle,
+    PasswordResetConfirmIPThrottle,
+    PasswordResetEmailThrottle,
+    PasswordResetIPThrottle,
+    SignupIPThrottle,
+)
 
 from . import oauth, services
 from .serializers import (
@@ -90,6 +98,9 @@ class SignupView(APIView):
     """POST /api/v1/auth/signup (#2) — create account and auto-login (ADR-002 §9)."""
 
     permission_classes = [AllowAny]
+    # 409 EMAIL_TAKEN tells whether an address signed up (accepted, api.md #2);
+    # the IP limit keeps that from becoming a bulk lookup (I-6).
+    throttle_classes = [SignupIPThrottle]
 
     # The serializer's repr carries the raw password — hide every local from
     # production error reports (L-2, same as #46).
@@ -117,6 +128,9 @@ class LoginView(APIView):
     """POST /api/v1/auth/login (#3) — email/password login, issues the session."""
 
     permission_classes = [AllowAny]
+    # The per-account limit is the real brute-force guard: changing IPs does
+    # not reset it. The IP limit is generous for shared campus/office IPs.
+    throttle_classes = [LoginIPThrottle, LoginEmailThrottle]
 
     @method_decorator(sensitive_variables())
     def post(self, request):
@@ -149,9 +163,12 @@ class PasswordResetView(APIView):
 
     The response is identical whether or not the address has an account;
     otherwise this endpoint becomes a lookup tool for who signed up (ADR-008 §2).
+    The 429 keeps that promise too: throttles run before this handler, and the
+    per-address counter keys on the typed string, never on an account.
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetIPThrottle, PasswordResetEmailThrottle]
 
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -171,6 +188,7 @@ class PasswordResetConfirmView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetConfirmIPThrottle]
 
     # Every local here can hold the password or token (the serializer's repr
     # includes the raw input), so all of them are hidden from error reports.

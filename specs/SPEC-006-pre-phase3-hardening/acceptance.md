@@ -4,15 +4,17 @@ TEST_CRITERIA.md §2·§3을 SPEC-006에 적용한 판정 기준. AC-1~AC-3은 D
 
 ## AC-1. 요청 횟수 제한 (TASK-001)
 
-- [ ] 한도 초과 → **429**, `Retry-After` 헤더, 본문 `error.code == "RATE_LIMITED"`
-- [ ] 한도 이내 요청은 영향 없음
-- [ ] 계정 기준 제한이 IP를 바꿔도 걸린다 (#3)
-- [ ] `X-Forwarded-For`를 바꿔도 IP 기준 제한을 우회할 수 없다 (`NUM_PROXIES=0`)
-- [ ] #45: 가입·미가입 주소의 429가 **상태 코드·본문 동일**
-- [ ] #45: 대소문자만 바꾼 주소가 같은 카운터로 센다
-- [ ] 캐시 테이블에 이메일 원문이 남지 않는다
-- [ ] 제한 대상이 아닌 엔드포인트는 영향 없음
-- [ ] 카운터 저장소가 프로세스 간 공유된다 (`CACHES` 백엔드 단언)
+> 2026-11-04 전항 통과 — `accounts.tests.RateLimitTests` 15개.
+
+- [x] 한도 초과 → **429**, `Retry-After` 헤더, 본문 `error.code == "RATE_LIMITED"`
+- [x] 한도 이내 요청은 영향 없음
+- [x] 계정 기준 제한이 IP를 바꿔도 걸린다 (#3)
+- [x] `X-Forwarded-For`를 바꿔도 IP 기준 제한을 우회할 수 없다 (`NUM_PROXIES=0`)
+- [x] #45: 가입·미가입 주소의 429가 **상태 코드·본문 동일**
+- [x] #45: 대소문자만 바꾼 주소가 같은 카운터로 센다
+- [x] 캐시 테이블에 이메일 원문이 남지 않는다
+- [x] 제한 대상이 아닌 엔드포인트는 영향 없음
+- [x] 카운터 저장소가 프로세스 간 공유된다 (`CACHES` 백엔드 단언)
 
 ## AC-2. readiness (TASK-002)
 
@@ -38,7 +40,7 @@ TEST_CRITERIA.md §2·§3을 SPEC-006에 적용한 판정 기준. AC-1~AC-3은 D
 ## AC-5. 회귀 없음 (전 TASK)
 
 - [ ] `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed
-- [ ] 기존 **424개** 테스트가 하나도 깨지지 않는다
+- [ ] 기존 **424개** 테스트가 하나도 깨지지 않는다 — TASK-001 시점: 424개 통과. 단 1개(`PasswordResetRequestTests.test_changes_nothing_in_the_database`)는 결정 1(카운터를 DB 캐시에 쓴다)과 정면으로 부딪혀 **단언 범위를 좁혔다**(캐시 테이블 쓰기만 예외, 나머지 쓰기 0은 유지). Owner 확인 전까지 이 항목은 미체크로 둔다
 - [ ] Dockerfile·docker-compose 변경 없음
 
 ## 종료 판정

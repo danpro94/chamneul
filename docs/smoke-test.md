@@ -46,6 +46,14 @@ docker compose exec app python manage.py migrate
 
 25개 마이그레이션이 적용된다(contenttypes/auth → accounts → admin → concerns → advice → advisors → notifications → sessions). `accounts.0001_initial`이 `admin.0001_initial`보다 먼저 와야 한다 — 커스텀 User 모델이기 때문이다.
 
+**이어서 캐시 테이블을 만든다 (2026-11-04, SPEC-006 TASK-001).**
+
+```bash
+docker compose exec app python manage.py createcachetable
+```
+
+요청 횟수 카운터(api.md §1.10)는 DB 테이블 `django_cache`에 쌓인다. 이 테이블은 **마이그레이션이 아니라** `createcachetable`이 만든다. 빠뜨리면 다른 API는 멀쩡한데 **#2·#3·#45·#46만 500**이 나고, 로그에 `relation "django_cache" does not exist`가 찍힌다. 두 번 실행해도 안전하다(이미 있으면 `already exists`). Phase 3에서는 k8s 마이그레이션 Job에 `migrate` 다음 줄로 넣는다(Owner 손코딩).
+
 ### 2-2. 관리자 부트스트랩
 
 ```bash
@@ -192,7 +200,7 @@ docker compose start db      # healthy까지 6초
 
 | # | 갭 | 영향 | 처리 |
 | --- | --- | --- | --- |
-| 1 | **브루트포스 로그인 방어 부재** — IP·계정 기준 레이트 리밋 없음 | 비밀번호 대입 공격에 무방비. 로컬 전용이라 현재 노출 없음 | Phase 3 (`.claude/rules/security.md` 명시) |
+| 1 | ~~**브루트포스 로그인 방어 부재** — IP·계정 기준 레이트 리밋 없음~~ | **해소 (2026-11-04, SPEC-006 TASK-001)**: #2·#3·#45·#46에 요청 횟수 제한을 걸었다(IP 기준 + #3·#45는 계정 기준, api.md §1.10). 카운터는 공유 DB 캐시에 둔다. **남은 것**: 계정 기준 한도는 남이 일부러 다 써 버릴 수 있다 — 그 계정은 1시간 동안 로그인 429(잠금형 서비스 거부, 잠금보다는 약하다) | 해소 (잠금형 DoS 감수 — 실패만 세기·CAPTCHA는 Phase 3) |
 | 2 | **정적파일이 서빙되지 않는다** — `collectstatic`은 **빌드 때 수행된다**(`Dockerfile:31`). 문제는 ① bind mount `.:/app`(`docker-compose.yml`)이 이미지의 `/app/staticfiles`를 **가리고**, ② `DEBUG=False`에서 정적파일을 서빙할 주체(WhiteNoise·리버스프록시)가 없다는 것 | `DEBUG=False`에서 Django Admin CSS가 깨진다. API 응답에는 영향 없음 | Phase 3. *(2026-09-17 정정: 종전 서술 "collectstatic 없음"은 사실이 아니었다 — 원인이 틀리면 이미 있는 것을 다시 추가하게 된다)* |
 | 3 | **운영 경로(gunicorn + prod settings)를 한 번도 띄워보지 않았다** — override를 빼는 것만으로는 부족하다. `docker-compose.yml`이 `DJANGO_SETTINGS_MODULE: config.settings.local`을 **고정**하므로, override만 제거하면 `gunicorn + local settings`라는 어느 쪽도 아닌 조합이 된다. 진짜 운영 경로는 **둘 다** 필요하다: `docker compose -f docker-compose.yml up -d` + `DJANGO_SETTINGS_MODULE=config.settings.prod` 주입 | gunicorn 실기동·정적파일·HTTPS 리다이렉트가 전부 미검증 | Phase 3 |
 | 4 | **고민 종료(`CLOSED`) 사용자 API 부재** | CLAUDE.md §6.6은 "사용자가 명시적으로 닫는다"고 서술하나 그 API가 없다. Phase 2는 **Django Admin으로만** 닫는다(Owner 결정 2026-09-16, D-4) | Phase 3 후보 |
@@ -224,6 +232,17 @@ docker compose logs app 2>&1 | grep -iE "error|exception"
 > ```
 >
 > `docker compose config`도 같은 이유로 공유 금지다 — `.env`의 시크릿을 평문으로 풀어 출력한다.
+
+### 요청 횟수 카운터 (로컬에서 429에 막혔을 때)
+
+```bash
+# 몇 개가 쌓였나 — 키는 HMAC이라 주소·IP 원문은 보이지 않는다
+docker compose exec -T db psql -U chamneul -d chamneul -c "SELECT count(*) FROM django_cache"
+# 전부 비운다 (로컬 전용 — 운영에서는 모든 사용자의 카운터가 함께 지워진다)
+docker compose exec app python manage.py shell -c "from django.core.cache import cache; cache.clear()"
+```
+
+로컬 compose는 호스트의 모든 요청이 **같은 IP**(Docker 게이트웨이)로 보인다. 브라우저·curl·스모크 스크립트가 IP 한도를 함께 쓰므로, 로그인을 1분에 20번 넘게 시도하면 다 같이 막힌다.
 
 ### DB 백업 (볼륨 삭제 전 필수)
 

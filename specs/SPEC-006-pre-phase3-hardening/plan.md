@@ -23,15 +23,27 @@
 
 **Dockerfile·docker-compose는 고치지 않는다**(소유권 정책). 배포 절차에 필요한 한 줄(`createcachetable`)은 smoke-test 문서에 적고, Phase 3의 k8s 마이그레이션 Job에는 Owner가 넣는다.
 
-## 2. 요청 횟수 제한 설계 (TASK-001)
+## 2. 요청 횟수 제한 설계 (TASK-001) — 구현 완료 2026-11-04
 
 ```text
 common/throttling.py
-  _RatesFromSettings          # get_rate()가 settings에서 매번 읽는다 (DRF의 import 시점 고정 회피)
-  IPRateThrottle(scope)       # 키 = DRF get_ident (NUM_PROXIES 반영)
-  EmailRateThrottle(scope)    # 키 = sha256(canonical_email(request.data["email"]))
-                              # 이메일이 없거나 형식 오류면 None → 이 스로틀은 건너뛰고(IP 기준이 막는다) 400은 시리얼라이저가 낸다
+  pseudonymize(value)         # HMAC-SHA256(SECRET_KEY) — 이메일·IP 모두 이 값으로만 키를 만든다
+  _RateFromSettings           # get_rate()가 settings에서 매번 읽는다 (DRF의 import 시점 고정 회피)
+  IPRateThrottle              # 키 = pseudonymize(DRF get_ident) — NUM_PROXIES 반영
+  EmailRateThrottle           # 키 = pseudonymize(canonical_email(request.data["email"]))
+                              # 본문이 객체가 아니거나 주소가 문자열이 아니면 None → 이 스로틀은 건너뛰고
+                              # (IP 기준이 막는다) 400은 시리얼라이저가 낸다
+  LoginIPThrottle 등 6개      # DRF는 스로틀을 인자 없이 만든다 → 스코프마다 클래스 하나
 ```
+
+**계획 대비 구현에서 강화한 4가지** (Owner 결정 범위 안의 구현 세부):
+
+| 계획 | 구현 | 이유 |
+| --- | --- | --- |
+| 이메일 키 = `sha256` | **HMAC-SHA256**(SECRET_KEY), IP 키도 같은 방식 | 그냥 sha256은 후보 주소를 해시해 보면 되돌릴 수 있다(이메일은 추측 가능한 값). IP도 개인정보로 취급하고, 조작된 긴 XFF 값도 고정 길이 키가 된다 |
+| `CACHES` 기본 옵션 | **`MAX_ENTRIES` 100,000** | DatabaseCache 기본 300개를 넘으면 **키 순서로 1/3을 지운다**. 누구나 키를 늘릴 수 있으므로(시도한 주소마다 1개) 공격자가 남의 카운터를 지우는 우회가 된다 |
+| 429 본문 = DRF 기본 | **고정 한국어 문구**(기다릴 초는 `Retry-After`에만) | DRF 문구에는 초가 들어가 두 #45 요청의 본문이 1초 차이로 달라질 수 있다 |
+| — | 스로틀 안에서 `request.data`를 **지역변수에 담지 않는다** | 스로틀은 뷰의 `sensitive_variables()` 밖에서 돈다. 여기서 터지면 운영 오류 리포트에 그 프레임의 지역변수가 찍힌다 — 본문을 담아 두면 비밀번호까지(변이 M14가 실제로 잡았다) |
 
 | 뷰 | 스로틀 |
 | --- | --- |
@@ -40,7 +52,7 @@ common/throttling.py
 | `PasswordResetView` (#45) | IP `password_reset_ip` + 이메일 `password_reset_email` |
 | `PasswordResetConfirmView` (#46) | IP `password_reset_confirm_ip` |
 
-**왜 이메일 키를 해시하나**: `DatabaseCache`는 키를 DB 테이블에 쓴다. 원문 주소를 키로 쓰면 "누가 재설정을 시도했는가"가 캐시 테이블에 개인정보로 남는다.
+**왜 이메일 키를 해시하나**: `DatabaseCache`는 키를 DB 테이블에 쓴다. 원문 주소를 키로 쓰면 "누가 재설정을 시도했는가"가 캐시 테이블에 개인정보로 남는다. 위 표대로 해시는 HMAC이다.
 
 **왜 스로틀이 뷰보다 먼저인가**: DRF는 `initial()`에서 인증·권한·스로틀을 본 뒤 핸들러를 부른다. 그래서 #45의 429는 **계정 조회 이전**에 결정된다 — 가입 여부가 429에 섞일 길이 구조적으로 없다.
 
