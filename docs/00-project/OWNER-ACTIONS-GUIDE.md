@@ -8,7 +8,7 @@
 
 ## 0. 한 화면 체크리스트
 
-> 상태 갱신 2026-10-25: ☑ 완료 · ◐ 진행 중 · ⏸ Owner 결정으로 연기
+> 상태 갱신 2026-11-04: ☑ 완료 · ◐ 진행 중 · ⏸ Owner 결정으로 연기
 
 | 순서 | 작업 | 소요 | 마감 권장 | 상태 |
 | --- | --- | --- | --- | --- |
@@ -21,10 +21,10 @@
 | B-2 | AWS 계정 생성 + 루트 MFA | 40분 | Phase 3 시작 전 | ☑ (기존 계정 — Free plan 크레딧 **소진**) |
 | B-3 | IAM Identity Center 관리자 사용자 | 30분 | B-2 직후 | ☑ |
 | B-4 | 결제 알림 (AWS Budgets) | 15분 | B-2 직후 (**필수**) | ☑ |
-| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | ⏸ MVP 완료 후 Phase 3 직전 |
-| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | ⏸ MVP 완료 후 Phase 3 직전 |
-| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | ⏸ MVP 완료 후 Phase 3 직전 |
-| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 1일~수일) | B-7 직후 | ⏸ MVP 완료 후 Phase 3 직전 |
+| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | ◐ 진행 중 (2026-11-04~) |
+| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | ◐ 진행 중 (2026-11-04~) |
+| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | ◐ 진행 중 (2026-11-04~) |
+| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 1일~수일) | B-7 직후 | ◐ 진행 중 (2026-11-04~) |
 | C-1 | 개인정보 처리방침 초안 | 반나절 | 베타 공개 전 | □ |
 | C-2 | 이용약관 초안 | 반나절 | 베타 공개 전 | □ |
 | C-3 | 민감정보·14세 미만 정책 결정 | 1시간 | 베타 공개 전 | □ |
@@ -229,8 +229,18 @@ Owner가 "하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수"를 �
   3. https://ap.www.namecheap.com/domains/list/ → `chamneul.com` 옆 **MANAGE** → **Domain** 탭 → **NAMESERVERS** 드롭다운에서 **Custom DNS**를 고른다. 값 4개를 넣고(끝의 점 `.`은 빼고) 초록 체크로 저장한다.
   4. Namecheap **Advanced DNS** 탭에 기존 레코드가 있었다면, 위임하기 **전에** Route 53에 같은 레코드를 먼저 만들어 둔다.
   5. ⚠️ Namecheap의 무료 **메일 포워딩**(예: `support@chamneul.com` → 개인 메일)은 Namecheap 네임서버를 쓸 때만 동작한다. **Custom DNS로 바꾸는 순간 멈춘다.** 받는 주소가 필요하면 위임 전에 대안(메일 호스팅 서비스의 MX 레코드를 Route 53에 등록 등)을 정해 둔다. (메뉴명이 다를 수 있음 — Namecheap 검색창에 `email forwarding`)
-- **완료 확인**: 터미널에서 `dig NS chamneul.com +short` → awsdns 4개가 나온다.
-- **흔한 실수**: 호스팅 영역을 지웠다가 다시 만든다. 그러면 **NS 값이 바뀌어서** Namecheap도 다시 고쳐야 한다.
+- **완료 확인** (2026-11-04 정정 — 종전 `dig NS chamneul.com +short` 한 줄로는 아래 "레임 위임"을 걸러내지 못했다): **부모 쪽과 자식 쪽을 따로** 본다.
+  ```bash
+  # ① 부모(.com 레지스트리)가 Route 53을 가리키는가 → awsdns 4개
+  dig +norec +noall +authority NS chamneul.com @a.gtld-servers.net
+  # ② 자식(호스팅 영역)이 실제로 답하는가 → status: NOERROR, flags에 aa  (①의 서버 중 하나에 묻는다)
+  dig +norec SOA chamneul.com @ns-XXX.awsdns-XX.com | grep -E "status|flags"
+  # ③ 일반 인터넷에서 보이는가 → SOA 한 줄 (awsdns-hostmaster.amazon.com 포함)
+  dig +short SOA chamneul.com @8.8.8.8
+  ```
+- **흔한 실수**
+  - 호스팅 영역을 지웠다가 다시 만든다. 그러면 **NS 값이 바뀌어서** Namecheap도 다시 고쳐야 한다.
+  - **레임 위임(lame delegation)**: ①은 정상인데 ②가 `REFUSED`, ③이 `SERVFAIL`이면 Namecheap에 넣은 NS 4개가 **지금 있는 공개 영역의 NS와 다르다**. 영역을 다시 만들었거나, 두 개 만들었거나, Type을 Private으로 만든 경우다. 해결: Route 53 → Hosted zones에서 레코드가 든 **Public** 영역 하나를 고르고, 그 영역의 NS 값을 Namecheap Custom DNS에 다시 넣는다. 이 상태에서는 ACM 검증·SES DKIM 확인도 함께 막힌다.
 
 ### B-6. ACM 인증서 (DNS 검증) — ⏸ Phase 3 Terraform에서
 
@@ -245,6 +255,11 @@ Owner가 "하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수"를 �
   4. 인증서 상세에서 **Create records in Route 53** → Create.
 - **완료 확인**: Status가 **Issued**가 된다. 보통 몇 분에서 30분쯤 걸린다.
 - **흔한 실수**: 리전을 착각한다. 발급은 됐는데 ALB 화면에서 안 보인다.
+- **이미 콘솔로 발급했다면**: 지우지 않아도 된다. 대신 세 가지를 지킨다.
+  - 인증서 상세의 **만료일(Not after)** 을 적어 둔다.
+  - Route 53의 **검증 CNAME을 지우지 않는다.** ALB에 붙은 뒤의 자동 갱신에 다시 쓰인다.
+  - Phase 3 Terraform에서는 `data "aws_acm_certificate"`로 참조하거나 `terraform import`로 가져오고, 같은 도메인 인증서를 **하나 더 만들지 않는다.**
+  - ALB에 붙이기 전에 만료되면 새로 요청하면 된다(무료). 요청 후 72시간 안에 검증되지 않으면 **Validation timed out**이 되는데, 이것도 새로 요청하면 된다.
 
 ### B-7. Amazon SES 도메인 인증 (DKIM·SPF·DMARC)
 
@@ -273,6 +288,8 @@ Owner가 "하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수"를 �
   1. SES → **Account dashboard** → **Request production access**(또는 Get set up 페이지의 같은 버튼).
   2. Mail type은 **Transactional**, Website URL은 `https://chamneul.com`, 언어는 Korean/English로 한다.
   3. Use case description 예시다(영문 권장). 실제 상황에 맞게 고쳐 쓴다.
+     - **2026-11 현재 콘솔 양식에는 이 입력란이 없을 수 있다**(Owner 확인 2026-11-04). 그러면 그대로 제출한다. AWS가 Support 케이스로 사용 사례를 물어오면 **그 케이스에 답장으로** 아래 문구를 쓴다.
+     - 웹사이트가 아직 없으면 사실대로 적는다. 예: "The website is under development; the landing page and privacy policy will be published before launch."
      ```text
      chamneul.com is an early-stage advice platform for Korean users. We send only
      transactional emails triggered by the user's own action: password reset links

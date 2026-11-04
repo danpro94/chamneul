@@ -1,7 +1,7 @@
 # SPEC-006 — Phase 3 진입 전 하드닝 (요청 횟수 제한 · 운영 경로 · readiness · 스모크 재통과)
 
 > 대상: 리뷰 노트 [07 §3-1](../../docs/reviews/07-phase2-closeout.md)·[08 §7](../../docs/reviews/08-spec-005-api-gaps.md), [smoke-test.md](../../docs/smoke-test.md) §5 갭 1·2·3·7·11, SPEC-005 보안 리뷰 S-3·S-6·I-6.
-> Status: **Draft (2026-11-02)** — Owner가 "①~④를 하드닝 SPEC 하나로 묶어 진행 → 프론트엔드 범위 ADR → Phase 3 착수"를 승인했다. §7 결정 6건 승인 대기.
+> Status: **Approved (2026-11-04)** — Owner가 "①~④를 하드닝 SPEC 하나로 묶어 진행 → 프론트엔드 범위 ADR → Phase 3 착수"를 승인했고(2026-11-02), §7 결정 6건을 **전부 권고안대로** 승인했다(2026-11-04 — 결정 3 WhiteNoise 패키지 추가 §16 승인, 결정 5 ADR-010·`/readyz` 승인 포함).
 
 ## 1. 배경 — 왜 Phase 3 전에 이 넷인가
 
@@ -83,7 +83,7 @@ API는 47/47 완료다(PR #12). 남은 것은 기능이 아니라 **앱이 local
 * 결정 3(a) WhiteNoise — **서드파티 패키지 1개 추가 → §16 승인 대상**.
 * 결정 5(a) readiness 엔드포인트 — **CLAUDE.md §7("`/healthz`만 버전 없음")·§5(엔드포인트 47개)와 충돌 → ADR-010이 먼저**(ADR-007의 교훈: SPEC 결정이 CLAUDE.md 조항과 어긋나면 결정 시점에 ADR).
 
-## 7. Owner 결정 — 6건 (승인 대기)
+## 7. Owner 결정 — 6건 (2026-11-04 전건 권고안 승인)
 
 | # | 쟁점 | 후보 | 권고 |
 | --- | --- | --- | --- |

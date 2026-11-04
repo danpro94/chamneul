@@ -4,7 +4,7 @@
 
 검증 4종 = `manage.py check` / `makemigrations --check` / `ruff check` / `manage.py test`.
 
-**선행 조건: spec §7 결정 6건 승인.** 결정 5(readiness)가 (a)면 TASK-002 전에 **ADR-010**을 Accepted로 만들고 CLAUDE.md §5·§7을 헌법 잠금 절차대로 개정한다.
+**선행 조건: spec §7 결정 6건 승인.** ✅ 충족 — 2026-11-04 전건 권고안 승인. 결정 5가 (a)이므로 TASK-002 전에 **ADR-010**을 Accepted로 만들고 CLAUDE.md §5·§7을 헌법 잠금 절차대로 개정한다.
 
 ## TASK-001 — 요청 횟수 제한 (#2·#3·#45·#46)
 
