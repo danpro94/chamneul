@@ -144,4 +144,80 @@ docker compose start db  # → /readyz 200
 
 * Phase 3: probe `timeoutSeconds`와 DB `connect_timeout`을 함께 정한다.
 * Phase 3: AWS ALB는 대상이 **전부** unhealthy이면 모든 대상에 요청을 보낸다(fail open). Ingress·대상 그룹 구성을 정할 때 확인한다.
-* TASK-003: 실제 이미지(gunicorn + prod 설정)로 두 경로를 파드 IP Host·HTTP로 다시 확인한다.
+* ~~TASK-003: 실제 이미지(gunicorn + prod 설정)로 두 경로를 파드 IP Host·HTTP로 다시 확인한다.~~ → **완료**(3-4 #1·#2).
+
+## 3. TASK-003 — 운영 경로: prod 가드 · 진입점 · 정적파일 · 실제 이미지 기동 (2026-11-07)
+
+### 3-1. 무엇이 바뀌었나
+
+| 범위 | 내용 |
+| --- | --- |
+| prod 기동 가드 | `DJANGO_EMAIL_BACKEND`(신규 환경변수, 기본 SMTP)가 console·filebased면 `ImproperlyConfigured`(S-3). `PASSWORD_RESET_URL`이 `https://`로 시작하지 않으면 `ImproperlyConfigured`(S-6) — 빠뜨리면 base.py의 `http://localhost` 기본값이 들어오므로 같은 검사에 걸린다 |
+| 진입점 (결정 4) | `config/wsgi.py`·`config/asgi.py` 기본값 **prod**. `manage.py`는 local 유지. compose는 `DJANGO_SETTINGS_MODULE: config.settings.local`을 명시하므로 로컬 동작은 그대로 |
+| 정적파일 (결정 3) | `whitenoise` 6.12.0 추가(§16 승인 2026-11-04). 미들웨어는 `SecurityMiddleware` 바로 다음, 저장소는 `CompressedManifestStaticFilesStorage` — **둘 다 base.py**(아래 3-2) |
+| 테스트 설정 | 정적파일 저장소를 Django 기본으로, `STATIC_ROOT = None` — 테스트는 `collectstatic`을 돌리지 않는다 |
+
+**근거**: 테스트 **453개 OK**(새 7개) · `check` 0 issues · `makemigrations --check` No changes · `ruff check` passed · 변이 10건 전건 검출 · 실제 이미지 기동 12항목(3-4).
+
+### 3-2. 왜 이렇게 구현했나
+
+* **저장소를 prod.py가 아니라 base.py에 둔다 — 계획(plan.md §4)과 다르다.** Dockerfile은 빌드 때 `python manage.py collectstatic`을 돌리고, 그때 설정은 `manage.py`의 기본값인 **local**이다. 계획대로 prod에만 두면 이미지에 매니페스트(`staticfiles.json`)가 없다. **실제로 그렇게 빌드해 봤다**(반대 사례 이미지): 빌드 로그에 `post-processed`가 사라지고, prod로 띄우면 `/admin/login/`·DRF 화면이 **500**, `/healthz`·`/readyz`·JSON API는 **200**. 즉 헬스체크는 "정상"이라고 답하는데 Admin은 깨진 채로 배포된다.
+* **미들웨어도 base.py.** 로컬·운영이 같은 미들웨어 목록을 쓴다. `runserver`는 `/static/`을 미들웨어보다 먼저 가로채므로 로컬 개발에는 영향이 없다.
+* **`DJANGO_EMAIL_BACKEND`를 새로 읽는다.** 지금까지 prod의 메일 백엔드는 코드에 고정(Django 기본 SMTP)이라 "콘솔 메일 금지" 가드가 걸릴 입력 자체가 없었다(계획의 `docker run -e EMAIL_BACKEND=...`도 읽히지 않았을 것이다). 기본값이 SMTP라 **설정하지 않아도 된다.** filebased도 막는다 — 재설정 링크가 디스크에 남는 것은 로그에 남는 것과 같은 문제다.
+* **설정 테스트는 새 인터프리터로.** Django 설정은 프로세스당 한 번 읽힌다. 가드·진입점 테스트는 `subprocess`로 매번 새로 띄운다. 호스트의 `.env`가 빈 자리를 채울 수 있으므로 "값 없음"은 재현하지 않고 **그 값이 빠졌을 때 실제로 들어오는 값**(base.py의 http 기본값)으로 시험한다.
+
+### 3-3. 핵심 파일
+
+`config/settings/prod.py`(가드 2개) · `config/settings/base.py`(WhiteNoise 미들웨어·`STORAGES`) · `config/settings/test.py` · `config/wsgi.py`·`config/asgi.py` · `config/tests.py`(+7) · `pyproject.toml`·`uv.lock`
+
+### 3-4. 테스트 방법 — 실제 이미지 (Dockerfile·compose 무수정)
+
+```bash
+docker build -t chamneul:prodcheck .          # collectstatic: 154 copied, 444 post-processed
+docker run --rm chamneul:prodcheck python -c "import config.wsgi"   # → KeyError: 'DJANGO_SECRET_KEY'
+SK=$(openssl rand -base64 48 | tr -d '\n')     # 일회용 — 화면에 찍지 않는다
+docker run -d --name chamneul-prodcheck --network chamneul_default --env-file .env \
+  -e DJANGO_SETTINGS_MODULE=config.settings.prod -e DB_HOST=db -e DB_PORT=5432 \
+  -e DJANGO_SECRET_KEY="$SK" -e DJANGO_ALLOWED_HOSTS=localhost \
+  -e PASSWORD_RESET_URL=https://chamneul.com/reset-password -p 18000:8000 chamneul:prodcheck
+unset SK
+docker rm -f chamneul-prodcheck               # 끝나면 지운다
+```
+
+실제 결과(2026-11-07):
+
+| # | 요청 | 결과 |
+| --- | --- | --- |
+| 0 | 환경변수 없이 이미지 기본 `CMD`(gunicorn) | 워커 3개 전부 `KeyError: 'DJANGO_SECRET_KEY'` → 컨테이너 종료(exit 1). **결정 4의 fail closed** |
+| 1 | `/healthz` — Host `10.0.3.17:8000`, http | **200** |
+| 2 | `/readyz` — 같은 조건 | **200** `{"status": "ok", "checks": {"database": "ok"}}` |
+| 3 | Admin 로그인 페이지가 가리키는 CSS(`base.96c479cedf7a.css`), XFP https | **200**, `text/css`, `Content-Encoding: gzip`, `Cache-Control: max-age=315360000, public, immutable` |
+| 4 | `/api/v1/csrf` — XFP https | **200** |
+| 5 | `/api/v1/csrf` — 평문 http | **301** → `https://localhost/api/v1/csrf` |
+| 6 | `/api/v1/csrf` — 파드 IP Host, XFP https | **400** (헬스 경로 밖은 Host 검증이 그대로) |
+| 7 | HSTS | `max-age=31536000; includeSubDomains; preload` |
+| 8 | `/admin/login/` | **200** |
+| 9 | DRF 브라우저 화면 + 그 JS(`jquery-3.7.1.min.2c872dbe60f4.js`) | **200** / **200** |
+| 10 | `manage.py check --deploy` | `System check identified no issues (0 silenced).` |
+| 11 | gunicorn 기동 로그 | `Starting gunicorn 26.0.0`, 워커 3개 `Booting`, 액세스 로그 14줄 — 그리고 `[ERROR] Control server error: [Errno 13] Permission denied: '/home/appuser'`(3-7) |
+
+변이 10건: console 허용 / filebased 허용 / 메일 백엔드를 환경변수에서 안 읽음 / 재설정 URL 검사 제거 / `https` 대신 `http`로 시작만 검사 / wsgi 기본값 local / asgi 기본값 local / manage.py 기본값 prod / WhiteNoise 제거 / WhiteNoise를 SecurityMiddleware 앞으로 — **전부 테스트가 잡았다.** 저장소 배치(3-2)는 단위 테스트가 볼 수 없는 빌드 단계 문제라 반대 사례 이미지로 확인했다.
+
+### 3-5. DevOps 설명 포인트
+
+* **fail closed.** 설정을 빠뜨린 배포는 "조용히 개발 설정으로 돈다"가 아니라 "워커가 뜨지 않는다"로 끝난다. k8s에서는 readiness가 실패해 트래픽을 받지 않고, 롤링 업데이트가 멈춘다 — 사고가 아니라 **배포 실패**로 드러난다.
+* **헬스체크가 모든 것을 보지는 않는다.** 반대 사례 이미지는 `/healthz`·`/readyz`·JSON API가 200인 채로 Admin만 500이었다. 정적파일·템플릿처럼 빌드 산출물에 달린 것은 배포 후 스모크(Admin 한 번 열기)로 본다.
+* **빌드 산출물은 빌드 때의 설정으로 만들어진다.** 실행 때 prod를 지정해도 빌드는 local로 돌았다. "이 파일은 어느 설정으로 만들어졌나"를 묻는 습관이 이 버그를 잡았다.
+* **로컬 compose 앱을 다시 만들 때는 `-V`.** 의존성을 추가하면 `docker compose up -d --build --no-deps -V app`. `-V`가 없으면 예전 컨테이너의 익명 볼륨(`/app/.venv`)이 그대로 붙어 새 패키지가 가려진다. 이번에 실제로 `ModuleNotFoundError: No module named 'whitenoise'`로 앱이 멈췄다가 이 명령으로 복구했다.
+
+### 3-6. 보안 노트
+
+* **정적파일은 Host 검증을 거치지 않는다.** WhiteNoise는 `CommonMiddleware`보다 앞에서 파일을 내준다. 공개 파일(Admin·DRF CSS/JS)뿐이고 HTTPS 리다이렉트·HSTS는 그대로 받는다(WhiteNoise가 `SecurityMiddleware` 다음이므로 — 변이 M10이 고정).
+* **일회용 시크릿.** 기동 확인에 실제 `DJANGO_SECRET_KEY`를 쓰지 않았고 값을 출력하지 않았다. `.env`는 `--env-file`로 넘기기만 하고 읽지 않았다. 확인용 컨테이너 2개와 이미지 2개(`prodcheck`·반대 사례 `prodcheck-cf`)는 확인 뒤 지웠다.
+
+### 3-7. 다음 개선 — 이번에 새로 발견한 것 (결정 필요)
+
+* **운영에서 500의 원인이 로그에 남지 않는다.** 프로젝트에 `LOGGING` 설정이 없어 Django 기본값을 쓴다. 기본값은 `DEBUG=False`에서 요청 오류를 **관리자 메일로만** 보내는데(`mail_admins`), `ADMINS`가 비어 있으니 아무 데도 남지 않는다. 반대 사례 이미지에서 500이 3번 났는데 컨테이너 로그에는 액세스 로그의 `500`만 있었고 트레이스백은 0줄이었다. CloudWatch로 가도 같다. → `LOGGING`으로 오류를 stdout에 보내는 설정(Django 내장, 패키지 없음). **SPEC-006에 넣을지 Owner 결정.**
+* **gunicorn 26의 제어 소켓이 홈 디렉터리를 찾는다.** gunicorn 25.1부터 `gunicornc`용 제어 소켓을 `$HOME/.gunicorn/gunicorn.ctl`에 만든다. 이미지의 `appuser`는 `--no-create-home`이라 매 기동마다 ERROR 한 줄이 남는다. 서비스는 정상이지만, ERROR 로그 알람을 걸면 오탐이 된다. 쓰지 않는 기능이므로 `CMD`에 `--no-control-socket`(Dockerfile — **Owner 영역**).
+* `GOOGLE_OAUTH_REDIRECT_URI`도 `PASSWORD_RESET_URL`처럼 prod에서 `http://localhost` 기본값으로 조용히 돈다. 콜백이 실패할 뿐 유출은 없어 이번 범위 밖 — Phase 3 배포 체크리스트.
+* `.env.example`(Owner 영역)에 `DJANGO_EMAIL_BACKEND`(선택, 기본 SMTP)와 "prod는 `PASSWORD_RESET_URL`이 https 필수"를 적을 것을 권한다.

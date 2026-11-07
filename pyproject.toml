@@ -11,6 +11,7 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "python-dotenv>=1.2.2",
     "uuid-utils>=0.9",
+    "whitenoise>=6.12.0",
 ]
 
 # (IL) 개발자 전용 도구. 운영 이미지에서는 `uv sync --no-dev`로 제외된다(Dockerfile 참조).

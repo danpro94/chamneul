@@ -34,12 +34,13 @@
 
 ## TASK-003 — 운영 경로 (prod 가드 · 진입점 · 정적파일 · 실제 이미지 기동)
 
-* [ ] prod + 콘솔 메일 → `ImproperlyConfigured` / prod + `http://` 재설정 URL → `ImproperlyConfigured` — 실패 테스트
-* [ ] `wsgi.py`·`asgi.py` 기본값 prod (결정 4) — 테스트
-* [ ] WhiteNoise (결정 3, §16 승인 후 패키지 추가)
-* [ ] **실제 이미지 기동**: `/healthz`·`/readyz` 200(파드 IP Host), Admin CSS 200, XFP https로 API 200, http → 301 — 출력 첨부
-* [ ] `manage.py check --deploy` 출력 기록 (경고는 사유와 함께 남김)
-* [ ] smoke-test §5 갭 2·3·11 갱신
+* [x] prod + 콘솔 메일 → `ImproperlyConfigured` / prod + `http://` 재설정 URL → `ImproperlyConfigured` — 실패 테스트 (`config.tests.ProdStartupGuardTests`, filebased도 거부)
+* [x] `wsgi.py`·`asgi.py` 기본값 prod (결정 4) — 테스트 (`EntryPointDefaultTests`, manage.py는 local 유지까지)
+* [x] WhiteNoise 6.12.0 (결정 3) — `StaticFilesTests`. 미들웨어·저장소는 **base.py**(plan.md §4 "계획 대비" 표)
+* [x] **실제 이미지 기동**: `/healthz`·`/readyz` 200(파드 IP Host), Admin CSS 200, XFP https로 API 200, http → 301 — 출력은 리뷰 노트 09 §3-4
+* [x] `manage.py check --deploy` 출력 기록 — `no issues (0 silenced)`
+* [x] smoke-test §5 갭 2·3·11 갱신 + 새로 발견한 갭 12(운영 500 원인 미기록)·13(gunicorn 제어 소켓) 추가
+* 2026-11-07 완료 — 테스트 453개 OK, 변이 10/10. **갭 12는 Owner 결정 대기**(SPEC-006에 넣을지)
 
 ## TASK-004 — 스모크 여정 확장 + 맨바닥 재통과
 

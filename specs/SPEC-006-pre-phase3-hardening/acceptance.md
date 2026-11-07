@@ -28,11 +28,13 @@ TEST_CRITERIA.md §2·§3을 SPEC-006에 적용한 판정 기준. AC-1~AC-3은 D
 
 ## AC-3. 운영 경로 (TASK-003)
 
-- [ ] prod + 콘솔 메일 백엔드 → 기동 실패
-- [ ] prod + `http://` 재설정 URL → 기동 실패
-- [ ] 진입점 기본값이 결정 4대로다
-- [ ] 실제 이미지(gunicorn + prod): `/healthz`·`/readyz` 200, Admin CSS 200, XFP https로 API 200, http → 301
-- [ ] `check --deploy` 출력이 리뷰 노트에 기록됐다
+> 2026-11-07 전항 통과 — `config.tests` 7개(가드 3 · 진입점 2 · 정적파일 2) + 실제 이미지 12항목(리뷰 노트 09 §3-4).
+
+- [x] prod + 콘솔 메일 백엔드 → 기동 실패 (filebased도)
+- [x] prod + `http://` 재설정 URL → 기동 실패 (빠뜨려서 들어오는 base.py 기본값도)
+- [x] 진입점 기본값이 결정 4대로다 — 이미지를 환경변수 없이 띄우면 워커가 `KeyError: 'DJANGO_SECRET_KEY'`로 뜨지 않는다
+- [x] 실제 이미지(gunicorn + prod): `/healthz`·`/readyz` 200, Admin CSS 200, XFP https로 API 200, http → 301
+- [x] `check --deploy` 출력이 리뷰 노트에 기록됐다 — `System check identified no issues (0 silenced).`
 
 ## AC-4. 스모크 (TASK-004)
 

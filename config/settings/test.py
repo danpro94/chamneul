@@ -5,6 +5,16 @@ from .base import *  # noqa: F401,F403
 # Faster hashing; the test database is disposable so strength is irrelevant.
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
+# Tests never run collectstatic: there is no manifest of hashed names (any
+# {% static %} would raise with DEBUG=False) and no STATIC_ROOT folder (WhiteNoise
+# would warn on every test client). config.tests.StaticFilesTests serves
+# straight from the apps' static folders instead.
+STORAGES = {
+    **STORAGES,  # noqa: F405
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+STATIC_ROOT = None
+
 # No EMAIL_BACKEND here on purpose: Django's test runner always swaps in the
 # locmem backend, so sent mail lands in `django.core.mail.outbox`.
 

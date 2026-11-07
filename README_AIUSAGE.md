@@ -6,6 +6,56 @@
 
 ---
 
+## 2026-11-07 — SPEC-006/TASK-003 운영 경로 (prod 가드 · 진입점 · WhiteNoise · 실제 이미지 기동) [위임 · 인프라 파일 무수정]
+
+### 작업
+
+Owner가 TASK-003 진행을 승인했다. 다음을 구현했다.
+
+* prod 기동 가드 2개
+* wsgi/asgi 진입점 기본값 prod
+* WhiteNoise
+
+빌드한 이미지는 compose를 고치지 않고 `docker run`으로 한 번 띄웠다. 같은 턴에 C-3의 결정 3건 승인을 기록했다. Owner가 물은 "CLI를 가장 안전하게 계정에 연결하는 법"은 AWS 공식 문서로 확인해 가이드 B-3a로 남겼다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)와 web-fetch 서브에이전트(AWS 공식 문서 읽기)
+
+### Owner 결정
+
+* TASK-003 진행 승인.
+* C-3 §0 3건 권고안대로 승인: 민감정보 별도 동의, 만 14세 미만 가입 차단, 조언가 제공 동의.
+* 결정 대기 1건: 새로 발견한 갭 12(운영에서 500 원인이 로그에 남지 않는다)를 SPEC-006에 넣을지.
+
+### 생성 산출물
+
+* 코드: `config/settings/{prod,base,test}.py`, `config/{wsgi,asgi}.py`, `config/tests.py`(+7), `pyproject.toml`·`uv.lock`(whitenoise 6.12.0)
+* 문서: 리뷰 노트 09 §3, smoke-test §5(갭 2·3·11 해소, 12·13 추가), SPEC-006 plan·tasks·acceptance, STATUS, C-3 §0, OWNER-ACTIONS-GUIDE B-3a
+
+### 검증 결과
+
+* 기본 검증: 테스트 453개 OK, `check` 0 issues, `makemigrations --check` No changes, `ruff` passed.
+* 변이 10건 전부 검출.
+* 실제 이미지 12항목 통과. `check --deploy` 0 issues.
+* 계획과 다르게 저장소를 base.py에 둔 근거는 **반대 사례 이미지를 실제로 빌드해** 확인했다. 계획대로 두면 Admin과 DRF 화면이 500이고 헬스체크는 200이다.
+
+### 이번에 드러난 것
+
+* **빌드 산출물은 빌드 때의 설정으로 만들어진다.** 실행할 때 prod를 지정해도 `collectstatic`은 local로 돌았다. 계획서를 그대로 구현했다면 테스트는 전부 통과하고 Admin만 깨진 이미지가 나갔을 것이다.
+* **운영 500의 원인이 어디에도 남지 않는다.** `LOGGING` 설정이 없으면 Django는 `DEBUG=False`에서 요청 오류를 관리자 메일로만 보낸다. 반대 사례에서 500이 3번 났는데 트레이스백은 0줄이었다.
+* gunicorn 26의 제어 소켓이 홈 디렉터리 없는 사용자에게 매번 ERROR를 낸다(Dockerfile은 Owner 영역).
+* 의존성을 추가하면 로컬 compose 앱이 `ModuleNotFoundError`로 멈춘다. 고치려면 `-V`로 익명 `.venv` 볼륨을 새로 만들어야 한다.
+* `aws login`은 IAM Identity Center를 지원하지 않는다. 이 프로젝트의 일상 로그인은 Identity Center라 `aws configure sso`가 맞다.
+
+### 잔여 리스크
+
+* 갭 12가 남아 있는 한 Phase 3 운영 장애의 원인을 로그로 볼 수 없다.
+* compose 안의 운영 프로필(`-f docker-compose.yml` + prod)은 여전히 미검증이다(Owner 영역).
+* `GOOGLE_OAUTH_REDIRECT_URI`의 prod http 기본값은 범위 밖으로 남겼다.
+
+---
+
 ## 2026-11-07 — C-1~C-3 개인정보 처리방침·이용약관·민감정보/14세 정책 완성본 [조사·초안 위임 · 결정과 법률 검토는 Owner]
 
 ### 작업
@@ -23,9 +73,9 @@ Owner가 C-1~C-3을 "복사·붙여넣기 가능한 수준의 완성본"으로 �
 
 Claude Opus 5.5 (Claude Code), Playwright MCP(공개 문서 읽기 전용)
 
-### Owner 결정 (대기)
+### Owner 결정
 
-C-3 §0의 3건이다. ① 민감정보는 (b) 별도 동의로 할지 ② 만 14세 미만은 가입을 차단할지 ③ 고민을 조언가에게 보여 주는 것에 동의를 받을지.
+C-3 §0의 3건이다. ① 민감정보는 (b) 별도 동의로 할지 ② 만 14세 미만은 가입을 차단할지 ③ 고민을 조언가에게 보여 주는 것에 동의를 받을지. **같은 날 권고안대로 전부 승인됐다**(위 TASK-003 항목).
 
 ### 생성 산출물
 

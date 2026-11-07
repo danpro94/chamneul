@@ -188,8 +188,31 @@
   4. 왼쪽 **Permission sets → Create permission set → Predefined permission set → AdministratorAccess**를 고르고, 세션 시간은 기본값으로 만든다.
   5. 왼쪽 **AWS accounts**에서 계정을 체크하고 **Assign users or groups** → `dan-admin` → `AdministratorAccess` → **Submit**.
   6. **Dashboard**(또는 Settings)에 있는 **AWS access portal URL**을 북마크한다(`⌘+D`).
-- **완료 확인**: 포털 URL로 로그인 → 계정 → AdministratorAccess를 눌러 콘솔에 들어간다. CLI는 `brew install awscli` → `aws configure sso` → `aws sts get-caller-identity`가 성공하면 된다.
+- **완료 확인**: 포털 URL로 로그인 → 계정 → AdministratorAccess를 눌러 콘솔에 들어간다. CLI는 아래 **B-3a**가 끝나면 된다.
 - **흔한 실수**: IAM의 "Users"(오래 쓰는 액세스 키 방식)와 헷갈린다. 이 프로젝트는 Identity Center를 쓴다.
+
+#### B-3a. CLI를 Identity Center로 연결 (액세스 키 없이) — 2026-11-07 추가
+
+- **왜 이 방법인가**: 디스크에 남는 것은 **짧게 사는 토큰**뿐이다(`~/.aws/sso/cache`). 오래 사는 액세스 키를 만들지 않는다. 새 CLI의 `aws login`(콘솔 세션 재사용)은 루트·IAM 사용자용이고 **Identity Center는 지원하지 않는다** — 공식 문서가 Identity Center 사용자는 `aws configure sso`로 가라고 한다. 루트로 `aws login`을 하면 되긴 하지만, 루트로 일상 작업을 하지 않는다는 B-2 원칙에 어긋난다.
+- **준비물 2개**(비밀 아님): 포털 URL(B-3 6단계에서 북마크한 `https://d-xxxxxxxxxx.awsapps.com/start` 형태), Identity Center 리전(B-3 1단계에서 고른 리전 — 이 가이드대로면 `ap-northeast-2`). 리전이 헷갈리면 포털 → AdministratorAccess 옆 **Access keys** → **IAM Identity Center credentials** 탭에 `SSO Start URL`·`SSO Region`이 함께 나온다(이 화면의 다른 탭에 있는 키는 쓰지 않는다).
+- **단계**
+  1. 터미널에서 `aws configure sso`. 묻는 순서대로 입력한다.
+     - `SSO session name (Recommended)`: `chamneul`
+     - `SSO start URL`: 포털 URL
+     - `SSO region`: Identity Center 리전
+     - `SSO registration scopes`: `sso:account:access`(공식 문서 예시값 — 계정·역할 목록을 읽는 권한)
+  2. 브라우저가 열린다. **포털에 로그인한 사용자가 맞는지** 보고 허용한다. 포털 로그인이 필요하면 비밀번호·MFA도 이 브라우저에서 한다(터미널에는 입력하지 않는다). 계정·역할이 하나뿐이면 선택 화면 없이 넘어간다.
+  3. 이어서 묻는다: `Default client Region` → `ap-northeast-2`, `CLI default output format` → `json`, `Profile name` → `chamneul-admin`(기본 제안값 대신 짧은 이름).
+  4. 확인: `aws sts get-caller-identity --profile chamneul-admin`
+- **완료 확인** — 출력의 두 값을 **콘솔과 눈으로 대조한다**(채팅·문서에 붙여넣지 않는다):
+  - `Account` = 콘솔 오른쪽 위 메뉴의 계정 ID. **다르면 부트캠프 계정 등 다른 계정이다** — 진행을 멈춘다.
+  - `Arn`에 `AWSReservedSSO_AdministratorAccess_…/dan-admin`처럼 **역할 이름과 사용자 이름**이 보여야 한다. `:root`나 `:user/…`가 보이면 Identity Center가 아닌 다른 경로로 인증된 것이다.
+- **매일 쓸 때**: `aws sso login --profile chamneul-admin`(세션이 끝나면 다시). 명령마다 `--profile`을 붙이기 싫으면 그 터미널에서 `export AWS_PROFILE=chamneul-admin`.
+- **끝낼 때**: `aws sso logout` — 캐시된 토큰을 지운다. 노트북을 다른 사람과 쓰거나 오래 자리를 비울 때.
+- **흔한 실수**
+  - `aws configure`(SSO 없는 것)에 액세스 키를 붙여넣는다 — 그 순간 오래 사는 키가 `~/.aws/credentials`에 평문으로 남는다. 이 프로젝트는 만들지 않는다.
+  - 예전 교육 계정 프로필이 남아 있어 `--profile` 없이 엉뚱한 계정에 명령이 간다. `aws configure list-profiles`로 목록을 보고, 모르는 프로필은 `~/.aws/config`에서 지운다.
+- **출처**(2026-11-07 확인): AWS CLI 사용 설명서 — Identity Center 연결 https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html (PKCE 브라우저 인증은 CLI 2.22.0부터 기본), 콘솔 자격 증명 로그인 `aws login` https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html (2.32.0부터, Identity Center 미지원). 세션 길이: 포털 기본 8시간, 권한 세트 기본 1시간(최대 12시간) — https://docs.aws.amazon.com/singlesignon/latest/userguide/howtosessionduration.html
 
 ### B-4. 결제 알림 (AWS Budgets) — 필수
 

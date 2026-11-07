@@ -1,9 +1,13 @@
-"""SPEC-006 TASK-002 — liveness와 readiness (ADR-010)."""
+"""SPEC-006 TASK-002 — liveness와 readiness (ADR-010), TASK-003 — 운영 경로."""
 
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
+from django.conf import settings
 from django.db import InterfaceError, OperationalError, connections
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 HEALTHZ = "/healthz"
 READYZ = "/readyz"
@@ -118,3 +122,122 @@ class ProbesBehindProdSecurityTests(TestCase):
                 with self.assertLogs("django.security.DisallowedHost", "ERROR"):
                     response = getattr(self.client, method)(path, HTTP_HOST=POD_IP_HOST)
                 self.assertEqual(response.status_code, 400)
+
+
+# prod.py가 import되는 데 필요한 값 전부. 테스트용이라 실제 시크릿이 아니다.
+PROD_ENV = {
+    "DJANGO_SETTINGS_MODULE": "config.settings.prod",
+    "DJANGO_SECRET_KEY": "test-only-" + "x" * 50,
+    "DJANGO_ALLOWED_HOSTS": "chamneul.com",
+    "PASSWORD_RESET_URL": "https://chamneul.com/reset-password",
+    "DJANGO_EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+}
+
+
+def run_python(*args, **env):
+    """새 인터프리터에서 실행한다 — 설정은 프로세스당 한 번만 읽히므로, 경우마다
+    따로 띄워야 한다. 지금 테스트가 쓰는 DJANGO_SETTINGS_MODULE은 물려주지 않는다.
+    .env는 load_dotenv가 읽지만, 여기서 준 값을 덮어쓰지는 않는다."""
+    environ = {k: v for k, v in os.environ.items() if k != "DJANGO_SETTINGS_MODULE"}
+    environ.update(env)
+    return subprocess.run(
+        [sys.executable, *args],
+        cwd=settings.BASE_DIR,
+        env=environ,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+class ProdStartupGuardTests(SimpleTestCase):
+    """AC-3 — 운영에서 재설정 링크가 새거나 깨지는 설정이면 기동하지 않는다."""
+
+    BOOT = ("-c", "import django; django.setup()")
+
+    def test_premise_prod_boots_with_complete_settings(self):
+        """전제: 값이 다 있으면 뜬다. 아니면 아래 실패는 다른 이유일 수 있다."""
+        result = run_python(*self.BOOT, **PROD_ENV)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_refuses_a_mail_backend_that_keeps_the_mail_on_the_server(self):
+        """콘솔은 로그에, 파일은 디스크에 재설정 링크를 남긴다 — 로그나 파일을
+        읽을 수 있는 사람이 남의 비밀번호를 바꿀 수 있다(보안 리뷰 S-3)."""
+        for backend in ("console", "filebased"):
+            with self.subTest(backend):
+                result = run_python(
+                    *self.BOOT,
+                    **{
+                        **PROD_ENV,
+                        "DJANGO_EMAIL_BACKEND": f"django.core.mail.backends.{backend}.EmailBackend",
+                    },
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ImproperlyConfigured", result.stderr)
+                self.assertIn("DJANGO_EMAIL_BACKEND", result.stderr)
+
+    def test_refuses_a_reset_url_that_is_not_https(self):
+        """빠뜨리면 base.py의 개발용 기본값이 들어온다 — 그대로 돌면 링크가 사용자
+        PC를 가리킨다(S-6). http 페이지는 오가는 중에 고쳐져 토큰을 읽힐 수 있다.
+        (빠뜨림 자체는 재현하지 않는다: .env가 그 자리를 채울 수 있다.)"""
+        missing = "http://localhost:3000/reset-password"  # base.py의 기본값
+        for url in (missing, "", "http://chamneul.com/reset-password"):
+            with self.subTest(url=url):
+                result = run_python(*self.BOOT, **{**PROD_ENV, "PASSWORD_RESET_URL": url})
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ImproperlyConfigured", result.stderr)
+                self.assertIn("PASSWORD_RESET_URL", result.stderr)
+
+
+class EntryPointDefaultTests(SimpleTestCase):
+    """AC-3 — 결정 4: 서버 진입점은 지정이 없으면 prod, manage.py는 local.
+    지정을 빠뜨린 배포가 조용히 개발 설정(DEBUG=True·콘솔 메일)으로 돌지 않고,
+    prod의 필수값 검사에 걸려 기동에 실패하게 한다."""
+
+    PRINT_MODULE = "from django.conf import settings; print(settings.SETTINGS_MODULE)"
+
+    def test_server_entry_points_default_to_prod(self):
+        env = {k: v for k, v in PROD_ENV.items() if k != "DJANGO_SETTINGS_MODULE"}
+        for entry in ("config.wsgi", "config.asgi"):
+            with self.subTest(entry):
+                result = run_python("-c", f"import {entry}; {self.PRINT_MODULE}", **env)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), "config.settings.prod")
+
+    def test_manage_py_stays_local_for_development(self):
+        result = run_python("manage.py", "shell", "--no-imports", "-c", self.PRINT_MODULE)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "config.settings.local")
+
+
+@prod_security
+@override_settings(WHITENOISE_USE_FINDERS=True)
+class StaticFilesTests(SimpleTestCase):
+    """AC-3 — DEBUG=False에서는 Django가 정적파일을 내주지 않는다. WhiteNoise가
+    맡는다. 테스트는 collectstatic을 돌리지 않으므로 앱의 static 폴더에서 바로
+    찾게 한다(collectstatic이 복사하는 바로 그 파일들)."""
+
+    ADMIN_CSS = "/static/admin/css/base.css"
+
+    def test_admin_css_is_served_over_https(self):
+        response = self.client.get(
+            self.ADMIN_CSS, HTTP_HOST="chamneul.com", HTTP_X_FORWARDED_PROTO="https"
+        )
+        body = b"".join(response.streaming_content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response["Content-Type"].startswith("text/css"))
+        self.assertGreater(len(body), 0)
+
+    def test_plain_http_is_redirected_first(self):
+        """WhiteNoise는 SecurityMiddleware 다음이다 — 앞에 두면 HTTPS 리다이렉트와
+        HSTS 헤더 없이 파일이 나간다(WhiteNoise 문서의 배치)."""
+        response = self.client.get(self.ADMIN_CSS, HTTP_HOST="chamneul.com")
+
+        self.assertEqual(response.status_code, 301)
+        self.assertEqual(response["Location"], f"https://chamneul.com{self.ADMIN_CSS}")

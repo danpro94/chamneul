@@ -61,6 +61,10 @@ MIDDLEWARE = [
     # they must be answered before the HTTPS redirect and host check (ADR-010).
     "config.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Static files with DEBUG=False (SPEC-006 결정 3). After SecurityMiddleware
+    # so plain http is still redirected; before the rest because a CSS file
+    # needs no session, CSRF or auth.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -127,6 +131,14 @@ USE_TZ = True
 # --- Static ------------------------------------------------------------
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# Hashed file names (cache forever, safe to change) + pre-compressed copies.
+# Here, not in prod.py: the Dockerfile runs collectstatic at build time with
+# manage.py's default settings (local). If only prod used this storage, the
+# image would hold no manifest and every admin page would 500 under prod.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

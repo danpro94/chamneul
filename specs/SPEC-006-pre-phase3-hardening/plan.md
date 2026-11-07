@@ -100,6 +100,14 @@ docker run --rm -d --name chamneul-prodcheck --network <compose 네트워크> --
 ```
 확인: `curl -H "Host: 10.0.0.7" http://localhost:18000/healthz` → 200 / `/readyz` → 200 / Admin CSS → 200 / `X-Forwarded-Proto: https`로 `/api/v1/csrf` → 200 / 일반 http 요청 → 301 / `manage.py check --deploy` 출력 기록.
 
+**계획 대비 구현에서 바꾼 3가지** (2026-11-07, 결정 3·4 범위 안의 구현 세부 — 리뷰 노트 09 §3-2):
+
+| 계획 | 구현 | 이유 |
+| --- | --- | --- |
+| WhiteNoise 미들웨어·저장소를 **prod.py**에 | **base.py**에 | Dockerfile의 빌드 때 `collectstatic`은 `manage.py` 기본값(local)으로 돈다. prod에만 두면 이미지에 매니페스트가 없어 prod에서 Admin·DRF 화면이 500 — 반대 사례 이미지로 실측했다(헬스체크는 200이라 배포가 "성공"한다) |
+| `docker run -e EMAIL_BACKEND=...` | prod.py가 **`DJANGO_EMAIL_BACKEND`**를 읽는다(기본 SMTP) | 종전 prod는 메일 백엔드를 어디서도 읽지 않아 "콘솔 금지" 가드가 걸릴 입력이 없었다. 이름은 다른 Django 핵심 설정(`DJANGO_SECRET_KEY` 등)과 같은 접두사 |
+| 콘솔만 거부 | 콘솔 + **filebased** 거부 | 둘 다 재설정 링크를 서버에 남긴다(로그 / 디스크) |
+
 ## 5. 스모크 재통과 (TASK-004)
 
 1. `pg_dump` 백업 → **저장소 밖**(`~/chamneul-backups/`)

@@ -11,7 +11,7 @@
 
 ## 2. 맨바닥 기동
 
-> ⚠️ **이 문서의 모든 측정은 `runserver` 위에서 수행됐다.** 저장소에 `docker-compose.override.yml`이 커밋돼 있고(`command: python manage.py runserver`), Compose는 override를 자동으로 병합하므로 그냥 `docker compose up`을 하면 **항상 개발 서버**로 뜬다. 이미지의 `CMD`는 `gunicorn --workers 3`(`Dockerfile:61`)이며 **그 경로는 아직 한 번도 검증하지 않았다**(§5 갭 3). 확인 방법: `docker compose ps`의 COMMAND 열, 또는 응답 헤더의 `Server: WSGIServer/...`.
+> ⚠️ **이 문서의 모든 측정은 `runserver` 위에서 수행됐다.** 저장소에 `docker-compose.override.yml`이 커밋돼 있고(`command: python manage.py runserver`), Compose는 override를 자동으로 병합하므로 그냥 `docker compose up`을 하면 **항상 개발 서버**로 뜬다. 이미지의 `CMD`는 `gunicorn --workers 3`(`Dockerfile:61`)이다. 그 경로(gunicorn + prod 설정)는 compose 밖에서 `docker run`으로 따로 검증했다(2026-11-07, §5 갭 3). 확인 방법: `docker compose ps`의 COMMAND 열, 또는 응답 헤더의 `Server: WSGIServer/...`.
 
 > ⚠️ `down -v`는 **PostgreSQL 볼륨을 삭제**한다. 로컬 데이터가 전부 사라진다. 보존이 필요하면 §6의 백업 절차를 먼저 수행한다.
 
@@ -52,7 +52,7 @@ docker compose exec app python manage.py migrate
 docker compose exec app python manage.py createcachetable
 ```
 
-요청 횟수 카운터(api.md §1.10)는 DB 테이블 `django_cache`에 쌓인다. 이 테이블은 **마이그레이션이 아니라** `createcachetable`이 만든다. 빠뜨리면 다른 API는 멀쩡한데 **#2·#3·#45·#46만 500**이 나고, 로그에 `relation "django_cache" does not exist`가 찍힌다. 두 번 실행해도 안전하다(이미 있으면 `already exists`). Phase 3에서는 k8s 마이그레이션 Job에 `migrate` 다음 줄로 넣는다(Owner 손코딩).
+요청 횟수 카운터(api.md §1.10)는 DB 테이블 `django_cache`에 쌓인다. 이 테이블은 **마이그레이션이 아니라** `createcachetable`이 만든다. 빠뜨리면 다른 API는 멀쩡한데 **#2·#3·#45·#46만 500**이 나고, 로그에 `relation "django_cache" does not exist`가 찍힌다(local 설정 기준 — prod에서는 이 원인이 로그에 남지 않는다, §5 갭 12). 두 번 실행해도 안전하다(이미 있으면 `already exists`). Phase 3에서는 k8s 마이그레이션 Job에 `migrate` 다음 줄로 넣는다(Owner 손코딩).
 
 ### 2-2. 관리자 부트스트랩
 
@@ -205,8 +205,8 @@ docker compose start db      # healthy까지 6초
 | # | 갭 | 영향 | 처리 |
 | --- | --- | --- | --- |
 | 1 | ~~**브루트포스 로그인 방어 부재** — IP·계정 기준 레이트 리밋 없음~~ | **해소 (2026-11-04, SPEC-006 TASK-001)**: #2·#3·#45·#46에 요청 횟수 제한을 걸었다(IP 기준 + #3·#45는 계정 기준, api.md §1.10). 카운터는 공유 DB 캐시에 둔다. **남은 것**: 계정 기준 한도는 남이 일부러 다 써 버릴 수 있다 — 그 계정은 1시간 동안 로그인 429(잠금형 서비스 거부, 잠금보다는 약하다) | 해소 (잠금형 DoS 감수 — 실패만 세기·CAPTCHA는 Phase 3) |
-| 2 | **정적파일이 서빙되지 않는다** — `collectstatic`은 **빌드 때 수행된다**(`Dockerfile:31`). 문제는 ① bind mount `.:/app`(`docker-compose.yml`)이 이미지의 `/app/staticfiles`를 **가리고**, ② `DEBUG=False`에서 정적파일을 서빙할 주체(WhiteNoise·리버스프록시)가 없다는 것 | `DEBUG=False`에서 Django Admin CSS가 깨진다. API 응답에는 영향 없음 | Phase 3. *(2026-09-17 정정: 종전 서술 "collectstatic 없음"은 사실이 아니었다 — 원인이 틀리면 이미 있는 것을 다시 추가하게 된다)* |
-| 3 | **운영 경로(gunicorn + prod settings)를 한 번도 띄워보지 않았다** — override를 빼는 것만으로는 부족하다. `docker-compose.yml`이 `DJANGO_SETTINGS_MODULE: config.settings.local`을 **고정**하므로, override만 제거하면 `gunicorn + local settings`라는 어느 쪽도 아닌 조합이 된다. 진짜 운영 경로는 **둘 다** 필요하다: `docker compose -f docker-compose.yml up -d` + `DJANGO_SETTINGS_MODULE=config.settings.prod` 주입 | gunicorn 실기동·정적파일·HTTPS 리다이렉트가 전부 미검증 | Phase 3 |
+| 2 | ~~**정적파일이 서빙되지 않는다**~~ | **해소 (2026-11-07, SPEC-006 TASK-003)**: WhiteNoise(`SecurityMiddleware` 다음) + 해시·압축 저장소. 빌드 때의 `collectstatic`(`Dockerfile:31`)은 `manage.py` 기본값인 **local** 설정으로 돌기 때문에 저장소 설정은 base.py에 둔다 — prod에만 두면 이미지에 매니페스트가 없어 Admin이 500이다(반대 사례로 실측, 리뷰 노트 09 §3-2). 로컬 compose는 bind mount가 `/app/staticfiles`를 가리지만 `runserver`가 앱 폴더에서 직접 내주므로 문제없다 | — |
+| 3 | ~~**운영 경로(gunicorn + prod settings)를 한 번도 띄워보지 않았다**~~ | **해소 (2026-11-07, SPEC-006 TASK-003)**: compose를 고치지 않고 빌드한 이미지를 `docker run`으로 띄워 확인했다 — 파드 IP Host로 `/healthz`·`/readyz` 200, Admin CSS 200(gzip·1년 캐시), XFP https로 API 200, 평문 http 301, `check --deploy` 0 issues(절차·결과: 리뷰 노트 09 §3-4). **남은 것**: compose 안의 운영 경로(`-f docker-compose.yml` + prod 주입)는 여전히 Owner 영역이고 이번에 쓰지 않았다 | 해소 (compose 운영 프로필은 Phase 3 매니페스트와 함께) |
 | 4 | **고민 종료(`CLOSED`) 사용자 API 부재** | CLAUDE.md §6.6은 "사용자가 명시적으로 닫는다"고 서술하나 그 API가 없다. Phase 2는 **Django Admin으로만** 닫는다(Owner 결정 2026-09-16, D-4) | Phase 3 후보 |
 | 5 | **회수된 조언가의 배정 잔존** | 자격을 잃은 조언가의 배정이 남고 concern은 `ASSIGNED` 유지. #23 admin 상세에서 식별 가능하며 관리자가 #25로 해제한다 | 의도된 동작(SPEC-003 §7 결정 3) |
 | 6 | **실제 경합 미재현** | 잠금의 *존재*는 SQL 수준 테스트(`StateTransitionLockingTests`)로 고정했으나, 두 요청을 실제로 동시에 보내본 적은 없다 | Phase 3 (`TransactionTestCase` + 스레드) |
@@ -214,7 +214,9 @@ docker compose start db      # healthy까지 6초
 | 8 | **`DEBUG=True`에서 500이 전체 트레이스백 HTML** | 로컬 전용. 운영은 `DEBUG=False` 강제(§10) | 의도된 동작 |
 | 9 | ~~**`accounts`의 M4-1~M4-3 자동 테스트 0건**~~ | **해소 (2026-10-22, SPEC-005 TASK-001·002)**: 인증 회귀 테스트(#2·#3·#4·#7·#8·#9)와 Google OAuth 회귀 테스트(#5·#6)를 깔았다. OAuth는 mock 경계를 **네트워크(`urlopen`)**에 둬서 발급자·audience·이메일 인증 검증과 계정 연결 로직은 실제 코드가 돈다. **남은 것**: 진짜 Google과의 왕복 1회 — secret 회전(리뷰 노트 07 §3-5-1) 때 함께 확인한다 | 해소 (실제 Google 왕복만 남음) |
 | 10 | **로컬 로그에 살아 있는 재설정 토큰이 찍힌다** — local 설정은 메일을 콘솔로 보내므로, #45를 부르면 `docker compose logs app`에 재설정 링크(uid·token)가 그대로 남는다 | 그 로그를 이슈·채팅·AI 대화에 붙여넣으면 30분 안에 그 계정의 비밀번호를 바꿀 수 있다. **로그를 공유하기 전에 `token=` 이후를 가린다** | 의도된 동작(Phase 2 메일 = 콘솔, ADR-008) — 아래 §6 경고 |
-| 11 | **실행 진입점의 기본 설정이 `local`이다** — `manage.py`·`config/wsgi.py`의 기본값이 `config.settings.local`. 배포 때 `DJANGO_SETTINGS_MODULE` 지정을 빠뜨리면 운영이 `DEBUG=True` + 콘솔 메일로 돈다 | 로그 읽기 권한만으로 재설정 링크를 얻어 계정을 탈취할 수 있다(보안 리뷰 S-3) | **Phase 3 배포 체크리스트 1번** — 진입점 기본값을 prod로 바꾸거나 prod에서 콘솔 메일을 금지하는 검사 |
+| 11 | ~~**실행 진입점의 기본 설정이 `local`이다**~~ | **해소 (2026-11-07, SPEC-006 TASK-003)**: 두 가지를 다 했다. ① `config/wsgi.py`·`config/asgi.py` 기본값 → **prod**(`manage.py`는 개발용으로 local 유지). 지정을 빠뜨린 이미지는 워커가 `KeyError: 'DJANGO_SECRET_KEY'`로 뜨지 않는다(실측). ② prod는 `DJANGO_EMAIL_BACKEND`가 console·filebased이거나 `PASSWORD_RESET_URL`이 https가 아니면 `ImproperlyConfigured`로 기동을 거부한다 | — |
+| 12 | **운영(`DEBUG=False`)에서 500의 원인이 로그에 남지 않는다** — 프로젝트에 `LOGGING`이 없어 Django 기본값을 쓴다. 기본값은 요청 오류를 관리자 메일(`mail_admins`)로만 보내는데 `ADMINS`가 비어 있다 | 실측(2026-11-07): 500이 3번 났는데 컨테이너 로그에는 액세스 로그의 `500`만 있고 트레이스백 0줄. 앱이 직접 남기는 WARNING(`readyz: database unavailable` 등)은 보인다(파이썬 기본 처리) | **Owner 결정 대기** — `LOGGING`으로 오류를 stdout에(Django 내장) |
+| 13 | **gunicorn 26 기동마다 `[ERROR] Control server error: Permission denied: '/home/appuser'`** — gunicorn 25.1부터 제어 소켓을 `$HOME/.gunicorn/`에 만드는데, 이미지 사용자는 홈이 없다(`--no-create-home`) | 서비스는 정상. ERROR 로그에 알람을 걸면 매 기동이 오탐 | Owner 영역(Dockerfile `CMD`에 `--no-control-socket`) |
 
 ## 6. 운영 체크리스트
 
