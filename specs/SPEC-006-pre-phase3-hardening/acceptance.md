@@ -18,11 +18,13 @@ TEST_CRITERIA.md §2·§3을 SPEC-006에 적용한 판정 기준. AC-1~AC-3은 D
 
 ## AC-2. readiness (TASK-002)
 
-- [ ] DB 정상 → `/readyz` 200 `{"status": "ok", "checks": {"database": "ok"}}`
-- [ ] DB 실패 → `/readyz` **503**, 본문에 예외·호스트 정보 없음
-- [ ] DB 실패 중에도 `/healthz` 200
-- [ ] prod 설정 + 파드 IP Host + HTTP → 두 경로 200 (301·400 아님)
-- [ ] 헬스 경로 판정은 정확히 일치 — 비슷한 경로는 일반 흐름을 탄다
+> 2026-11-07 전항 통과 — `config.tests` 6개. prod 항목은 prod.py의 보안 설정 2개(`SECURE_SSL_REDIRECT`, 명시적 `ALLOWED_HOSTS`)를 재현한 테스트다. 실제 이미지 기동 확인은 AC-3(TASK-003).
+
+- [x] DB 정상 → `/readyz` 200 `{"status": "ok", "checks": {"database": "ok"}}`
+- [x] DB 실패 → `/readyz` **503**, 본문에 예외·호스트 정보 없음 (연결 단계·질의 단계 둘 다)
+- [x] DB 실패 중에도 `/healthz` 200
+- [x] prod 설정 + 파드 IP Host + HTTP → 두 경로 200 (301·400 아님)
+- [x] 헬스 경로 판정은 정확히 일치 — 비슷한 경로는 일반 흐름을 탄다
 
 ## AC-3. 운영 경로 (TASK-003)
 

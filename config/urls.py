@@ -2,11 +2,14 @@ from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
-from .health import healthz
+from .health import healthz, readyz
 
 urlpatterns = [
-    # Unversioned liveness endpoint (CLAUDE.md §7: only /healthz is unversioned).
+    # The two unversioned probes (CLAUDE.md §7, ADR-010). GET/HEAD are answered
+    # earlier by HealthCheckMiddleware; other methods reach these routes through
+    # the normal checks (host, HTTPS, CSRF).
     path("healthz", healthz, name="healthz"),
+    path("readyz", readyz, name="readyz"),
     path("admin/", admin.site.urls),
     # All versioned APIs live under /api/v1/ (CLAUDE.md §7).
     path("api/v1/", include("accounts.urls")),

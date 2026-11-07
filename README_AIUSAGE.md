@@ -6,6 +6,51 @@
 
 ---
 
+## 2026-11-07 — SPEC-006/TASK-002 readiness 분리(`/readyz`) + ADR-010 [위임 · 결정은 Owner]
+
+### 작업
+
+1. ADR-010을 Accepted로 작성하고, 그 Consequences 문구를 그대로 CLAUDE.md §5·§7·§16에 옮겼다(헌법 잠금 절차, diff 5곳).
+2. `/readyz`(#48)와 `HealthCheckMiddleware`를 테스트 먼저 구현했다.
+3. 실제 compose 앱에서 DB를 멈췄다가 다시 켜며 확인했다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code). 변이 검증 스크립트는 저장소 밖(scratchpad)에서 돌렸다.
+
+### Owner 결정
+
+* SPEC-006 결정 5(a) `/readyz` 신설을 승인했다(2026-11-04).
+* "ADR-010 추가하여 공식 절차대로" CLAUDE.md 개정과 TASK-002 진행을 승인했다(2026-11-07).
+
+### 생성 산출물
+
+* ADR: `docs/adr/ADR-010-readiness-endpoint.md`(신규), CLAUDE.md §5·§7·§16
+* 코드: `config/health.py`, `config/urls.py`, `config/settings/base.py`(`MIDDLEWARE` 맨 앞)
+* 테스트: `config/tests.py`(신규, 6개)
+* 문서: api.md(머리말·§1.1·§3 요약표 총계 정정·#1·#48 신설), smoke-test §4-2·§5 갭 7·§6, 리뷰 노트 09 §2, SPEC-006 tasks·acceptance(AC-2), STATUS(48/48)
+
+### 검증 결과
+
+* 선-실패: 6개 중 3개 실패를 확인했다(파드 IP로 400, `/readyz` 404, 원인 로그 없음). 나머지 3개는 회귀 방지용이라 처음부터 통과했다.
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / `test` **446개 OK**.
+* 변이 10건을 전부 검출했다. 처음에는 **M9**(질의 없이 연결만 확인)를 놓쳤다. 그래서 "질의 단계 실패" 케이스를 추가했다.
+* 실제 앱: DB가 정상일 때 200, 파드 IP Host도 200, HEAD도 200. `docker compose stop db` 중에는 `/readyz` 503(0.05초)·`/healthz` 200이었고, 서버 로그에만 원인 한 줄이 남았다. `start db` 직후 `/readyz`는 200이었다.
+
+### 이번에 드러난 것
+
+* **변이 검증이 테스트의 빈틈을 찾았다.** 연결 실패만 흉내 낸 테스트는 "연결은 있는데 끊긴" 상태를 증명하지 못했다. `CONN_MAX_AGE=60`이라 DB 재시작 뒤 운영에서 실제로 생기는 상태다.
+* api.md §3 요약표의 "총 44"가 ADR-008 이후 갱신되지 않은 채 남아 있었다. 48로 바로잡았다.
+* ADR-008이 검증 명령으로 적은 `grep -c "^### [0-9]"`는 소제목까지 세서 63이 나온다. ADR-010에는 정확한 명령을 적었다.
+
+### 잔여 리스크
+
+* 패킷만 버리는 장애에서는 연결 시도가 OS 타임아웃까지 매달려 워커가 묶인다. `connect_timeout`은 Phase 3 probe 설정과 함께 정한다.
+* AWS ALB는 대상이 전부 unhealthy이면 모든 대상에 요청을 보낸다(fail open). Phase 3에서 확인이 필요하다.
+* 실제 이미지(gunicorn + prod)로는 아직 확인하지 않았다. TASK-003에서 확인한다.
+
+---
+
 ## 2026-11-07 — SPEC-006/TASK-001 후속(첫 거절에서 멈춤) + Owner 계정·도메인 현황 갱신 [위임 · 결정은 Owner]
 
 ### 작업

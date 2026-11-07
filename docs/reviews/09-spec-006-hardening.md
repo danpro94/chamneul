@@ -90,3 +90,58 @@ for i in $(seq 11); do curl -s -o /dev/null -w "%{http_code}\n" -b /tmp/j -H "X-
 **근거**: 테스트 **440개 OK**(새 1개) · `check` 0 issues · `makemigrations --check` No changes · `ruff check` passed · 변이 5건 전건 검출(M1 Login 믹스인 제거 · M2 #45 믹스인 제거 · M3 멈추지 않음 · M4 스로틀 순서 뒤바꿈 · M5 #45가 캐시에 다른 것을 씀).
 
 > 변이 측정 주의: M4는 같은 길이의 이름 두 개를 맞바꾸는 변이라, 처음에는 오래된 바이트코드가 쓰여 **"놓침"으로 잘못 나왔다.** 손으로 적용하면 `5 != 2`로 실패했다. 변이마다 `__pycache__`를 지우도록 스크립트를 고친 뒤 다시 돌려 5/5를 얻었다. 변이 검증 결과 "놓침"은 테스트를 의심하기 전에 측정을 먼저 의심한다.
+
+## 2. TASK-002 — readiness 분리 (`/readyz`) + 헬스 미들웨어 (2026-11-07)
+
+### 2-1. 무엇이 바뀌었나
+
+| 범위 | 내용 |
+| --- | --- |
+| 헌법 | **ADR-010 Accepted** → CLAUDE.md §5(47 → 48)·§7(비-버전 엔드포인트 둘)·§16 개정. ADR의 Consequences 문구를 그대로 옮겼다(diff 5곳) |
+| `/readyz` (#48) | DB에 `SELECT 1` → 200 `{"status":"ok","checks":{"database":"ok"}}` / 실패 503 `{"status":"unavailable",...}`. 원인은 서버 로그 WARNING에만 |
+| `/healthz` (#1) | **변경 없음** — 여전히 DB를 보지 않는다 |
+| `HealthCheckMiddleware` | `MIDDLEWARE` 맨 앞. 경로가 **정확히** `/healthz`·`/readyz`이고 GET/HEAD인 요청만 HTTPS 리다이렉트·Host 검증보다 먼저 답한다 |
+
+**근거**: 테스트 **446개 OK**(새 6개, 선-실패 3개 + 회귀 방지 3개) · `check` 0 issues · `makemigrations --check` No changes · `ruff check` passed · 변이 10건 전건 검출 · 실제 compose 앱에서 DB 정지 중 `/readyz` 503·`/healthz` 200, DB 재기동 직후 `/readyz` 200.
+
+### 2-2. 왜 이렇게 구현했나
+
+* **질의까지 한다.** 처음 테스트는 "연결 실패"만 흉내 냈다. 그래서 `SELECT 1`을 지운 변이(M9)를 놓쳤다. 운영에서 이 차이는 진짜다 — 워커는 연결을 `CONN_MAX_AGE`(60초) 동안 들고 있고, DB가 재시작되면 그 연결 객체는 남은 채 끊겨 있다. "질의 단계 실패" 케이스를 추가한 뒤 10/10.
+* **`db.Error` 전체를 잡는다.** 연결 거부는 `OperationalError`, 끊긴 연결은 `InterfaceError`로 계열이 다르다(M5가 잡는다).
+* **설정이 아니라 미들웨어.** `SECURE_REDIRECT_EXEMPT`는 301만 풀고 400(Host 검증)은 남는다. `ALLOWED_HOSTS`는 CIDR을 지원하지 않고, `*`는 Host 검증을 통째로 끈다(ADR-010).
+* **전제부터 고정한다.** "prod 보안 설정에서 일반 경로는 정말 400·301이다"를 먼저 단언한다. 그래야 "probe는 200"이 의미를 갖는다.
+
+### 2-3. 핵심 파일
+
+`config/health.py`(readyz·미들웨어) · `config/urls.py` · `config/settings/base.py`(`MIDDLEWARE` 맨 앞) · `config/tests.py`(신규, 6개) · `docs/adr/ADR-010-readiness-endpoint.md`(신규) · `CLAUDE.md`
+
+### 2-4. 테스트 방법
+
+```bash
+uv run python manage.py test config --settings=config.settings.test     # 6 OK
+curl -s -w "  [%{http_code}]\n" http://localhost:8000/readyz                          # 200
+curl -s -w "  [%{http_code}]\n" -H "Host: 10.0.3.17:8000" http://localhost:8000/readyz  # 파드 IP Host도 200
+docker compose stop db   # → /readyz 503, /healthz 200
+docker compose start db  # → /readyz 200
+```
+
+변이 10건: 미들웨어 제거 / SecurityMiddleware 뒤로 / 경로 앞부분 비교 / 모든 메서드 허용 / `OperationalError`만 잡음 / 예외 문자열을 본문에 / 실패를 500으로 / healthz가 DB를 봄 / readyz가 질의를 안 함 / 원인 로그 없음 — **전부 테스트가 잡았다**(M9는 테스트 보강 후).
+
+### 2-5. DevOps 설명 포인트
+
+* **liveness와 readiness는 질문이 다르다.** liveness 실패 → 재시작. readiness 실패 → 트래픽에서만 뺀다. DB 장애는 재시작으로 고쳐지지 않으므로 readiness의 일이다. liveness가 DB를 보면 DB 장애 한 번에 모든 파드가 CrashLoopBackOff에 빠진다.
+* **probe는 파드 IP로, 평문 HTTP로 온다.** 그래서 prod의 HTTPS 리다이렉트(301)와 Host 검증(400)보다 앞에서 답해야 한다. ALB 헬스체크는 기본적으로 200만 성공으로 본다.
+* **실측**: DB 컨테이너를 멈추면 이름 `db`가 사라져 `failed to resolve host 'db'`로 **0.05초 만에** 실패했다. 패킷만 버리는 장애(보안그룹 차단 등)라면 연결 시도가 OS 타임아웃까지 매달린다. 그동안 gunicorn sync 워커가 묶인다. `connect_timeout`은 Phase 3 probe의 `timeoutSeconds`와 함께 정한다.
+* **compose healthcheck는 그대로 `/healthz`다.** compose는 의존 서비스 기동 순서에만 쓰므로 liveness가 맞다. k8s 매니페스트(Phase 3, Owner 손코딩)에서 `livenessProbe: /healthz`, `readinessProbe: /readyz`로 나눈다.
+
+### 2-6. 보안 노트
+
+* **두 경로는 Host 검증을 건너뛴다.** 본문이 고정값이고 Host를 쓰지 않는다. 정확한 경로·GET/HEAD만 받는다. `/healthz/`, `/readyzx`, `/HEALTHZ`, `/api/v1/readyz`, POST·DELETE는 평소대로 400인지 테스트로 고정했다.
+* **응답에 예외를 싣지 않는다.** psycopg 오류에는 DB 호스트명·내부 주소·포트가 들어 있다(테스트용 오류 문자열도 실제 모양으로 만들었다). 본문은 고정이고, 원인은 서버 로그에만 남긴다.
+* **보안 헤더가 없다.** `SecurityMiddleware`보다 앞이라 HSTS·nosniff가 붙지 않는다. 고정 JSON이라 실익이 없다(ADR-010 Trade-offs).
+
+### 2-7. 다음 개선
+
+* Phase 3: probe `timeoutSeconds`와 DB `connect_timeout`을 함께 정한다.
+* Phase 3: AWS ALB는 대상이 **전부** unhealthy이면 모든 대상에 요청을 보낸다(fail open). Ingress·대상 그룹 구성을 정할 때 확인한다.
+* TASK-003: 실제 이미지(gunicorn + prod 설정)로 두 경로를 파드 IP Host·HTTP로 다시 확인한다.

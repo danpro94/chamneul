@@ -1,6 +1,8 @@
 # API Specification v1
 
-본 문서는 `chamneul` Phase 2 v1의 공식 API 명세이다. Notion v0 export(41건)을 정합성 검토한 뒤, `토큰 재발급`을 제거하고 `/healthz` + 관리자 역할 부여/해제 2건을 추가하여 43 엔드포인트를 확정했고, 2026-07-08 Owner 결정으로 CSRF 부트스트랩 엔드포인트(`GET /api/v1/csrf`, D-1)를 추가하여 **총 44 엔드포인트**로 확정했고, 2026-09-22 ADR-008로 **47 엔드포인트**가 됐다(#45~#47).
+본 문서는 `chamneul` Phase 2 v1의 공식 API 명세이다. Notion v0 export(41건)을 정합성 검토한 뒤, `토큰 재발급`을 제거하고 `/healthz` + 관리자 역할 부여/해제 2건을 추가하여 43 엔드포인트를 확정했고, 2026-07-08 Owner 결정으로 CSRF 부트스트랩 엔드포인트(`GET /api/v1/csrf`, D-1)를 추가하여 **총 44 엔드포인트**로 확정했고, 2026-09-22 ADR-008로 **47 엔드포인트**가 됐다(#45~#47). 2026-11-07 ADR-010으로 readiness probe `GET /readyz`(#48)가 더해져 **48 엔드포인트**다.
+
+> 2026-11-07 **ADR-010 / SPEC-006 TASK-002 — readiness 분리 (47 → 48)**: **#48 `GET /readyz`** 신설. DB 질의(`SELECT 1`)가 성공하면 200, 실패하면 **503**이고, 본문은 고정이며 예외 내용을 싣지 않는다. **#1 `/healthz`는 그대로 DB를 보지 않는다**(liveness가 DB를 보면 DB 장애 한 번에 모든 파드가 재시작된다). 두 경로의 GET/HEAD는 HTTPS 리다이렉트·Host 검증보다 **먼저** 응답한다(kubelet·ALB가 파드 IP로 평문 HTTP 호출). §1.1 비-버전 엔드포인트는 둘이 됐다. 예전 후보 이름 `/healthz/db`는 쓰지 않는다.
 
 > 2026-07-08 M4 착수 전 Owner 결정 반영 (D-1~D-8, C-10·C-11): §3 요약표 #44 추가, §1.2 CSRF 부트스트랩, 응답 필드 3건 보강(`is_submitted`·작성자 한정 `reject_reason`·`expected_version`, D-3), 알림 `target_url` 규약(C-10), Google nickname 자동 산정(C-11), `domain_category` 11종 확정(D-6), `is_deleted` 표기 정리(C-1). 기존 #1~43 번호는 ux/01 등 상호참조 안정성을 위해 유지하고 신규 엔드포인트만 #44로 덧붙인다.
 >
@@ -40,7 +42,7 @@
 
 * 로컬 개발: `http://localhost:8000`
 * 모든 버전 관리 API의 prefix: `/api/v1/`
-* 비-버전 엔드포인트: `/healthz` 뿐
+* 비-버전 엔드포인트: `/healthz`(liveness, #1)와 `/readyz`(readiness, #48) 둘뿐 (ADR-010)
 
 ### 1.2 인증 (Auth)
 
@@ -201,7 +203,7 @@ CLAUDE.md §7 참조. 요지:
 
 ## 3. API Summary Table
 
-총 44 엔드포인트. **MVP 열 ✓ = Phase 2 v1 구현 대상 (전 항목 ✓)**.
+총 48 엔드포인트(ADR-008로 #45~#47, ADR-010으로 #48 추가). **MVP 열 ✓ = Phase 2 v1 구현 대상 (전 항목 ✓)**.
 
 | # | Domain | Method | Endpoint | Permission | Description | MVP |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -252,6 +254,7 @@ CLAUDE.md §7 참조. 요지:
 | 45 | auth | POST | `/api/v1/auth/password-reset` | Anonymous | 비밀번호 재설정 요청 (ADR-008). **가입되지 않은 주소에도 200** | ✓ |
 | 46 | auth | POST | `/api/v1/auth/password-reset/confirm` | Anonymous | 토큰 + 새 비밀번호로 확정 (ADR-008) | ✓ |
 | 47 | concern | PATCH | `/api/v1/users/me/concerns/{concern-id}` | User(본인) | 고민 수정 — **`SUBMITTED` 상태에서만** (ADR-008) | ✓ |
+| 48 | health | GET | `/readyz` | Anonymous | readiness — DB 질의 성공 200 / 실패 503 (ADR-010). #1과 같은 그룹이나 번호 안정성 위해 말미 배치 | ✓ |
 
 URI 변경 요약 (Notion v0 → v1):
 
@@ -278,7 +281,7 @@ URI 변경 요약 (Notion v0 → v1):
 | Method | GET |
 | Endpoint | `/healthz` |
 | Permission | Anonymous |
-| Description | 앱 컨테이너의 단순 헬스 체크. 의존성(DB) 체크는 별도 엔드포인트(`/healthz/db`)를 차후 검토. |
+| Description | liveness — 앱 프로세스가 살아 있는가만 답한다. **DB를 보지 않는다**(DB 장애 중에도 200). DB까지 보는 readiness는 #48 `/readyz`(ADR-010). GET/HEAD는 HTTPS 리다이렉트·Host 검증보다 먼저 응답한다(#48과 같음). |
 | Request 주요 필드 | 없음 |
 | Response 주요 필드 | `{"status": "ok"}` |
 | Status | 200 / 500 |
@@ -1024,6 +1027,25 @@ URI 변경 요약 (Notion v0 → v1):
 **왜 409인가**: 요청 자체는 올바르고 현재 상태와 충돌하는 경우다(§1.8). 본인 고민이 맞고(403 아님), 존재하는 것도 맞다(404 아님).
 
 **배정 이후의 추가 설명**: 원문을 고치는 대신 *"추가로 드리고 싶은 말"*을 **덧붙이는** 방식이 양쪽 요구를 모두 만족한다(조언가가 본 글은 불변, 새 정보는 전달). 모델 추가가 필요하고 실사용 수요를 확인한 뒤가 적절하므로 **Phase 3 후보**로 둔다(ADR-008 Trade-offs).
+
+### 48. GET /readyz
+
+| 항목 | 내용 |
+| --- | --- |
+| Method | GET (HEAD도 같은 응답, 본문 없음) |
+| Endpoint | `/readyz` — **버전 없음**(§1.1, ADR-010) |
+| Permission | Anonymous |
+| Description | readiness — 지금 요청을 처리할 수 있는가. DB에 `SELECT 1`을 보내 확인한다. k8s readiness probe와 ALB 대상 그룹 헬스체크가 쓴다. 실패하면 파드를 **재시작하지 않고 트래픽에서만** 뺀다(재시작은 #1 liveness의 몫). |
+| Request 주요 필드 | 없음 |
+| Response 주요 필드 | 200 `{"status": "ok", "checks": {"database": "ok"}}` / 503 `{"status": "unavailable", "checks": {"database": "unavailable"}}` — **§1.4 봉투를 쓰지 않는다**(probe용 고정 본문, #1과 같은 관례) |
+| Status | 200 / 503(DB 연결 또는 질의 실패) |
+| 접근 제어 조건 | 없음. 경로가 **정확히** `/readyz`인 GET/HEAD는 HTTPS 리다이렉트·`ALLOWED_HOSTS` 검증보다 **먼저** 응답한다 — kubelet·ALB는 파드 IP를 Host로, 평문 HTTP로 묻기 때문이다(`config.health.HealthCheckMiddleware`). `/readyz/`·다른 메서드는 평소 검사를 탄다. |
+| Side Effect | 없음. 실패 원인(예외 종류·메시지)은 **서버 로그에만** WARNING으로 남는다. 본문에는 호스트명·주소·포트가 들어 있는 예외 문자열을 싣지 않는다(CLAUDE.md §8). |
+| MVP 여부 | ✓ |
+
+**왜 `/healthz`와 나누는가 (ADR-010)**: liveness가 DB를 보면 DB 장애 한 번에 **모든 파드가 재시작**된다. 재시작해도 DB는 돌아오지 않으니 다시 실패하고 CrashLoopBackOff에 빠진다. readiness는 파드를 살려 둔 채 트래픽만 빼므로, DB가 돌아오면 다음 probe에서 바로 복귀한다(2026-11-07 실측: DB 재기동 직후 첫 호출부터 200).
+
+**왜 질의까지 하나**: 워커는 DB 연결을 `CONN_MAX_AGE`(기본 60초) 동안 들고 있다. DB가 재시작되면 그 연결 객체는 남아 있지만 끊겨 있다. 연결 여부만 보면 "준비됨"으로 잘못 답한다.
 
 ---
 

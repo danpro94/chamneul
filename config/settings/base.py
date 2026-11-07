@@ -57,6 +57,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # First on purpose: probes arrive as plain HTTP with the pod IP as Host, so
+    # they must be answered before the HTTPS redirect and host check (ADR-010).
+    "config.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",

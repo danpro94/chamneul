@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-11-07 (SPEC-006 TASK-001 후속 기준 — 테스트 **440개**. PR #3~#16 머지 완료 — Dependabot 보안 PR #13~#15 포함)
+> 마지막 실측: 2026-11-07 (SPEC-006 TASK-002 기준 — 테스트 **446개**, 엔드포인트 **48/48**. PR #3~#16 머지 완료 — Dependabot 보안 PR #13~#15 포함)
 
 ---
 
@@ -12,7 +12,7 @@
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
 | 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현·머지 완료(PR #12)** |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001 완료(후속 2026-11-07) → TASK-002 진행 승인(2026-11-07)**(ADR-010을 먼저) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
+| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001 완료(후속 2026-11-07), TASK-002 완료(2026-11-07) → 다음 TASK-003**(운영 경로 — WhiteNoise 패키지 추가 포함) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (47 / 47)
+## 2. 구현된 엔드포인트 (48 / 48)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls`, `notifications.urls` 5개 include.
 
@@ -77,8 +77,9 @@
 | 45 | POST | `/api/v1/auth/password-reset` | `PasswordResetView` + [accounts/emails.py](../../accounts/emails.py) (SPEC-005/TASK-003) |
 | 46 | POST | `/api/v1/auth/password-reset/confirm` | `PasswordResetConfirmView` (SPEC-005/TASK-004) |
 | 47 | PATCH | `/api/v1/users/me/concerns/{concern-id}` | [concerns/views.py](../../concerns/views.py) `ConcernDetailView.patch` (SPEC-005/TASK-005) |
+| 48 | GET | `/readyz` | [config/health.py](../../config/health.py) `readyz` + `HealthCheckMiddleware` (SPEC-006/TASK-002, ADR-010) |
 
-## 3. 미구현 엔드포인트 (0 / 47)
+## 3. 미구현 엔드포인트 (0 / 48)
 
 없음. ADR-008로 추가된 #45~#47(2026-09-22, MVP UI 프로토타입을 만들며 드러난 공백 — 명세로만 읽을 때는 보이지 않다가 **화면에 버튼을 놓으려는 순간** 드러났다)은 SPEC-005 TASK-003~005에서 구현했다(2026-10-14). SPEC-005는 TASK-006(마무리 + 결정 대기 항목)이 남았다.
 
@@ -88,7 +89,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 | 지표 | 값 |
 | --- | --- |
-| 엔드포인트 | **44 / 44** — Phase 2 기준. ADR-008로 총계가 47이 되어 현재는 **47/47** (2026-10-14) |
+| 엔드포인트 | **44 / 44** — Phase 2 기준. ADR-008로 총계가 47이 되어 **47/47** (2026-10-14), ADR-010으로 48이 되어 현재는 **48/48** (2026-11-07) |
 | 자동 테스트 | **292** |
 | 검증 4종 | check 0 issues / makemigrations No changes / ruff passed / test OK |
 | 맨바닥 기동 | 볼륨 삭제 후 사용자 여정 12단계 통과 ([smoke-test.md](../smoke-test.md)) |
@@ -119,6 +120,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 * **TASK-001 완료 (2026-11-04)** — #2·#3·#45·#46 요청 횟수 제한. 테스트 15개(전체 **439개**). IP 기준 + #3·#45는 계정(이메일) 기준. 카운터는 PostgreSQL 캐시 테이블(`createcachetable` — 마이그레이션 밖, smoke-test §2-1)에 HMAC 키로 둔다. `NUM_PROXIES` 명시(`DRF_NUM_PROXIES`, 기본 0). 구현 중 위험 2건 추가로 닫음: **DatabaseCache 기본 `MAX_ENTRIES=300` 컬링으로 남의 카운터를 지우는 우회**, **스로틀 프레임이 오류 리포트에 비밀번호를 노출할 수 있는 경로**. 변이 15건 전건 검출. 실제 compose 앱에서 10×401 → 11번째 429. 비용 실측: 스로틀 2개 = 요청당 +12 SQL문. 기존 1개 테스트(#45 "DB 쓰기 없음")의 단언 범위를 좁힘 → Owner 조건부 승인(2026-11-07). 상세 [리뷰 노트 09](../reviews/09-spec-006-hardening.md) §1.
 * **TASK-001 후속 (2026-11-07)** — DRF가 스로틀 하나가 거절한 뒤에도 나머지를 평가·기록해, **IP 한도에 막힌 요청도 주소 카운터 행을 만들던** 문제(한 IP가 행을 끝없이 늘려 컬링으로 계정 한도를 지울 수 있었다 — 11-04의 "닫음"은 반만 닫힌 것이었다). 첫 거절에서 멈추는 `StopAtFirstLimit`. 좁힌 테스트의 예외도 #45 카운터 2개로 다시 좁혀 사각지대 제거. 테스트 **440개**, 변이 5건 전건 검출. 리뷰 노트 09 §1-8.
+* **TASK-002 완료 (2026-11-07)** — **ADR-010 Accepted → CLAUDE.md §5·§7·§16 개정**(47 → 48, 비-버전 엔드포인트 둘). #48 `/readyz`: DB `SELECT 1` 성공 200 / 실패 503(본문 고정, 원인은 서버 로그만). `/healthz`는 그대로 DB를 보지 않는다. `HealthCheckMiddleware`(MIDDLEWARE 맨 앞)가 정확한 두 경로의 GET/HEAD만 HTTPS 리다이렉트·Host 검증보다 먼저 답한다. 테스트 6개(전체 **446개**). 변이 10건 전건 검출 — **M9(질의 없이 연결만 확인)를 처음엔 놓쳐** "끊긴 영구 연결" 케이스를 보강했다(`CONN_MAX_AGE=60`이라 운영에서 실제로 생기는 상황). 실제 compose 앱: DB 정지 중 `/readyz` 503·`/healthz` 200, 재기동 직후 200. smoke-test §5 갭 7 해소. 상세 리뷰 노트 09 §2.
 
 **SPEC-005-api-gaps — 완료·머지 (2026-10-27, PR #12).** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
 

@@ -174,7 +174,11 @@ docker compose stop db
 django.db.utils.OperationalError: failed to resolve host 'db': [Errno -2] Name or service not known
 ```
 
-**중요**: `/healthz`는 **DB 장애 중에도 200을 반환한다.** 이는 버그가 아니라 설계다 — [config/health.py](../config/health.py)의 주석이 명시하듯 liveness 프로브(앱 프로세스가 살아 있는가)이지 readiness 프로브(요청을 처리할 수 있는가)가 아니다. **운영 함의**: 로드밸런서가 `/healthz`만 보면 DB가 죽은 인스턴스에도 트래픽을 보낸다. DB 인지 readiness 프로브(`/healthz/db`)는 의도된 후속 과제다(§5 갭 7).
+**중요**: `/healthz`는 **DB 장애 중에도 200을 반환한다.** 이는 버그가 아니라 설계다 — [config/health.py](../config/health.py)의 주석이 명시하듯 liveness 프로브(앱 프로세스가 살아 있는가)이지 readiness 프로브(요청을 처리할 수 있는가)가 아니다. **운영 함의**: 로드밸런서가 `/healthz`만 보면 DB가 죽은 인스턴스에도 트래픽을 보낸다. 그래서 DB를 보는 readiness 프로브 **`/readyz`**(api.md #48, ADR-010)가 따로 있다 — 2026-11-07 실측: `docker compose stop db` 중 `/readyz` **503**·`/healthz` **200**, `start db` 직후 `/readyz` 200 복귀.
+
+```bash
+curl -s -w "  [%{http_code}]\n" http://localhost:8000/readyz   # DB 정상: {"status": "ok", "checks": {"database": "ok"}}  [200]
+```
 
 ### 4-3. DB를 다시 켰을 때 — 앱 재시작이 필요한가
 
@@ -206,7 +210,7 @@ docker compose start db      # healthy까지 6초
 | 4 | **고민 종료(`CLOSED`) 사용자 API 부재** | CLAUDE.md §6.6은 "사용자가 명시적으로 닫는다"고 서술하나 그 API가 없다. Phase 2는 **Django Admin으로만** 닫는다(Owner 결정 2026-09-16, D-4) | Phase 3 후보 |
 | 5 | **회수된 조언가의 배정 잔존** | 자격을 잃은 조언가의 배정이 남고 concern은 `ASSIGNED` 유지. #23 admin 상세에서 식별 가능하며 관리자가 #25로 해제한다 | 의도된 동작(SPEC-003 §7 결정 3) |
 | 6 | **실제 경합 미재현** | 잠금의 *존재*는 SQL 수준 테스트(`StateTransitionLockingTests`)로 고정했으나, 두 요청을 실제로 동시에 보내본 적은 없다 | Phase 3 (`TransactionTestCase` + 스레드) |
-| 7 | **DB 인지 readiness 프로브 부재** | §4-2 참조. `/healthz`가 DB 장애 중에도 초록 | Phase 3 (`/healthz/db`) |
+| 7 | ~~**DB 인지 readiness 프로브 부재**~~ | **해소 (2026-11-07, SPEC-006 TASK-002)** — `/readyz`(api.md #48, ADR-010). k8s readiness probe·ALB 헬스체크에는 `/readyz`, liveness probe에는 `/healthz`를 쓴다. compose healthcheck는 지금처럼 `/healthz`(Owner 영역, 바꿀지는 Phase 3 매니페스트와 함께 결정) | — |
 | 8 | **`DEBUG=True`에서 500이 전체 트레이스백 HTML** | 로컬 전용. 운영은 `DEBUG=False` 강제(§10) | 의도된 동작 |
 | 9 | ~~**`accounts`의 M4-1~M4-3 자동 테스트 0건**~~ | **해소 (2026-10-22, SPEC-005 TASK-001·002)**: 인증 회귀 테스트(#2·#3·#4·#7·#8·#9)와 Google OAuth 회귀 테스트(#5·#6)를 깔았다. OAuth는 mock 경계를 **네트워크(`urlopen`)**에 둬서 발급자·audience·이메일 인증 검증과 계정 연결 로직은 실제 코드가 돈다. **남은 것**: 진짜 Google과의 왕복 1회 — secret 회전(리뷰 노트 07 §3-5-1) 때 함께 확인한다 | 해소 (실제 Google 왕복만 남음) |
 | 10 | **로컬 로그에 살아 있는 재설정 토큰이 찍힌다** — local 설정은 메일을 콘솔로 보내므로, #45를 부르면 `docker compose logs app`에 재설정 링크(uid·token)가 그대로 남는다 | 그 로그를 이슈·채팅·AI 대화에 붙여넣으면 30분 안에 그 계정의 비밀번호를 바꿀 수 있다. **로그를 공유하기 전에 `token=` 이후를 가린다** | 의도된 동작(Phase 2 메일 = 콘솔, ADR-008) — 아래 §6 경고 |
@@ -303,7 +307,7 @@ docker compose exec app python manage.py migrate --check          # 미적용 �
 
 > **두 서비스 모두 `healthy`가 표시된다** (2026-09-17, Owner 승인 후 app healthcheck 추가). app은 `/healthz`를 10초 간격으로 호출하며 기동 유예 20초를 둔다.
 >
-> 다만 **app의 `healthy`는 "프로세스가 요청을 받는다"까지만 뜻한다** — `/healthz`는 DB를 건드리지 않는 liveness 프로브이므로 **DB가 죽어도 healthy가 유지된다**(§4-2). DB까지 포함한 판정은 여전히 `/healthz/db`(갭 7)가 필요하다.
+> 다만 **app의 `healthy`는 "프로세스가 요청을 받는다"까지만 뜻한다** — `/healthz`는 DB를 건드리지 않는 liveness 프로브이므로 **DB가 죽어도 healthy가 유지된다**(§4-2). DB까지 포함한 판정은 `/readyz`로 한다(갭 7 해소, 2026-11-07).
 
 ## 7. 재실행
 
