@@ -22,6 +22,7 @@ from common.throttling import (
     PasswordResetEmailThrottle,
     PasswordResetIPThrottle,
     SignupIPThrottle,
+    StopAtFirstLimit,
 )
 
 from . import oauth, services
@@ -94,7 +95,7 @@ class CsrfView(APIView):
 
 @csrf_protected
 @method_decorator(sensitive_post_parameters("password"), name="dispatch")
-class SignupView(APIView):
+class SignupView(StopAtFirstLimit, APIView):
     """POST /api/v1/auth/signup (#2) — create account and auto-login (ADR-002 §9)."""
 
     permission_classes = [AllowAny]
@@ -124,7 +125,7 @@ class SignupView(APIView):
 
 @csrf_protected
 @method_decorator(sensitive_post_parameters("password"), name="dispatch")
-class LoginView(APIView):
+class LoginView(StopAtFirstLimit, APIView):
     """POST /api/v1/auth/login (#3) — email/password login, issues the session."""
 
     permission_classes = [AllowAny]
@@ -158,7 +159,7 @@ class LogoutView(APIView):
 
 
 @csrf_protected
-class PasswordResetView(APIView):
+class PasswordResetView(StopAtFirstLimit, APIView):
     """POST /api/v1/auth/password-reset (#45) — request a reset link.
 
     The response is identical whether or not the address has an account;
@@ -179,7 +180,7 @@ class PasswordResetView(APIView):
 
 @csrf_protected
 @method_decorator(sensitive_post_parameters("new_password", "token"), name="dispatch")
-class PasswordResetConfirmView(APIView):
+class PasswordResetConfirmView(StopAtFirstLimit, APIView):
     """POST /api/v1/auth/password-reset/confirm (#46) — set the new password.
 
     The token is the credential, so the endpoint is anonymous. It does not log

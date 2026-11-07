@@ -68,6 +68,24 @@ class EmailRateThrottle(_RateFromSettings):
         }
 
 
+class StopAtFirstLimit:
+    """View mixin: the first throttle that refuses ends the check.
+
+    DRF asks every throttle even after one has refused, and each one that passes
+    records the request. A request the IP limit had already refused still opened
+    a new per-address counter, so one IP could add cache rows without bound by
+    changing the address. Past MAX_ENTRIES Django culls a third of the rows in
+    key order — auth_login_email sorts first, so that wiped account limits.
+    Stopping here caps the rows one IP can add at its own IP limit. List the IP
+    throttle first. Retry-After is the refusing throttle's wait, not the longest.
+    """
+
+    def check_throttles(self, request):
+        for throttle in self.get_throttles():
+            if not throttle.allow_request(request, self):
+                self.throttled(request, throttle.wait())
+
+
 # DRF builds throttles without arguments, so each scope is its own class.
 # accounts/views.py attaches them; the numbers stay in settings.
 

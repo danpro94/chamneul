@@ -8,7 +8,7 @@
 
 ## 0. 한 화면 체크리스트
 
-> 상태 갱신 2026-11-04: ☑ 완료 · ◐ 진행 중 · ⏸ Owner 결정으로 연기
+> 상태 갱신 2026-11-07: ☑ 완료 · ◐ 진행 중 · ⏸ Owner 결정으로 연기
 
 | 순서 | 작업 | 소요 | 마감 권장 | 상태 |
 | --- | --- | --- | --- | --- |
@@ -18,13 +18,13 @@
 | A-4 | "붙여넣기 금지" 출력 2종 숙지 | 2분 | 오늘 | □ |
 | A-5 | Google 로그인 계정 연결 변화(F-5) 숙지 | 5분 | 베타 전 | □ |
 | B-1 | GitHub 계정 2FA + 저장소 보호 설정 | 30분 | 이번 주 | ☑ (2FA + ruleset) |
-| B-2 | AWS 계정 생성 + 루트 MFA | 40분 | Phase 3 시작 전 | ☑ (기존 계정 — Free plan 크레딧 **소진**) |
-| B-3 | IAM Identity Center 관리자 사용자 | 30분 | B-2 직후 | ☑ |
-| B-4 | 결제 알림 (AWS Budgets) | 15분 | B-2 직후 (**필수**) | ☑ |
-| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | ◐ 진행 중 (2026-11-04~) |
-| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | ◐ 진행 중 (2026-11-04~) |
-| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | ◐ 진행 중 (2026-11-04~) |
-| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 1일~수일) | B-7 직후 | ◐ 진행 중 (2026-11-04~) |
+| B-2 | AWS 계정 생성 + 루트 MFA | 40분 | Phase 3 시작 전 | ☑ (2026-11-07 본인 계정으로 재진행 — 플랜·크레딧 재확인 필요) |
+| B-3 | IAM Identity Center 관리자 사용자 | 30분 | B-2 직후 | ☑ (2026-11-07 재진행) |
+| B-4 | 결제 알림 (AWS Budgets) | 15분 | B-2 직후 (**필수**) | ☑ (2026-11-07 재진행) |
+| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | ☑ (2026-11-07 공개 DNS 실측 — 위임 정상) |
+| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | ☑ (콘솔로 발급 — 만료일 기록 필요) |
+| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | ☑ (2026-11-07 공개 DNS 확인) |
+| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 첫 답 96시간 이내) | B-7 직후 | ◐ 제출함 — 하루 200통이 보이면 아직 샌드박스 |
 | C-1 | 개인정보 처리방침 초안 | 반나절 | 베타 공개 전 | □ |
 | C-2 | 이용약관 초안 | 반나절 | 베타 공개 전 | □ |
 | C-3 | 민감정보·14세 미만 정책 결정 | 1시간 | 베타 공개 전 | □ |
@@ -162,7 +162,7 @@
   - 예전의 "12개월 t2.micro 750시간" 혜택은 신규 계정에 없다.
   - **EKS 컨트롤 플레인은 시간당 과금**이다. NAT Gateway와 로드밸런서도 켜 두는 동안 계속 과금되므로 크레딧이 빨리 준다. 실습이 끝나면 반드시 지운다(`terraform destroy`).
   - 최신 조건은 https://aws.amazon.com/free/ 에서 직접 확인한다. 위 내용은 2차 자료로 교차 확인했다.
-  - **이 프로젝트의 계정은 크레딧을 이미 소진했다(2026-10-25 Owner 확인).** Phase 3의 EKS·NAT·로드밸런서는 **첫날부터 실제 요금**이다 — B-4 예산 알림을 먼저 확인하고, 실습 뒤 즉시 지운다.
+  - 2026-10-25의 "크레딧 소진" 확인은 **다른 계정으로 로그인한 상태**에서 한 것일 수 있다(2026-11-07 Owner 보고 — 아래 "흔한 실수"). 본인 계정의 **Billing and Cost Management → Credits**에서 다시 확인한다. 확인 전까지는 Phase 3의 EKS·NAT·로드밸런서를 **첫날부터 실제 요금**으로 잡는다 — B-4 예산 알림을 먼저 확인하고, 실습 뒤 즉시 지운다.
 - **사전 준비**: 이 용도 전용 이메일(별칭도 됨), 해외결제가 되는 카드, 휴대폰.
 - **단계**
   1. https://signin.aws.amazon.com/signup?request_type=register 에 들어가 루트 이메일과 계정 이름(예: `chamneul`)을 넣고 이메일 인증 코드를 입력한다.
@@ -175,6 +175,7 @@
   - 보안이 약한 개인 메일로 루트를 만든다.
   - 루트 계정으로 일상 작업을 한다.
   - 루트 액세스 키를 만든다.
+  - **다른 AWS 계정으로 로그인한 채 진행한다**(예전 교육·회사에서 받은 IAM 사용자). 브라우저에 그 로그인이 남아 있으면 자연스럽게 그 계정으로 들어간다. 작업 전마다 콘솔 오른쪽 위의 **계정 이름·ID**를 보고, CLI는 `aws sts get-caller-identity`의 `Account`로 확인한다. 이미 남의 계정에 만들었다면 그쪽 자원(호스팅 영역·인증서·SES Identity·지원 케이스)을 지우고 내 계정에서 다시 한다.
 
 ### B-3. IAM Identity Center 관리자 사용자
 
@@ -285,10 +286,15 @@ Owner가 "하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수"를 �
 - **소요·비용**: 20분 + 심사(보통 하루 안팎이지만 보장되지 않음) · 무료
 - **사전 준비**: B-7을 끝낸다. **랜딩 페이지와 개인정보 처리방침(C-1)이 `https://chamneul.com`에서 열린 뒤에** 신청한다(2026-11-02 확정 — 웹사이트 없이 신청하면 거절 가능성이 높다).
 - **단계**
-  1. SES → **Account dashboard** → **Request production access**(또는 Get set up 페이지의 같은 버튼).
-  2. Mail type은 **Transactional**, Website URL은 `https://chamneul.com`, 언어는 Korean/English로 한다.
-  3. Use case description 예시다(영문 권장). 실제 상황에 맞게 고쳐 쓴다.
-     - **2026-11 현재 콘솔 양식에는 이 입력란이 없을 수 있다**(Owner 확인 2026-11-04). 그러면 그대로 제출한다. AWS가 Support 케이스로 사용 사례를 물어오면 **그 케이스에 답장으로** 아래 문구를 쓴다.
+  1. SES → **Account dashboard** → 맨 위 "Your Amazon SES account is in the sandbox" 경고의 **View Get set up page** → **Request production access**.
+  2. 양식 칸은 다섯 개다(AWS 공식 절차, 2026-11-07 확인).
+     - **Mail type**: **Transactional** — 사용자 행동(비밀번호 재설정 등)으로 한 사람에게 가는 메일.
+     - **Website URL**: `https://chamneul.com`
+     - **Additional contacts**: 심사 연락을 받을 메일(쉼표로 최대 4개).
+     - **Preferred contact language**: **English**. 선택지는 English와 Japanese 두 개뿐이다.
+     - **Acknowledgement**: "명시적으로 요청한 사람에게만 보내고, 바운스·불만 처리 절차가 있다"는 동의 체크.
+  3. `Use case description` 예시다(영문 권장). 실제 상황에 맞게 고쳐 쓴다.
+     - **지금 양식에는 이 입력란이 없다**(Owner 확인 2026-11-04, AWS 공식 절차로 재확인 2026-11-07). 그대로 제출한다. AWS가 Support 케이스로 사용 사례를 물어오면 **그 케이스에 답장으로** 아래 문구를 쓴다.
      - 웹사이트가 아직 없으면 사실대로 적는다. 예: "The website is under development; the landing page and privacy policy will be published before launch."
      ```text
      chamneul.com is an early-stage advice platform for Korean users. We send only
@@ -300,8 +306,13 @@ Owner가 "하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수"를 �
      the SES account-level suppression list. The domain is verified with DKIM, a
      custom MAIL FROM domain (SPF) and DMARC.
      ```
-  4. AWS 이용 정책(AUP) 동의에 체크하고 Submit. 결과는 AWS Support 케이스와 메일로 온다.
-- **완료 확인**: Account dashboard에 프로덕션 액세스가 표시되고 일일 발송 한도가 늘어난다.
+  4. **Submit request**를 누른다. "under review" 배너가 뜨면 접수된 것이다(**승인이 아니다**). 심사 중에는 내용을 고칠 수 없다. AWS Support의 첫 답은 **96시간 안에** 오고, 추가 정보를 요청하면 더 걸린다. 결과는 Support 케이스와 메일로 온다.
+- **완료 확인**: Account dashboard 맨 위의 sandbox 경고가 **사라진다.** CLI로 확정하려면:
+  ```bash
+  aws sesv2 get-account --region ap-northeast-2 \
+    --query '{prod:ProductionAccessEnabled,review:Details.ReviewDetails.Status,quota:SendQuota}'
+  ```
+  `prod: true`, `review: GRANTED`면 끝이다. **하루 200통·초당 1통이 보이면 아직 샌드박스다** — `review`가 `PENDING`(심사 중)·`DENIED`(거절)·`FAILED`(접수 실패, 다시 제출) 중 무엇인지 본다. 승인 뒤의 한도는 사용 사례에 따라 정해진다(고정값이 아니다). 콘솔 오른쪽 위 리전이 **Seoul**인지도 본다 — 샌드박스는 리전마다 따로라서 다른 리전은 계속 샌드박스로 보인다.
 - **흔한 실수**
   - "나중에 뉴스레터도…"처럼 마케팅 계획을 언급해서 거절된다.
   - 바운스 처리 계획을 빼먹어서 거절된다.
@@ -382,8 +393,10 @@ Owner가 "하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수"를 �
   - https://docs.aws.amazon.com/ses/latest/dg/creating-identities.html
   - https://docs.aws.amazon.com/ses/latest/dg/mail-from.html
   - https://docs.aws.amazon.com/ses/latest/dg/send-email-authentication-dmarc.html
-- SES 샌드박스 해제:
+- SES 샌드박스 해제 (2026-11-07 재확인 — 양식 칸·96시간·언어 선택지):
   - https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html
+  - https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetAccount.html (`ProductionAccessEnabled`)
+  - https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ReviewDetails.html (`PENDING`·`GRANTED`·`DENIED`·`FAILED`)
   - https://repost.aws/knowledge-center/ses-production-access-request-faq
 - Google OAuth 클라이언트·secret 회전:
   - https://support.google.com/cloud/answer/6158849

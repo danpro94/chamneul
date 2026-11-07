@@ -1730,6 +1730,12 @@ class PasswordResetRequestTests(AuthTestBase):
             sql for sql in writes if not sql.startswith(savepoints) and '"django_cache"' not in sql
         ]
         self.assertEqual(data_writes, [])
+        # 캐시 테이블 예외도 정확히 #45 카운터 2개(IP·주소)뿐이다 — 다른 무엇이
+        # 캐시에 쓰이면(예: 계정별 기록) 여기서 걸린다(Owner 확인 2026-11-07).
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT cache_key FROM django_cache ORDER BY cache_key")
+            scopes = [key.split(":", 2)[2].rsplit("_", 1)[0] for (key,) in cursor.fetchall()]
+        self.assertEqual(scopes, ["throttle_password_reset_email", "throttle_password_reset_ip"])
         self.assertNotIn("sessionid", response.cookies)
         self.existing.refresh_from_db()
         self.assertEqual(self.existing.password, password_before)
@@ -2529,6 +2535,30 @@ class RateLimitTests(AuthTestBase):
         with connection.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) FROM django_cache")
             self.assertEqual(cursor.fetchone()[0], 350)
+
+    def test_a_request_the_ip_limit_refused_opens_no_address_counter(self):
+        """DRF는 한 스로틀이 거절한 뒤에도 나머지를 다 묻고, 통과한 스로틀은
+        기록한다. 그러면 IP 한도에 이미 막힌 요청도 주소마다 새 카운터 행을
+        만든다 — 한 IP가 주소만 바꿔 행을 끝없이 늘리고, MAX_ENTRIES를 넘기면
+        Django가 키 순서로 1/3을 지운다. 맨 앞이 auth_login_email(계정 한도)이다."""
+        ip = "192.0.2.66"
+        cases = {
+            "auth_login_email": lambda n: self.login_from(ip, email=f"spray{n}@example.com"),
+            "password_reset_email": lambda n: self.request_reset(f"spray{n}@example.com", ip=ip),
+        }
+        rates = {"auth_login_ip": "2/min", "password_reset_ip": "2/hour"}
+        for scope, send in cases.items():
+            with self.subTest(scope), with_rates(**rates):
+                cache.clear()
+                statuses = [send(n).status_code for n in range(5)]
+                self.assertEqual(statuses[2:], [429, 429, 429])  # 전제: 3번째부터 IP 한도
+
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM django_cache WHERE cache_key LIKE %s",
+                        [f"%throttle_{scope}_%"],
+                    )
+                    self.assertEqual(cursor.fetchone()[0], 2)
 
     def test_real_table_matches_decision_2(self):
         """결정 2(2026-11-04 승인). 테스트 설정은 한도를 크게 덮어쓰므로 원본

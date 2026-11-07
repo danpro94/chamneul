@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-11-04 (SPEC-006 TASK-001 기준 — 테스트 **439개**. PR #3~#16 머지 완료 — Dependabot 보안 PR #13~#15 포함)
+> 마지막 실측: 2026-11-07 (SPEC-006 TASK-001 후속 기준 — 테스트 **440개**. PR #3~#16 머지 완료 — Dependabot 보안 PR #13~#15 포함)
 
 ---
 
@@ -12,7 +12,7 @@
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
 | 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현·머지 완료(PR #12)** |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001 완료 → 다음 TASK-002**(ADR-010을 먼저) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-8 Owner 진행 중(2026-11-04~, [OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
+| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001 완료(후속 2026-11-07) → TASK-002 진행 승인(2026-11-07)**(ADR-010을 먼저) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -98,7 +98,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 **Owner 승인 후 처리 5건** (2026-09-17, 리뷰 노트 07 §3-5): compose app healthcheck / Dockerfile gunicorn 액세스 로그 / compose `db`의 `env_file` 제거(앱 시크릿 미주입) / `.env.example` 누락 키 3개 / `restart: unless-stopped` — **§16 불가침 파일이라 승인 후에만 수정**했고, 재빌드 후 두 서비스 `healthy` + 스모크 여정 재통과로 검증했다.
 
-> **Owner 작업 현황 (2026-11-04)** — 단계별 절차: [OWNER-ACTIONS-GUIDE.md](OWNER-ACTIONS-GUIDE.md). 완료: `.env.example` 키 추가, GitHub 2FA + ruleset, AWS 계정·루트 MFA·Identity Center·결제 알림, PR #12~#16 머지. **남음**: ① Google OAuth secret 회전 마무리(새 secret으로 로그인 성공 확인됨 → 옛 secret 사용 중지·삭제) ② 도메인 B-5~B-8 — 2026-11-04 착수, 진행 중(세부 현황은 Owner 로컬 기록, git 미추적). AWS Free plan 크레딧은 소진 상태라 Phase 3 인프라는 첫날부터 과금된다. ①의 원본 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md) — 회전이 필요한 이유: Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
+> **Owner 작업 현황 (2026-11-07)** — 단계별 절차: [OWNER-ACTIONS-GUIDE.md](OWNER-ACTIONS-GUIDE.md). 완료: `.env.example` 키 추가, GitHub 2FA + ruleset, AWS 계정·루트 MFA·Identity Center·결제 알림(2026-11-07 본인 계정으로 재진행), PR #12~#16 머지, **도메인 위임·ACM·SES 도메인 인증(B-5~B-7, 공개 DNS로 확인)**. **남음**: ① Google OAuth secret 회전 마무리(새 secret으로 로그인 성공 확인됨 → 옛 secret 사용 중지·삭제) ② B-8 SES 프로덕션 액세스 심사 결과 확인(하루 200통이 보이면 아직 샌드박스) ③ 예전 계정에 남은 자원 정리·본인 계정 크레딧 재확인(세부 현황은 Owner 로컬 기록, git 미추적). 크레딧 확인 전까지 Phase 3 인프라는 첫날부터 과금된다고 가정한다. ①의 원본 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md) — 회전이 필요한 이유: Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
 
 ## 3-2. AI 도구 (ADR-009, 2026-10-27 부분 Accepted)
 
@@ -117,7 +117,8 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 **SPEC-006-pre-phase3-hardening — Approved (2026-11-04), 진행 중.** §7 결정 6건 전건 권고안 승인(WhiteNoise §16, ADR-010·`/readyz` 포함). Phase 3 전에 앱이 localhost를 떠나면 처음 깨지는 넷을 닫는다: ① 요청 횟수 제한(#2·#3·#45·#46, 공유 카운터, `NUM_PROXIES` 명시) ② 운영 경로(prod 가드·진입점·정적파일·실제 이미지 기동) ③ readiness `/readyz`(ADR-010 필요) ④ 스모크 여정 15단계 맨바닥 재통과. 명세 작성 중 확인한 추가 위험: **DRF가 `NUM_PROXIES` 미설정 시 `X-Forwarded-For`를 그대로 식별자로 써 IP 제한이 우회 가능**, **캐시가 프로세스별(LocMem)이라 제한이 워커·파드 수만큼 풀림**. 상세 [specs/SPEC-006-pre-phase3-hardening/](../../specs/SPEC-006-pre-phase3-hardening/spec.md).
 
-* **TASK-001 완료 (2026-11-04)** — #2·#3·#45·#46 요청 횟수 제한. 테스트 15개(전체 **439개**). IP 기준 + #3·#45는 계정(이메일) 기준. 카운터는 PostgreSQL 캐시 테이블(`createcachetable` — 마이그레이션 밖, smoke-test §2-1)에 HMAC 키로 둔다. `NUM_PROXIES` 명시(`DRF_NUM_PROXIES`, 기본 0). 구현 중 위험 2건 추가로 닫음: **DatabaseCache 기본 `MAX_ENTRIES=300` 컬링으로 남의 카운터를 지우는 우회**, **스로틀 프레임이 오류 리포트에 비밀번호를 노출할 수 있는 경로**. 변이 15건 전건 검출. 실제 compose 앱에서 10×401 → 11번째 429. 비용 실측: 스로틀 2개 = 요청당 +12 SQL문. ⚠️ 기존 1개 테스트(#45 "DB 쓰기 없음")의 단언 범위를 좁힘 — Owner 확인 대상. 상세 [리뷰 노트 09](../reviews/09-spec-006-hardening.md) §1.
+* **TASK-001 완료 (2026-11-04)** — #2·#3·#45·#46 요청 횟수 제한. 테스트 15개(전체 **439개**). IP 기준 + #3·#45는 계정(이메일) 기준. 카운터는 PostgreSQL 캐시 테이블(`createcachetable` — 마이그레이션 밖, smoke-test §2-1)에 HMAC 키로 둔다. `NUM_PROXIES` 명시(`DRF_NUM_PROXIES`, 기본 0). 구현 중 위험 2건 추가로 닫음: **DatabaseCache 기본 `MAX_ENTRIES=300` 컬링으로 남의 카운터를 지우는 우회**, **스로틀 프레임이 오류 리포트에 비밀번호를 노출할 수 있는 경로**. 변이 15건 전건 검출. 실제 compose 앱에서 10×401 → 11번째 429. 비용 실측: 스로틀 2개 = 요청당 +12 SQL문. 기존 1개 테스트(#45 "DB 쓰기 없음")의 단언 범위를 좁힘 → Owner 조건부 승인(2026-11-07). 상세 [리뷰 노트 09](../reviews/09-spec-006-hardening.md) §1.
+* **TASK-001 후속 (2026-11-07)** — DRF가 스로틀 하나가 거절한 뒤에도 나머지를 평가·기록해, **IP 한도에 막힌 요청도 주소 카운터 행을 만들던** 문제(한 IP가 행을 끝없이 늘려 컬링으로 계정 한도를 지울 수 있었다 — 11-04의 "닫음"은 반만 닫힌 것이었다). 첫 거절에서 멈추는 `StopAtFirstLimit`. 좁힌 테스트의 예외도 #45 카운터 2개로 다시 좁혀 사각지대 제거. 테스트 **440개**, 변이 5건 전건 검출. 리뷰 노트 09 §1-8.
 
 **SPEC-005-api-gaps — 완료·머지 (2026-10-27, PR #12).** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
 
