@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-11-09 — SPEC-006/TASK-005 마무리: 서브에이전트 리뷰 2종 + PR [위임 · 머지는 Owner]
+
+### 작업
+
+Owner가 TASK-005를 Go했다. `security-reviewer`와 `devops-local-platform`을 병렬 백그라운드로 돌렸다(읽기 전용). 지적은 직접 재확인했다. 결정이 필요 없는 것은 고쳤고, 나머지는 결정 항목으로 정리한 뒤 PR을 만들었다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)와 서브에이전트 `security-reviewer`·`devops-local-platform`
+
+### Owner 결정
+
+* TASK-005 진행 승인.
+* prod `DRF_NUM_PROXIES` 가드는 "보안 우선" 방향에 따라 이 PR에 넣었다. 값은 배포 구성이 정한다.
+* 결정 대기 4건: 리뷰 노트 09 §5-2.
+
+### 생성 산출물
+
+* 코드: `config/settings/{prod,base}.py`(가드, 빈 값 처리), `config/tests.py`(+1)
+* 스크립트: `scripts/smoke-journey.sh`
+* 문서: README, smoke-test §2-1·§6, AI-TOOLING-SETUP-GUIDE §7.3, 리뷰 노트 09 §1-8 정정·§5, SPEC-006 tasks·acceptance, STATUS
+
+### 검증 결과
+
+* 기본 검증: 테스트 455개 OK, `check`, `makemigrations --check`, `ruff` 모두 통과.
+* 가드 제거 변이 검출.
+* 스모크 임시 폴더: 700/600, 종료 후 삭제 확인.
+* 복원 검증 명령: `f|f|0`.
+* Dockerfile·compose 변경 0줄.
+
+### 이번에 드러난 것
+
+* **내가 쓴 리뷰 노트의 숫자가 틀렸다.** 분당 한도를 시간으로 환산하지 않아 공격에 필요한 IP를 "수천 개"로 적었다. 실제로는 약 84개다. 리뷰어가 Django 소스와 계산으로 잡았다. 자기 검증만으로는 놓친다.
+* **가장 큰 지적은 코드가 아니라 절차였다.** 같은 절차가 문서 세 곳에 있는데, 한 곳만 고쳤다.
+* liveness와 readiness를 나눴지만, 둘 다 같은 sync 워커가 답한다. DB `connect_timeout`이 없으면 느린 readiness가 liveness까지 죽일 수 있다. ADR-010이 미룬 항목이 실제로는 그 ADR의 목적을 지키는 데 필요했다.
+
+### 잔여 리스크
+
+* 머지 전 결정 4건이 남았다. 특히 `connect_timeout`.
+* Owner 인프라 코멘트 4건이 남았다. 이미지에 `.playwright-mcp/`·`.claude/`가 들어가는 문제 등이다.
+* 스모크 스크립트의 바뀐 부분(임시 폴더·관리자 로그아웃)은 부분 검증만 했다. 전체 재실행은 Owner DB에 계정을 만들기 때문이다. 다음 맨바닥 실행 때 확인한다.
+
+---
+
 ## 2026-11-09 — SPEC-006/TASK-004 후속: 읽기 전용 MCP 역할을 fail closed로 [위임 · Owner 결정 "보안 우선"]
 
 ### 작업

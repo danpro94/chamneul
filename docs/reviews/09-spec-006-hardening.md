@@ -77,7 +77,7 @@ for i in $(seq 11); do curl -s -o /dev/null -w "%{http_code}\n" -b /tmp/j -H "X-
 
 **수정**: `common/throttling.StopAtFirstLimit` — 첫 거절에서 평가를 멈추는 뷰 믹스인. 인증 뷰 4개에 붙였다. IP 스로틀을 먼저 둔다(순서가 바뀌면 다시 행이 생긴다 — 변이 M4가 잡는다).
 
-* **효과**: 한 IP가 만들 수 있는 행 = 그 IP 한도(#45 시간당 10, #3 분당 20). 10만 행을 채우려면 IP가 수천 개 필요해진다. 거절된 요청의 비용도 줄어든다 — 코드상 IP 카운터 읽기 1번으로 끝나고 주소 카운터의 `COUNT(*)`·`INSERT`가 없다(실측은 안 함).
+* **효과**: 한 IP가 만들 수 있는 행 = 그 IP 한도(#45 시간당 10, #3 분당 20). ~~10만 행을 채우려면 IP가 수천 개 필요해진다.~~ **정정(2026-11-09, TASK-005 보안 리뷰 M-2)**: #3은 분당 20이라 IP 하나가 **시간당 1,200행**을 만든다. 주소 행은 1시간 동안 남으므로 10만 행에는 **IP 약 84개**면 된다(100,000 ÷ 1,200). 그 뒤 컬링이 키 순서로 1/3을 지우고, 맨 앞이 `throttle_auth_login_email_*`라 계정 한도가 되풀이해 초기화된다. "수천 개"는 시간당 한도(#45)만 보고 분당 한도(#3)를 시간으로 환산하지 않은 계산 실수였다. 대응은 §5(TASK-005) 결정 사항. 거절된 요청의 비용도 줄어든다 — 코드상 IP 카운터 읽기 1번으로 끝나고 주소 카운터의 `COUNT(*)`·`INSERT`가 없다(실측은 안 함).
 * **바뀐 것 하나**: 두 한도를 동시에 넘으면 `Retry-After`는 먼저 거절한 한도(IP)의 대기 시간이다. 그 뒤 다시 와서 다른 한도에 걸리면 그 대기 시간을 다시 받는다. 429 본문·상태 코드는 그대로다.
 * **남는 위험**: IP가 많은 공격자(봇넷, IPv6 대역)는 여전히 행을 늘릴 수 있다. 그 규모면 Redis(eviction 정책 선택 가능) 또는 WAF가 답이다(Phase 3).
 
@@ -183,6 +183,8 @@ docker run -d --name chamneul-prodcheck --network chamneul_default --env-file .e
 unset SK
 docker rm -f chamneul-prodcheck               # 끝나면 지운다
 ```
+
+> 2026-11-09부터 prod는 `DRF_NUM_PROXIES`도 필수다(§5-1). 위 `docker run`에 `-e DRF_NUM_PROXIES=0`을 더한다 — 로컬에서는 앞에 프록시가 없다.
 
 실제 결과(2026-11-07):
 
@@ -335,3 +337,57 @@ SMOKE_ADMIN_PASSWORD='…' bash scripts/smoke-journey.sh      # 15단계
 | 옛 덤프(11-09 백업)를 연습용 DB에 복원 | exit 0, ERROR 0, password 열 **`false`**, 세션 **`false`**, 사용자 27명. 단 옛 덤프가 끝부분에서 자동 규칙 **1개를 되살린다** → 복원 뒤 스크립트 재실행은 계속 필수 |
 
 대가: 마이그레이션으로 테이블이 생기면 스크립트를 다시 돌려야 MCP에서 보인다(AI-TOOLING-SETUP-GUIDE §7.3 5번). 실행할 때마다 비밀번호가 바뀌므로 `/mcp` Reconnect.
+
+## 5. TASK-005 — 마무리: 서브에이전트 리뷰 2종 (2026-11-09)
+
+`security-reviewer`와 `devops-local-platform`을 병렬 백그라운드로 돌렸다. 대상은 `origin/main...HEAD`(커밋 11개)이고, 둘 다 읽기 전용이다.
+
+| 리뷰 | 판정 | 건수 |
+| --- | --- | --- |
+| security-reviewer | Needs fix, **Blocker·High 없음** | Medium 3 · Low 4 · Info 7 |
+| devops-local-platform | Needs fix, **Blocker 없음** | High 1 · Medium 4 · Low 5 · Info 2 |
+
+리뷰가 지적한 사실은 전부 직접 다시 확인했다(README 문구, `.env.example` 4행, Django `_cull`·`COUNT(*)` 소스, 계산).
+
+### 5-1. 이 PR에서 고친 것 (결정 불필요)
+
+| 출처 | 내용 | 확인 |
+| --- | --- | --- |
+| devops H-1 | **README Quick Start와 smoke-test §6 "DB 안전 초기화"에 `createcachetable`이 없었다** — 이 브랜치가 만든 회귀. 그대로 따르면 #2·#3·#45·#46만 500 | 두 곳에 추가 + 초기화에 역할 스크립트 |
+| devops M-1 | 의존성이 바뀐 뒤 `up -d --build -V app`이 STATUS·리뷰 노트에만 있었다 | README·smoke-test §6에 절차로 |
+| 보안 M-1 | **prod가 `DRF_NUM_PROXIES` 없이 조용히 0으로 뜬다.** ALB 뒤에서는 모두가 ALB 주소 하나로 세어져, 한 명이 전체 가입·로그인을 막는다 | prod 기동 가드(값은 배포가 정한다). 빈 값은 없음으로 본다. 테스트 +1(전체 **455개**), 가드 제거 변이 검출 |
+| 보안 M-2(일부) | 리뷰 노트 §1-8의 "IP 수천 개"는 계산 실수 — 실제 **약 84개** | §1-8 정정 |
+| 보안 L-3(일부) | 일반 복원 절차에 역할 재실행·검증이 없었다(빈 볼륨 순서에만) | §6 복원 코드에 재실행, 검증 `f\|f\|0`(`pg_default_acl` 포함) |
+| 보안 L-4 · devops L-2·L-3 | 스모크 쿠키 항아리가 공유 `/tmp/smoke`(기본 umask)에 남고 관리자 세션을 로그아웃하지 않았다. 덤프 명령에 umask가 없었다 | `mktemp -d` + `umask 077` + `trap` 삭제 + 관리자 로그아웃. 덤프는 `(umask 077; …)`. 폴더 700·파일 600·종료 후 삭제 확인 |
+| devops L-1 | `/readyz` 안내가 "Job 뒤 롤아웃"까지만 있었다 | expand/contract, Job에 `createcachetable`, 이미지 안 `manage.py`는 prod 명시 |
+| devops I-2 | README의 엔드포인트 44·테스트 291이 낡았다 | 48·455, `/readyz` |
+
+### 5-2. Owner 결정 필요
+
+| # | 출처 | 쟁점 | 권고 |
+| --- | --- | --- | --- |
+| 1 | devops M-2 | **DB `connect_timeout`이 없다.** DB가 패킷을 버리는 장애(보안그룹 차단 등)면 `/readyz`가 연결을 기다리며 sync 워커 3개를 다 잡는다. 그러면 같은 워커가 답하는 `/healthz`도 응답하지 못한다. liveness가 실패해 모든 파드가 재시작된다 — **ADR-010이 막으려던 연쇄 그대로다.** ADR-010은 `connect_timeout`을 Phase 3로 미뤘다 | **이 PR에서** `DATABASES OPTIONS connect_timeout: 3`(+ `CONN_HEALTH_CHECKS: True`). `docker compose pause db`로 재현 확인 |
+| 2 | 보안 M-2 | 컬링으로 계정 한도를 지우는 데 IP 약 84개면 된다. 쓰기마다 `SELECT COUNT(*)`도 돈다 | 로그인에 **시간당 IP 한도**를 하나 더(예: 200회/시간 → 필요한 IP 약 500개). 근본 해결은 Phase 3 Redis. 결정 2의 수치 변경이라 Owner 몫 |
+| 3 | 보안 M-3 | `.env.example` 4행 `DJANGO_SETTINGS_MODULE=config.settings.local` — 이 파일을 배포 환경변수로 그대로 쓰면 `wsgi.py`의 prod 기본값이 무력화된다(DEBUG=True, 콘솔 메일, prod 가드 미실행). compose는 `docker-compose.yml:31`에서 이미 지정하므로 이 줄은 필요 없다 | **Owner가 그 줄 삭제**(Owner 파일). `local.py`의 배포 환경 감지는 Phase 3에 |
+| 4 | 보안 L-3 | 역할 스크립트는 재실행 때 금지 목록(비밀번호 열·세션) 밖의 **새 테이블을 전부** 다시 연다 — fail closed는 다음 재실행까지만 | 허용 목록 방식은 ADR-009 도구 설계라 Phase 3 전 검토. 그때까지 테이블을 추가하는 마이그레이션은 스크립트 재실행 전에 금지 목록을 확인 |
+
+### 5-3. Owner 인프라 파일 — 코멘트만 (devops)
+
+| # | 파일 | 권고 |
+| --- | --- | --- |
+| M-3 | docker-compose.yml | 나중에 prod 프로필을 만들 때 `.:/app` bind mount를 빼야 한다. 그대로 두면 매니페스트가 가려져 §3-2의 "Admin 500 + 헬스 200"이 재현된다. venv를 `/app` 밖(`UV_PROJECT_ENVIRONMENT=/opt/venv`)에 두면 익명 볼륨과 `-V` 함정이 함께 사라진다 |
+| M-4 | .dockerignore | `COPY . .`가 `.playwright-mcp/`(로컬 화면 내용), `.claude/`(로컬 설정), `specs/`·`scripts/`·`README_AIUSAGE.md`까지 이미지에 넣는다. 레지스트리에 올리기 전에 제외해야 한다 |
+| L-4 | Dockerfile | `CMD`에 `--no-control-socket`(갭 13, gunicorn 26.0.0에 옵션 있음 확인). `/app/logs` 생성 줄은 "로그는 stderr" 원칙과 맞지 않는다 |
+| L-5 | Dockerfile | 런타임 스테이지에 `ENV DJANGO_SETTINGS_MODULE=config.settings.prod`. 이미지 안 `manage.py`(Job·`check --deploy`)가 local로 도는 것을 막는다. compose는 local로 덮어쓴다 |
+
+### 5-4. Phase 3 체크리스트로 (기록만)
+
+* 보안 L-1: 메일 백엔드를 허용 목록으로(SMTP·SES만), `SECRET_KEY` 길이·placeholder 검사, `GOOGLE_OAUTH_REDIRECT_URI`의 prod http 기본값.
+* 보안 L-2: ALB 리스너 규칙으로 외부에서 오는 `/healthz`·`/readyz`를 막는다(대상 그룹 헬스체크는 영향 없음).
+* devops I-1: DB 장애 중에는 `/readyz` 503마다 `ERROR django.request Service Unavailable: /readyz`가 찍힌다(코드상 추정). ERROR 알람 규칙에 반영한다.
+* 의도적으로 남긴 위험: 계정 잠금형 DoS, 동시 요청 시 카운터 과소집계(DRF 스로틀의 읽기→쓰기가 원자적이지 않음), IPv6 /64 집계, 메일 발송을 요청 경로 밖으로.
+
+### 5-5. DevOps 설명 포인트
+
+* **리뷰가 잡은 가장 큰 것은 코드가 아니라 절차였다.** `createcachetable`을 §2-1에는 넣었다. 하지만 README와 초기화 절차에는 넣지 않았다. 같은 절차가 문서 여러 곳에 있으면, 하나를 바꿀 때 나머지가 낡는다.
+* **분리는 자원까지 분리돼야 분리다.** liveness와 readiness를 나눠도 같은 sync 워커 3개가 둘 다 답한다. 느린 readiness 하나가 liveness를 함께 죽일 수 있다(5-2 #1).

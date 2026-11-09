@@ -56,7 +56,13 @@ docker compose exec app python manage.py createcachetable
 
 요청 횟수 카운터(api.md §1.10)는 DB 테이블 `django_cache`에 쌓인다. 이 테이블은 **마이그레이션이 아니라** `createcachetable`이 만든다. 빠뜨리면 다른 API는 멀쩡한데 **#2·#3·#45·#46만 500**이 나고, 로그에 `relation "django_cache" does not exist`가 찍힌다(prod도 2026-11-09부터 같다 — §5 갭 12 해소). 두 번 실행해도 안전하다(이미 있으면 `already exists`). Phase 3에서는 k8s 마이그레이션 Job에 `migrate` 다음 줄로 넣는다(Owner 손코딩).
 
-> **`/readyz`는 마이그레이션 전에도 200이다 (2026-11-09 실측).** readiness는 "DB에 붙는가"(`SELECT 1`)만 본다. 스키마가 준비됐는지는 보지 않는다. 그래서 Phase 3에서는 **마이그레이션 Job이 끝난 뒤에** 새 버전의 롤아웃이 시작되게 짠다(Owner 손코딩 매니페스트).
+> **`/readyz`는 마이그레이션 전에도 200이다 (2026-11-09 실측).** readiness는 "DB에 붙는가"(`SELECT 1`)만 본다. 스키마가 준비됐는지는 보지 않는다. 그래서 Phase 3에서는 다음 세 가지를 지킨다(Owner 손코딩 매니페스트).
+>
+> * **마이그레이션 Job이 끝난 뒤에** 새 버전의 롤아웃이 시작되게 짠다.
+> * Job에는 `migrate` 다음 줄로 `createcachetable`을 넣는다.
+> * 롤링 업데이트 동안은 **옛 파드가 새 스키마를 본다.** 그래서 컬럼 삭제·이름 변경은 한 번에 하지 않는다. 먼저 새 것을 더하고(expand), 옛 코드가 다 빠진 다음 배포에서 지운다(contract).
+>
+> 이미지 안에서 `manage.py`를 직접 부를 때(Job·`migrate --check`)는 `DJANGO_SETTINGS_MODULE=config.settings.prod`를 명시한다. `manage.py`의 기본값은 local이다.
 
 ### 2-2. 관리자 부트스트랩
 
@@ -271,15 +277,16 @@ docker compose exec app python manage.py shell -c "from django.core.cache import
 ### DB 백업 (볼륨 삭제 전 필수)
 
 ```bash
-# 자격증명을 화면에 찍지 않고 컨테이너 환경변수를 그대로 쓴다
-docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
-  > ~/chamneul-backup-$(date +%Y%m%d).sql
+# 자격증명을 화면에 찍지 않고 컨테이너 환경변수를 그대로 쓴다.
+# umask 077: 덤프에는 비밀번호 해시와 살아 있는 세션이 들어 있다 — 나만 읽게(600) 만든다.
+(umask 077; docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
+  > ~/chamneul-backup-$(date +%Y%m%d).sql)
 
 # 검증: 정상 종료 마커가 있어야 한다
 grep -c "PostgreSQL database dump complete" ~/chamneul-backup-*.sql
 ```
 
-> **덤프를 저장소에 두지 말 것.** CLAUDE.md §10이 로컬 DB 덤프를 커밋 금지 대상으로 규정한다. 프로젝트 디렉터리 바깥에 둔다.
+> **덤프를 저장소에 두지 말 것.** CLAUDE.md §10이 로컬 DB 덤프를 커밋 금지 대상으로 규정한다. 프로젝트 디렉터리 바깥에 둔다. 다 쓴 덤프는 지운다(`rm ~/chamneul-backup-YYYYMMDD.sql`) — 로컬 개발 데이터라도 비밀번호 해시와 세션 키가 들어 있다.
 
 ### 복원
 
@@ -288,9 +295,20 @@ docker compose stop app          # 앱이 잡은 연결 때문에 --clean의 DRO
 cat ~/chamneul-backup-YYYYMMDD.sql | \
   docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 docker compose start app
+./.claude/mcp/setup-postgres-ro-role.sh   # 복원할 때마다 — 이유는 아래 표
 ```
 
 `ON_ERROR_STOP=1`이 없으면 **부분 복원이 성공처럼 보인다** — psql은 기본적으로 오류를 만나도 계속 진행한다.
+
+복원 뒤 읽기 전용 역할 확인(`f|f|0`이어야 한다 — 비밀번호 열 읽기 불가 · 세션 읽기 불가 · 자동 읽기 규칙 없음):
+
+```bash
+docker compose exec -T db sh -c 'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT has_column_privilege('chamneul_ro', 'accounts_user', 'password', 'SELECT'),
+       has_table_privilege('chamneul_ro', 'django_session', 'SELECT'),
+       (SELECT count(*) FROM pg_default_acl);
+SQL
+```
 
 **빈 볼륨(`down -v` 뒤)에 복원할 때 — 순서가 있다 (2026-11-09 실측, SPEC-006 TASK-004).** 덤프에는 읽기 전용 MCP 역할(`chamneul_ro`)에 주는 권한 34줄이 들어 있다. 그런데 **역할 자체는 덤프에 없다**(역할은 DB가 아니라 클러스터에 속한다).
 
@@ -300,16 +318,26 @@ docker compose start app
 | 스크립트로 역할을 먼저 만들고 복원 | exit 0. 그러나 **읽기 전용 역할이 비밀번호 해시와 세션을 읽을 수 있게 됐다** — 예전 스크립트의 "새 테이블 자동 읽기 허용"이 복원으로 다시 만들어진 테이블 전부에 적용됐기 때문. *같은 날 그 규칙을 없앤 스크립트로 다시 재 보니, 옛 덤프를 복원해도 경계는 지켜졌다. 다만 옛 덤프가 끝부분에서 규칙을 되살린다* |
 | **맞는 순서** | `up -d` → `migrate` → `./.claude/mcp/setup-postgres-ro-role.sh` → 위 복원 → **스크립트 한 번 더** → `/mcp` Reconnect |
 
-마지막 재실행은 옛 덤프가 되살린 규칙을 회수하고 열 단위 권한을 다시 맞춘다. 확인 명령은 [AI-TOOLING-SETUP-GUIDE §7.3](00-project/AI-TOOLING-SETUP-GUIDE.md) 4번이고, 결과는 `f|f`여야 한다.
+마지막 재실행은 옛 덤프가 되살린 규칙을 회수하고 열 단위 권한을 다시 맞춘다. 확인은 바로 위의 `f|f|0`이다. 이 재실행은 빈 볼륨에서만이 아니라 **기존 DB에 복원할 때도** 똑같이 필요하다 — 옛 덤프는 어디에 복원하든 규칙을 되살린다.
 
 ### DB 안전 초기화
 
 ```bash
-docker compose down -v          # 볼륨 삭제
+docker compose down -v          # 볼륨 삭제 — 지우기 전에 위의 백업
 docker compose up -d
 docker compose exec app python manage.py migrate
+docker compose exec app python manage.py createcachetable   # 빠뜨리면 #2·#3·#45·#46만 500 (§2-1)
 docker compose exec -it app python manage.py createsuperuser
+./.claude/mcp/setup-postgres-ro-role.sh                     # 읽기 전용 MCP 역할 → /mcp Reconnect
 ```
+
+### 패키지가 바뀐 뒤 앱 다시 만들기
+
+```bash
+docker compose up -d --build -V app
+```
+
+`-V`(`--renew-anon-volumes`)가 없으면 예전 컨테이너의 익명 볼륨 `/app/.venv`가 새 컨테이너에 다시 붙어 **새 이미지의 패키지를 가린다**. 2026-11-07 WhiteNoise를 추가했을 때 실제로 `ModuleNotFoundError: No module named 'whitenoise'`로 앱이 멈췄다(리뷰 노트 09 §3-5).
 
 ### ⚠️ 화면 캡처 전 확인
 

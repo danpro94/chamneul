@@ -363,9 +363,10 @@ claude mcp add --scope local postgres-ro -- ~/projects/personal/chamneul/.claude
    ```bash
    docker compose exec -T db sh -c 'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
    SELECT has_column_privilege('chamneul_ro', 'accounts_user', 'password', 'SELECT'),
-          has_table_privilege('chamneul_ro', 'django_session', 'SELECT');
+          has_table_privilege('chamneul_ro', 'django_session', 'SELECT'),
+          (SELECT count(*) FROM pg_default_acl);
    SQL
-   # f|f 여야 한다 (비밀번호 열·세션 테이블 모두 읽기 불가)
+   # f|f|0 이어야 한다 (비밀번호 열 읽기 불가 · 세션 읽기 불가 · 자동 읽기 규칙 없음)
    ```
    빈 볼륨에 복원할 때의 순서는 smoke-test §6 "복원".
 5. **마이그레이션으로 테이블이 새로 생기면 스크립트를 다시 실행한다** (2026-11-09부터). 새 테이블은 자동으로 읽히지 않는다(fail closed). 앞으로 민감한 테이블(예: 토큰 저장)이 생겨도 이 역할이 저절로 읽지 못하게 하기 위해서다. 그 테이블도 막아야 하면 스크립트의 `REVOKE` 줄에 추가한다. 실행하면 비밀번호도 바뀌므로 `/mcp` Reconnect.

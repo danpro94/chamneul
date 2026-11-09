@@ -48,3 +48,13 @@ if EMAIL_BACKEND in _MAIL_KEPT_ON_SERVER:
 # http page can be altered in transit to read the token.
 if not PASSWORD_RESET_URL.startswith("https://"):  # noqa: F405
     raise ImproperlyConfigured("PASSWORD_RESET_URL must be an https:// URL in production.")
+
+# --- Client IP for rate limits (SPEC-006, TASK-005 security review M-1) -----
+# No guessing: behind a load balancer, 0 makes every user one IP (the balancer's)
+# so one attacker can use up everyone's login and signup limits; too high lets
+# clients forge X-Forwarded-For. The deployment knows the number (1 behind one ALB).
+if not os.environ.get("DRF_NUM_PROXIES"):
+    raise ImproperlyConfigured(
+        "DRF_NUM_PROXIES must be set in production: how many proxies sit in front "
+        "of the app (0 if none, 1 behind one ALB)."
+    )

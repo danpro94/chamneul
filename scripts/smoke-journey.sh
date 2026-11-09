@@ -6,8 +6,10 @@
 #
 # 전제: 컨테이너가 떠 있고 migrate + createcachetable + createsuperuser가 끝나 있을 것 (§2).
 # 매 실행마다 새 계정을 만들므로 반복 실행해도 409가 나지 않는다.
-# 단, 요청 횟수 제한(api.md §1.10)은 실행 사이에도 남는다 — 한 시간에 네 번째 실행은
-# 가입 한도(IP 10회/시간, 실행당 3회)에 걸린다. 카운터 비우기: smoke-test §6.
+# 단, 요청 횟수 제한(api.md §1.10)은 실행 사이에도 남는다. 로컬은 모든 요청이 같은 IP다.
+#   - 로그인 IP 한도 20회/분, 실행당 14회 → 1분 안에 다시 돌리면 15단계가 일찍 429를 받는다
+#   - 가입 IP 한도 10회/시간, 실행당 3회 → 한 시간에 네 번째 실행이 막힌다
+# 다시 돌리기 전에 1분 이상 기다리거나 카운터를 비운다(smoke-test §6).
 # 관리자 비밀번호는 환경변수로 받는다 — 자격증명을 저장소에 커밋하지 않는다.
 # 13단계는 local의 콘솔 메일에서 재설정 링크를 읽는다(docker compose logs) — 토큰은
 # 살아 있는 링크라 화면에 찍지 않는다(§5 갭 10).
@@ -15,7 +17,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.."   # 13단계의 docker compose logs가 compose 파일을 찾도록
 B=http://localhost:8000/api/v1
 RUN=${RUN:-$(date +%H%M%S)}   # 재실행 가능하도록 계정을 매번 새로 만든다
-J=/tmp/smoke; rm -rf $J; mkdir -p $J
+# 쿠키 항아리에는 관리자 세션이 들어 있다 — 나만 읽는 임시 폴더에 두고, 끝나면 지운다.
+umask 077
+J=$(mktemp -d "${TMPDIR:-/tmp}/chamneul-smoke.XXXXXX")
+trap 'rm -rf "$J"' EXIT
 
 # 각 배우는 자기 쿠키 항아리를 갖는다 (세션 3개 동시 유지).
 csrf() { grep csrftoken "$1" | awk '{print $7}'; }
@@ -195,3 +200,7 @@ T=$(csrf $J/ratelimit.jar)
 C=$(curl -s -D $J/rl.headers -o $J/rl.body -c $J/ratelimit.jar -b $J/ratelimit.jar -X POST \
      -H 'Content-Type: application/json' -H "X-CSRFToken: $T" -d "$RL" -w '%{http_code}' "$B/auth/login")
 echo "11번째 → HTTP $C  $(grep -i '^retry-after' $J/rl.headers | tr -d '\r')  code=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["error"]["code"])' $J/rl.body 2>/dev/null)"
+
+step "정리 — 관리자 로그아웃"
+R=$(req $J/admin.jar POST /auth/logout)
+echo "관리자 #4 HTTP $(code "$R")  (세션을 남기지 않는다 — 쿠키 폴더도 종료 때 지워진다)"

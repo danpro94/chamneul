@@ -230,7 +230,8 @@ REST_FRAMEWORK = {
     # header (local: nothing sits in front of Django), 1 behind one ALB. Left
     # unset, DRF trusts the whole client-supplied header — a new "IP" per
     # request, i.e. no IP limit at all.
-    "NUM_PROXIES": int(os.environ.get("DRF_NUM_PROXIES", "0")),
+    # An empty value counts as unset. prod.py refuses to start without one.
+    "NUM_PROXIES": int(os.environ.get("DRF_NUM_PROXIES") or "0"),
 }
 
 # --- Logging (SPEC-006, smoke-test §5 갭 12) ----------------------------

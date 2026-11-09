@@ -131,6 +131,7 @@ PROD_ENV = {
     "DJANGO_ALLOWED_HOSTS": "chamneul.com",
     "PASSWORD_RESET_URL": "https://chamneul.com/reset-password",
     "DJANGO_EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+    "DRF_NUM_PROXIES": "1",
 }
 
 
@@ -190,6 +191,16 @@ class ProdStartupGuardTests(SimpleTestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("ImproperlyConfigured", result.stderr)
                 self.assertIn("PASSWORD_RESET_URL", result.stderr)
+
+    def test_refuses_to_guess_how_many_proxies_sit_in_front(self):
+        """빠뜨리면 0 — ALB 뒤에서는 모든 사용자가 ALB 주소 하나로 세어져, 공격자
+        한 명이 전체 가입·로그인 한도를 다 쓸 수 있다(TASK-005 보안 리뷰 M-1).
+        값은 배포 구성이 정하므로 명시하게만 한다. 빈 값을 빠뜨림으로 본다."""
+        result = run_python(*self.BOOT, **{**PROD_ENV, "DRF_NUM_PROXIES": ""})
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ImproperlyConfigured", result.stderr)
+        self.assertIn("DRF_NUM_PROXIES", result.stderr)
 
 
 class EntryPointDefaultTests(SimpleTestCase):

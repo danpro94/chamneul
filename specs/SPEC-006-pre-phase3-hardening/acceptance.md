@@ -46,9 +46,9 @@ TEST_CRITERIA.md §2·§3을 SPEC-006에 적용한 판정 기준. AC-1~AC-3은 D
 
 ## AC-5. 회귀 없음 (전 TASK)
 
-- [ ] `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed
+- [x] `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed — 2026-11-09, 테스트 455개 OK
 - [x] 기존 **424개** 테스트가 하나도 깨지지 않는다 — TASK-001 시점: 424개 통과. 단 1개(`PasswordResetRequestTests.test_changes_nothing_in_the_database`)는 결정 1(카운터를 DB 캐시에 쓴다)과 정면으로 부딪혀 **단언 범위를 좁혔다**(캐시 테이블 쓰기만 예외, 나머지 쓰기 0은 유지). **Owner 조건부 승인 2026-11-07**("운영에 치명적 영향이 없으면") — 예외를 #45 카운터 2개(`throttle_password_reset_email`·`_ip`)로 다시 좁혀 사각지대를 없앴다(리뷰 노트 09 §1-8)
-- [ ] Dockerfile·docker-compose 변경 없음
+- [x] Dockerfile·docker-compose 변경 없음 — `git diff origin/main...HEAD -- Dockerfile docker-compose*.yml .dockerignore` 0줄 (2026-11-09)
 
 ## 종료 판정
 

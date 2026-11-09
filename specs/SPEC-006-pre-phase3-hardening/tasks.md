@@ -55,6 +55,6 @@
 
 ## TASK-005 — 마무리
 
-* [ ] api.md(#48 `/readyz`, 429 정책), smoke-test §5(갭 1·7 해소), STATUS, 리뷰 노트 09, AIUSAGE
-* [ ] `security-reviewer`(스로틀·헬스 미들웨어) + `devops-local-platform`(운영 경로) 서브에이전트 리뷰
-* [ ] PR → 머지(Owner)
+* [x] api.md(#48 `/readyz`, 429 정책), smoke-test §5(갭 1·7 해소), STATUS, 리뷰 노트 09, AIUSAGE — api.md·갭 1·7은 TASK-001·002에서 이미 반영. README의 낡은 숫자(44·291)도 갱신
+* [x] `security-reviewer`(스로틀·헬스 미들웨어) + `devops-local-platform`(운영 경로) 서브에이전트 리뷰 — 2026-11-09 병렬. **Blocker 0**. 결정 불필요 항목은 이 PR에서 수정(prod `DRF_NUM_PROXIES` 가드 포함, 테스트 455개). 결정 4건·Owner 인프라 코멘트 4건은 리뷰 노트 09 §5-2·§5-3
+* [ ] PR → 머지(Owner) — PR 생성 2026-11-09. 머지 전에 §5-2 결정(특히 #1 `connect_timeout`)
