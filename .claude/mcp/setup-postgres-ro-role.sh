@@ -10,6 +10,13 @@
 # accounts_user.password column and django_session. Writes are refused by
 # missing privileges (the real boundary) and, as a second layer, by
 # default_transaction_read_only. Each statement is capped at 5 s.
+#
+# Tables created later are NOT readable until this script runs again (fail
+# closed, Owner decision 2026-11-09). An automatic "new tables are readable"
+# default would expose any future sensitive table — and a --clean restore
+# recreates every table, so it also handed this role the password hashes and
+# sessions (SPEC-006 TASK-004, review note 09 §4-3). Re-run after a migration
+# that adds tables, and after every restore.
 set -eu
 cd "$(dirname "$0")/../.."
 
@@ -38,7 +45,9 @@ ALTER ROLE chamneul_ro SET statement_timeout = '5s';
 GRANT CONNECT ON DATABASE chamneul TO chamneul_ro;
 GRANT USAGE ON SCHEMA public TO chamneul_ro;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO chamneul_ro;
-ALTER DEFAULT PRIVILEGES FOR ROLE chamneul IN SCHEMA public GRANT SELECT ON TABLES TO chamneul_ro;
+-- Removes the default an older version of this script set (and that a restore
+-- of an older dump brings back). A no-op when it is not there.
+ALTER DEFAULT PRIVILEGES FOR ROLE chamneul IN SCHEMA public REVOKE SELECT ON TABLES FROM chamneul_ro;
 REVOKE SELECT ON django_session FROM chamneul_ro;
 REVOKE SELECT ON accounts_user FROM chamneul_ro;
 DO $$

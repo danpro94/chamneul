@@ -12,7 +12,7 @@
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
 | 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현·머지 완료(PR #12)** |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001~004 완료**(001 후속 11-07, 003 후속 11-09 — 운영 오류 로깅, 004 맨바닥 15단계 11-09) **→ 다음 TASK-005**(마무리 — 서브에이전트 리뷰 2종·PR). 결정 대기: 읽기 전용 MCP 역할의 "새 테이블 자동 읽기 허용" 제거 여부(리뷰 노트 09 §4-7) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
+| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001~004 완료**(001 후속 11-07, 003 후속 11-09 — 운영 오류 로깅, 004 맨바닥 15단계 11-09) **→ TASK-005 진행 중**(마무리 — 서브에이전트 리뷰 2종·PR, Owner Go 2026-11-09). 읽기 전용 MCP 역할은 Owner 결정(보안 우선)으로 fail closed로 바꿨다(리뷰 노트 09 §4-8) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -107,7 +107,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 | --- | --- |
 | Dependabot alerts·security updates / secret scanning·push protection | **켜짐** (저장소 설정) · 버전 업데이트 `.github/dependabot.yml`(uv·docker·docker-compose) |
 | Semgrep MCP (`semgrep==1.182.1`, local) | **연결됨** · 기준선 스캔 0건(오탐 1건 사유와 함께 억제) |
-| PostgreSQL 읽기 전용 MCP (Google MCP Toolbox 1.15.0, local) | 역할 `chamneul_ro`(SELECT만, 비밀번호·세션 제외) · 재생성 `.claude/mcp/setup-postgres-ro-role.sh` · **2026-11-09 재생성 → `/mcp` Reconnect 대기**(비밀번호 교체). 복원 뒤에는 스크립트 재실행 필수(AI-TOOLING-SETUP-GUIDE §7.3) |
+| PostgreSQL 읽기 전용 MCP (Google MCP Toolbox 1.15.0, local) | 역할 `chamneul_ro`(SELECT만, 비밀번호·세션 제외) · 재생성 `.claude/mcp/setup-postgres-ro-role.sh` · **2026-11-09 재생성·fail closed 전환**(새 테이블은 스크립트를 다시 돌려야 보인다) → `/mcp` Reconnect 대기(비밀번호 교체). 복원 뒤·테이블 추가 마이그레이션 뒤 스크립트 재실행(AI-TOOLING-SETUP-GUIDE §7.3) |
 | Playwright MCP | **이미 설치됨**(claude.ai 동기화 공식 플러그인, `@latest`) |
 | CodeQL · Sentry MCP | Phase 3 승인 예정 |
 | hooks · GitHub MCP · Context7 · 내장 리뷰 명령(항목 1~4) | 미결정 |

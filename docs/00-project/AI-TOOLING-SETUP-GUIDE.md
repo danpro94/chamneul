@@ -348,6 +348,7 @@ claude mcp add --scope local postgres-ro -- ~/projects/personal/chamneul/.claude
 | UPDATE·DELETE·CREATE | ❌ read-only transaction |
 | **읽기 전용 모드를 끄고** INSERT·UPDATE | ❌ **permission denied** — 모드가 아니라 권한이 막는다 |
 | 쿼리 하나 5초 초과 | 중단(statement_timeout) |
+| 스크립트 실행 **뒤에** 생긴 테이블 읽기 | ❌ — 스크립트를 다시 돌려야 보인다 (2026-11-09부터, 아래 7.3 5번) |
 
 ### 7.3 Owner가 할 일
 
@@ -358,7 +359,7 @@ claude mcp add --scope local postgres-ro -- ~/projects/personal/chamneul/.claude
    cd ~/projects/personal/chamneul && ./.claude/mcp/setup-postgres-ro-role.sh
    ```
    그다음 `/mcp`에서 `postgres-ro`를 **Reconnect**.
-4. **⚠️ 백업을 복원했을 때는 복원 뒤에 이 스크립트를 한 번 더 실행한다 (2026-11-09 실측).** 스크립트가 거는 "새 테이블은 자동으로 읽기 허용"(`ALTER DEFAULT PRIVILEGES`)이 복원 때 다시 만들어지는 `accounts_user`·`django_session`에도 적용된다. 그 결과 이 역할이 **비밀번호 해시와 세션을 읽을 수 있게 된다**. 덤프에는 원래의 열 단위 권한만 있고, "테이블 전체 권한 회수"는 기록되지 않는다. 스크립트를 다시 돌리면 회수 후 재부여로 경계가 돌아온다. 확인:
+4. **⚠️ 백업을 복원했을 때는 복원 뒤에 이 스크립트를 한 번 더 실행한다 (2026-11-09 실측).** 예전 스크립트는 "새 테이블은 자동으로 읽기 허용"(`ALTER DEFAULT PRIVILEGES`)을 걸었다. 그 규칙이 복원 때 다시 만들어지는 `accounts_user`·`django_session`에도 붙었다. 그 결과 이 역할이 **비밀번호 해시와 세션을 읽을 수 있었다**. 같은 날 Owner 결정(보안 우선)으로 그 규칙을 없앴다. 지금 스크립트는 규칙을 걸지 않고, 남아 있으면 회수한다. 그래도 **2026-11-09 이전에 뜬 덤프**는 끝부분에 그 규칙을 담고 있어 복원하면 규칙이 되살아난다(실측). 그래서 복원 뒤 재실행은 계속 필수다. 확인:
    ```bash
    docker compose exec -T db sh -c 'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
    SELECT has_column_privilege('chamneul_ro', 'accounts_user', 'password', 'SELECT'),
@@ -367,6 +368,7 @@ claude mcp add --scope local postgres-ro -- ~/projects/personal/chamneul/.claude
    # f|f 여야 한다 (비밀번호 열·세션 테이블 모두 읽기 불가)
    ```
    빈 볼륨에 복원할 때의 순서는 smoke-test §6 "복원".
+5. **마이그레이션으로 테이블이 새로 생기면 스크립트를 다시 실행한다** (2026-11-09부터). 새 테이블은 자동으로 읽히지 않는다(fail closed). 앞으로 민감한 테이블(예: 토큰 저장)이 생겨도 이 역할이 저절로 읽지 못하게 하기 위해서다. 그 테이블도 막아야 하면 스크립트의 `REVOKE` 줄에 추가한다. 실행하면 비밀번호도 바뀌므로 `/mcp` Reconnect.
 
 ### 7.4 일상 사용
 
