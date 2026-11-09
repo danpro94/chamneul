@@ -217,7 +217,46 @@ docker rm -f chamneul-prodcheck               # 끝나면 지운다
 
 ### 3-7. 다음 개선 — 이번에 새로 발견한 것 (결정 필요)
 
-* **운영에서 500의 원인이 로그에 남지 않는다.** 프로젝트에 `LOGGING` 설정이 없어 Django 기본값을 쓴다. 기본값은 `DEBUG=False`에서 요청 오류를 **관리자 메일로만** 보내는데(`mail_admins`), `ADMINS`가 비어 있으니 아무 데도 남지 않는다. 반대 사례 이미지에서 500이 3번 났는데 컨테이너 로그에는 액세스 로그의 `500`만 있었고 트레이스백은 0줄이었다. CloudWatch로 가도 같다. → `LOGGING`으로 오류를 stdout에 보내는 설정(Django 내장, 패키지 없음). **SPEC-006에 넣을지 Owner 결정.**
+* **운영에서 500의 원인이 로그에 남지 않는다.** 프로젝트에 `LOGGING` 설정이 없어 Django 기본값을 쓴다. 기본값은 `DEBUG=False`에서 요청 오류를 **관리자 메일로만** 보내는데(`mail_admins`), `ADMINS`가 비어 있으니 아무 데도 남지 않는다. 반대 사례 이미지에서 500이 3번 났는데 컨테이너 로그에는 액세스 로그의 `500`만 있었고 트레이스백은 0줄이었다. CloudWatch로 가도 같다. → `LOGGING`으로 오류를 stdout에 보내는 설정(Django 내장, 패키지 없음). **SPEC-006에 넣을지 Owner 결정.** → **Owner 승인(2026-11-09), 해소 — 3-8.**
 * **gunicorn 26의 제어 소켓이 홈 디렉터리를 찾는다.** gunicorn 25.1부터 `gunicornc`용 제어 소켓을 `$HOME/.gunicorn/gunicorn.ctl`에 만든다. 이미지의 `appuser`는 `--no-create-home`이라 매 기동마다 ERROR 한 줄이 남는다. 서비스는 정상이지만, ERROR 로그 알람을 걸면 오탐이 된다. 쓰지 않는 기능이므로 `CMD`에 `--no-control-socket`(Dockerfile — **Owner 영역**).
 * `GOOGLE_OAUTH_REDIRECT_URI`도 `PASSWORD_RESET_URL`처럼 prod에서 `http://localhost` 기본값으로 조용히 돈다. 콜백이 실패할 뿐 유출은 없어 이번 범위 밖 — Phase 3 배포 체크리스트.
 * `.env.example`(Owner 영역)에 `DJANGO_EMAIL_BACKEND`(선택, 기본 SMTP)와 "prod는 `PASSWORD_RESET_URL`이 https 필수"를 적을 것을 권한다.
+
+### 3-8. 후속 (2026-11-09) — 운영 500의 원인을 컨테이너 로그에 (갭 12)
+
+**Owner 승인 2026-11-09**("Production에서 500 에러의 원인이 로그에 남도록 SPEC-006에 넣기").
+
+| 무엇 | 어떻게 |
+| --- | --- |
+| 출력 위치 | **stderr 하나**. 컨테이너 런타임이 모은다(`docker logs`, Phase 3 CloudWatch). 컨테이너 안에 로그 파일을 두지 않는다 |
+| `django` 로거 | Django 기본의 "DEBUG일 때만 콘솔 + `mail_admins`" 쌍을 **stderr 핸들러 하나로 대체**. 루트로 전파하지 않는다 — 전파하면 모든 줄이 두 번 찍힌다(변이 L2·L4가 고정) |
+| `django.request` | **ERROR 이상만**(5xx와 트레이스백). 4xx는 액세스 로그(gunicorn·runserver)에 상태 코드와 함께 이미 있다. Django가 4xx마다 한 줄씩 더 쓰면 양만 늘고, 운영에서는 **누구나 그 양을 늘릴 수 있다**(CloudWatch 수집 비용) |
+| 루트 | WARNING 이상 → stderr. 앱 로거(`accounts.emails`, `config.health`)는 지금까지 파이썬의 최후 수단 출력으로만 보였다 — 이제 같은 형식(`시각 레벨 로거 메시지`)으로 나온다 |
+| 테스트 설정 | `django.request`를 CRITICAL로 — 테스트는 5xx를 일부러 만든다(OAuth 502, readyz 503 …). 예상 밖 예외는 테스트 클라이언트가 다시 던지므로 트레이스백과 함께 테스트가 실패한다. 실제 설정은 `ErrorLoggingTests`가 새 인터프리터에서 본다 |
+
+**근거**:
+
+* 기본 검증: 테스트 **454개 OK**(새 1개 — prod·local 두 환경), `check` 0 issues, `makemigrations --check` No changes, `ruff` passed.
+* 변이 4건 전부 검출: L1 종전과 같은 빈 설정 / L2 `django` 로거 전파 / L3 4xx 줄을 남김 / L4 `django` 로거 없이 루트만.
+* 처음에는 L1을 `LOGGING` 삭제로 만들었다. 그러면 test.py가 `LOGGING["loggers"]`를 못 읽어 설정 로딩에서 죽는다. **"검출"이지만 틀린 이유였다**(결과 줄이 `?`). 종전과 동작이 같은 빈 설정으로 바꿔 다시 쟀다.
+* 테스트 출력은 609줄 → 13줄. 남은 4줄은 CSRF 거부 WARNING이다. 일부러 거부를 만드는 테스트이고, 운영에서도 보안 신호라 남긴다.
+
+**실제 이미지**(compose 무수정, 테이블이 없는 `postgres` DB에 연결 — "migrate를 안 돌린 배포"):
+
+```text
+세션 쿠키 + /api/v1/users/me → 500     쿠키 없이 → 401     없는 경로 → 404
+ERROR django.request Internal Server Error: /api/v1/users/me
+django.db.utils.ProgrammingError: relation "django_session" does not exist
+'Unauthorized' 줄 0 · 'Not Found' 줄 0  (401·404는 액세스 로그에만)
+```
+
+이 500 하나에 ERROR 기록이 **두 개** 남았다. 핸들러 중복이 아니라 **예외가 두 번 난 것**이다 — ① 뷰의 인증 단계(`perform_authentication`)가 세션을 읽다 실패하고 ② 그 500 응답을 처리하던 `SessionMiddleware.process_response`가 세션을 다시 읽다 또 실패했다(기록마다 프레임으로 확인). 테스트는 예외 하나 = 트레이스백 하나를 고정한다.
+
+**DevOps 설명 포인트**: "로그가 어디로 가는가"는 설정이 정한다. Django 기본은 개발자 모드(DEBUG)를 전제로 짜여 있다. 운영 모드의 기본 목적지는 메일이었다. 컨테이너 세계의 표준은 **stdout/stderr 하나, 수집은 런타임**(12-factor의 logs)이다.
+
+**보안 노트**: 트레이스백에는 예외 메시지가 들어간다. DB 오류 메시지에는 값이 섞일 수 있다(예: 중복 키 오류의 이메일). 로그도 개인정보 처리 대상이다 — C-1 처리방침의 접속기록 보관 조항과 Phase 3 CloudWatch 보존 기간을 함께 정한다. 지역변수는 찍히지 않는다. 지역변수를 싣는 것은 오류 리포트(메일·DEBUG 페이지)이고 이 핸들러는 아니다.
+
+**다음 개선**:
+
+* Phase 3: 구조화(JSON) 로그는 CloudWatch Logs Insights를 쓸 때 검토한다.
+* Phase 3: 잘못된 Host로 오는 스캐너 요청은 `django.security.DisallowedHost` ERROR + 트레이스백을 남긴다 — ALB 리스너 규칙에서 Host를 먼저 거르면 앱까지 오지 않는다.

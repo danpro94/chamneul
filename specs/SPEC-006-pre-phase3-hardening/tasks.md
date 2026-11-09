@@ -40,7 +40,8 @@
 * [x] **실제 이미지 기동**: `/healthz`·`/readyz` 200(파드 IP Host), Admin CSS 200, XFP https로 API 200, http → 301 — 출력은 리뷰 노트 09 §3-4
 * [x] `manage.py check --deploy` 출력 기록 — `no issues (0 silenced)`
 * [x] smoke-test §5 갭 2·3·11 갱신 + 새로 발견한 갭 12(운영 500 원인 미기록)·13(gunicorn 제어 소켓) 추가
-* 2026-11-07 완료 — 테스트 453개 OK, 변이 10/10. **갭 12는 Owner 결정 대기**(SPEC-006에 넣을지)
+* 2026-11-07 완료 — 테스트 453개 OK, 변이 10/10. 갭 12는 Owner 결정 대기(SPEC-006에 넣을지)
+* [x] **후속 (2026-11-09, Owner 승인으로 범위 추가)** — 갭 12: `LOGGING`으로 5xx 트레이스백을 stderr에, 4xx WARNING 줄은 끔. `config.tests.ErrorLoggingTests`(prod·local 새 인터프리터) — 테스트 454개 OK, 변이 4/4, 실제 이미지에서 500 원인 확인(리뷰 노트 09 §3-8)
 
 ## TASK-004 — 스모크 여정 확장 + 맨바닥 재통과
 

@@ -232,3 +232,30 @@ REST_FRAMEWORK = {
     # request, i.e. no IP limit at all.
     "NUM_PROXIES": int(os.environ.get("DRF_NUM_PROXIES", "0")),
 }
+
+# --- Logging (SPEC-006, smoke-test §5 갭 12) ----------------------------
+# Everything goes to stderr, which the container runtime collects (docker logs,
+# later CloudWatch) — no log files inside the container. Without this, Django's
+# default sends request errors only to ADMINS by mail when DEBUG=False, and
+# ADMINS is empty: a production 500 left no traceback anywhere.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "{asctime} {levelname} {name} {message}", "style": "{"},
+    },
+    "handlers": {
+        "stderr": {"class": "logging.StreamHandler", "formatter": "plain"},
+    },
+    # App loggers (accounts.emails, config.health) only write WARNING and up.
+    "root": {"handlers": ["stderr"], "level": "WARNING"},
+    "loggers": {
+        # Replaces Django's pair of a DEBUG-only console and mail_admins. Not
+        # propagated, or every Django record would print twice via root.
+        "django": {"handlers": ["stderr"], "level": "INFO", "propagate": False},
+        # Every request is already in the access log (gunicorn, runserver) with
+        # its status, so Django's extra WARNING per 4xx only adds volume — and in
+        # production anyone can make it. 5xx keep their line and traceback.
+        "django.request": {"level": "ERROR"},
+    },
+}

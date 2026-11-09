@@ -241,3 +241,51 @@ class StaticFilesTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 301)
         self.assertEqual(response["Location"], f"https://chamneul.com{self.ADMIN_CSS}")
+
+
+# /healthz를 일부러 깨뜨려 500을 만든다. 미들웨어에서 답하는 경로라 DB·Host 검증·
+# HTTPS 리다이렉트를 거치지 않는다 — 실패 원인이 로깅 설정 하나로 좁혀진다.
+# 이어서 없는 경로로 404를 하나 만든다(그 환경이 허용하는 Host, https로).
+REQUESTS_500_THEN_404 = """
+import django
+django.setup()
+from unittest import mock
+from django.conf import settings
+from django.test import Client
+from config import health
+
+def broken(request):
+    raise RuntimeError("marker-for-logging-test")
+
+client = Client(raise_request_exception=False)
+with mock.patch.dict(health._PROBES, {"/healthz": broken}):
+    print(client.get("/healthz").status_code)
+print(client.get(
+    "/no-such-page", HTTP_HOST=settings.ALLOWED_HOSTS[0], HTTP_X_FORWARDED_PROTO="https"
+).status_code)
+"""
+
+
+class ErrorLoggingTests(SimpleTestCase):
+    """SPEC-006 TASK-003 후속 — 500의 원인이 컨테이너 로그(stderr)에 남는다.
+    Django 기본 로깅은 DEBUG=False에서 요청 오류를 관리자 메일로만 보낸다.
+    ADMINS가 비어 있으면 원인이 아무 데도 남지 않는다(smoke-test §5 갭 12)."""
+
+    def test_a_500_leaves_its_traceback_once_and_a_4xx_adds_nothing(self):
+        """4xx는 액세스 로그(gunicorn·runserver)에 상태 코드와 함께 이미 남는다.
+        Django가 4xx마다 한 줄씩 더 쓰면 양만 늘고, 운영에서는 누구나 그 양을
+        늘릴 수 있다."""
+        environments = [
+            ("prod", PROD_ENV),
+            ("local", {"DJANGO_SETTINGS_MODULE": "config.settings.local"}),
+        ]
+        for name, env in environments:
+            with self.subTest(name):
+                result = run_python("-c", REQUESTS_500_THEN_404, **env)
+
+                self.assertEqual(result.stdout.split(), ["500", "404"], result.stderr)
+                self.assertIn("Internal Server Error: /healthz", result.stderr)
+                self.assertIn("RuntimeError: marker-for-logging-test", result.stderr)
+                # 두 번이면 핸들러가 겹친 것이다(django 로거 + 루트 로거).
+                self.assertEqual(result.stderr.count("Traceback"), 1)
+                self.assertNotIn("Not Found: /no-such-page", result.stderr)

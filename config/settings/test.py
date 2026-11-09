@@ -15,6 +15,17 @@ STORAGES = {
 }
 STATIC_ROOT = None
 
+# Tests answer 5xx on purpose (OAuth 502, readyz 503, ...). An unexpected
+# exception still fails its test with the traceback: the test client re-raises.
+# config.tests.ErrorLoggingTests checks the real config in a fresh interpreter.
+LOGGING = {
+    **LOGGING,  # noqa: F405
+    "loggers": {
+        **LOGGING["loggers"],  # noqa: F405
+        "django.request": {"level": "CRITICAL"},
+    },
+}
+
 # No EMAIL_BACKEND here on purpose: Django's test runner always swaps in the
 # locmem backend, so sent mail lands in `django.core.mail.outbox`.
 

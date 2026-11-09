@@ -35,6 +35,7 @@ TEST_CRITERIA.md §2·§3을 SPEC-006에 적용한 판정 기준. AC-1~AC-3은 D
 - [x] 진입점 기본값이 결정 4대로다 — 이미지를 환경변수 없이 띄우면 워커가 `KeyError: 'DJANGO_SECRET_KEY'`로 뜨지 않는다
 - [x] 실제 이미지(gunicorn + prod): `/healthz`·`/readyz` 200, Admin CSS 200, XFP https로 API 200, http → 301
 - [x] `check --deploy` 출력이 리뷰 노트에 기록됐다 — `System check identified no issues (0 silenced).`
+- [x] *(2026-11-09 추가, Owner 승인)* prod에서 500의 트레이스백이 stderr(컨테이너 로그)에 **한 번** 남는다 / 4xx는 Django 줄을 남기지 않는다 — `ErrorLoggingTests` + 실제 이미지
 
 ## AC-4. 스모크 (TASK-004)
 
