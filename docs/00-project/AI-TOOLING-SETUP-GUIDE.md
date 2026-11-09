@@ -358,6 +358,15 @@ claude mcp add --scope local postgres-ro -- ~/projects/personal/chamneul/.claude
    cd ~/projects/personal/chamneul && ./.claude/mcp/setup-postgres-ro-role.sh
    ```
    그다음 `/mcp`에서 `postgres-ro`를 **Reconnect**.
+4. **⚠️ 백업을 복원했을 때는 복원 뒤에 이 스크립트를 한 번 더 실행한다 (2026-11-09 실측).** 스크립트가 거는 "새 테이블은 자동으로 읽기 허용"(`ALTER DEFAULT PRIVILEGES`)이 복원 때 다시 만들어지는 `accounts_user`·`django_session`에도 적용된다. 그 결과 이 역할이 **비밀번호 해시와 세션을 읽을 수 있게 된다**. 덤프에는 원래의 열 단위 권한만 있고, "테이블 전체 권한 회수"는 기록되지 않는다. 스크립트를 다시 돌리면 회수 후 재부여로 경계가 돌아온다. 확인:
+   ```bash
+   docker compose exec -T db sh -c 'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+   SELECT has_column_privilege('chamneul_ro', 'accounts_user', 'password', 'SELECT'),
+          has_table_privilege('chamneul_ro', 'django_session', 'SELECT');
+   SQL
+   # f|f 여야 한다 (비밀번호 열·세션 테이블 모두 읽기 불가)
+   ```
+   빈 볼륨에 복원할 때의 순서는 smoke-test §6 "복원".
 
 ### 7.4 일상 사용
 

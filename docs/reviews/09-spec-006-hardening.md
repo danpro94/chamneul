@@ -260,3 +260,66 @@ django.db.utils.ProgrammingError: relation "django_session" does not exist
 
 * Phase 3: 구조화(JSON) 로그는 CloudWatch Logs Insights를 쓸 때 검토한다.
 * Phase 3: 잘못된 Host로 오는 스캐너 요청은 `django.security.DisallowedHost` ERROR + 트레이스백을 남긴다 — ALB 리스너 규칙에서 Host를 먼저 거르면 앱까지 오지 않는다.
+
+## 4. TASK-004 — 스모크 여정 15단계 맨바닥 재통과 + 백업·복원 실증 (2026-11-09)
+
+### 4-1. 무엇이 바뀌었나
+
+| 범위 | 내용 |
+| --- | --- |
+| `scripts/smoke-journey.sh` | 13 재설정(#45 → 콘솔 메일 링크 → #46 → 재사용 400 → 옛 비밀번호 401 → 새 비밀번호 200) / 14 고민 수정(배정 전 200 → 배정 후 409 `NOT_EDITABLE`) / 15 같은 주소 로그인 11번째 429. 스크립트가 저장소 루트에서 돌도록 `cd` |
+| 문서 | smoke-test §2(맨바닥 재통과 기록·`/readyz` 주의·역할 표시 보충) · §3(15단계) · §6(**빈 볼륨 복원 순서**) · AI-TOOLING-SETUP-GUIDE §7.3(복원 뒤 역할 스크립트 재실행) |
+
+코드(앱) 변경 없음 — 테스트 수 454 그대로.
+
+### 4-2. 실행 순서와 결과 (실제 출력)
+
+| # | 단계 | 결과 |
+| --- | --- | --- |
+| 1 | 백업 전 행 수 기록 | 21개 테이블 |
+| 2 | §6대로 `pg_dump` → `~/chamneul-backup-20261109.sql`(저장소 밖, 권한 600) | 완료 마커 1, COPY 21, `chamneul_ro` 권한 34줄 |
+| 3 | `down -v` → `up -d --build` | `pgdata` 삭제·재생성, `db Waiting → Healthy → app Started` |
+| 4 | 마이그레이션 전 `/healthz`·`/readyz` | **200 · 200** (4-4) |
+| 5 | `migrate` / `createcachetable` | 25개 적용 / exit 0 |
+| 6 | 일회용 관리자 `createsuperuser --noinput` | `UserRole` 행 `['ADMIN']`, API `["USER","ADMIN"]` |
+| 7 | 여정 15단계 | **첫 실행에 전항 통과**, 출력에 실제 토큰 0개 |
+| 8 | 역할 없이 **연습용 DB**(`restore_probe`)에 복원 | 데이터 21/21 들어간 뒤 `ERROR: role "chamneul_ro" does not exist`, **exit 3** |
+| 9 | `setup-postgres-ro-role.sh` | 비밀번호 열·세션 거부. `default_transaction_read_only`를 끄고도 UPDATE·DELETE·CREATE 거부(권한이 진짜 경계) |
+| 10 | §6대로 실제 복원 | exit 0, ERROR 0. **행 수 21개 테이블 전부 백업 전과 일치** |
+| 11 | 복원 뒤 읽기 전용 역할 | ⚠️ **비밀번호 열·세션 읽기 허용**(4-3) |
+| 12 | 스크립트 재실행 | 다시 거부 `f\|f` |
+| 13 | MCP `postgres-ro` | `password authentication failed` — 서버가 기동 때 읽은 옛 비밀번호. **Owner `/mcp` Reconnect 필요** |
+
+### 4-3. 찾은 것 — 복원이 읽기 전용 역할의 권한을 넓힌다
+
+* **현상**: 9단계에서 거부되던 `accounts_user.password`와 `django_session`이 10단계 복원 뒤 읽혔다(비밀번호 해시 89자 확인, 세션은 키를 읽으면 로그인 탈취가 된다).
+* **원인**: 역할 스크립트는 "앞으로 만들어질 테이블은 이 역할이 읽어도 된다"(`ALTER DEFAULT PRIVILEGES ... GRANT SELECT ON TABLES`)를 건다. `--clean` 복원은 테이블을 지우고 **새로 만든다** — 그 순간 기본 권한이 붙어 테이블 전체 SELECT가 생긴다. 덤프에는 원래 상태가 "열 단위 GRANT"로만 기록돼 있다. "테이블 전체 권한 없음"은 기록되지 않으므로 아무것도 그것을 되돌리지 않는다.
+* **원래 DB는 안전했다**: 덤프의 권한 줄을 보면 `accounts_user`는 비밀번호를 뺀 열 단위 GRANT만 있고, `django_session`에는 GRANT가 없다. 문제는 **복원 경로에서만** 생긴다.
+* **왜 순서로 피할 수 없나**: 역할이 없으면 복원이 `GRANT`에서 멈춘다(8단계). 역할을 먼저 만들면 권한이 넓어진다(11단계). 둘 다 문제다. 지금의 답은 **복원 뒤 스크립트를 한 번 더**다(회수 → 재부여, 12단계).
+
+### 4-4. DevOps 설명 포인트
+
+* **readiness는 스키마를 보지 않는다.** 마이그레이션 전에도 `/readyz` 200이었다. Phase 3에서는 마이그레이션 Job 완료 뒤에 롤아웃을 시작한다. readiness가 "준비됨"이라고 해도 테이블이 없을 수 있다.
+* **백업은 복원해 봐야 백업이다.** 이번에 처음으로 §6 절차를 끝까지 돌렸다. 문서에 없던 순서 조건 2개가 나왔다. 그중 하나는 오류 없이 지나가는 보안 문제였다. 복원 후 검증은 "exit 0"이 아니라 **행 수 비교 + 권한 확인**이다.
+* **역할은 DB가 아니라 클러스터에 속한다.** `pg_dump`는 한 DB만 뜬다. 역할(`chamneul_ro`)은 덤프에 없다. 운영(RDS)에서도 같다 — 역할·권한은 IaC나 마이그레이션으로 관리해야 복원·재생성 때 재현된다.
+
+### 4-5. 보안 노트
+
+* 재설정 토큰은 스크립트가 `docker compose logs`에서 읽어 바로 쓰고 **화면에 찍지 않는다**(`uid` 앞 6자만, `token=<가림>`). 실행 출력에서 실제 토큰 패턴 0개를 확인했다.
+* 일회용 관리자 비밀번호는 스크래치패드의 권한 600 파일에만 두었다가 복원 뒤 지웠다. 덤프 내용은 화면에 출력하지 않았다(개수·권한 줄만).
+* 11단계의 넓어진 권한은 복원 직후부터 12단계까지 몇 분간 열려 있었다. 그동안 MCP 서버는 옛 비밀번호로 접속에 실패하는 상태였다(13단계). 그 권한으로 실행된 것은 이 문제를 확인한 쿼리 2건뿐이다(비밀번호 열 SELECT — 값은 출력하지 않고 길이만 봤다).
+
+### 4-6. 테스트 방법 (재현)
+
+```bash
+# 1) 백업 (§6)   2) down -v → up -d --build   3) migrate → createcachetable → createsuperuser --noinput
+SMOKE_ADMIN_PASSWORD='…' bash scripts/smoke-journey.sh      # 15단계
+./.claude/mcp/setup-postgres-ro-role.sh                     # 역할 생성
+# 4) 복원 (§6)   5) 스크립트 재실행   6) /mcp → postgres-ro Reconnect
+```
+
+같은 시간에 네 번 이상 돌리면 가입 IP 한도(10회/시간, 실행당 3회)에 걸린다 — §6 카운터 비우기.
+
+### 4-7. 다음 개선 — 결정 필요
+
+* **역할 스크립트의 "새 테이블 자동 읽기 허용"을 없앨지.** 지금은 fail open이다 — 앞으로 마이그레이션이 민감한 테이블(예: 토큰 저장)을 추가해도 이 역할이 **자동으로** 읽는다. 없애면 새 테이블은 스크립트를 다시 돌릴 때까지 안 보이고(fail closed), 4-3의 복원 문제도 함께 사라진다(복원 때 붙을 기본 권한이 없다 — 단 **변경 뒤에 뜬 덤프부터**. 지금 덤프는 끝부분에 그 기본 권한 설정을 담고 있어 복원하면 다시 생긴다. 그래서 스크립트가 그것을 명시적으로 회수해야 한다). 대가는 마이그레이션마다 스크립트 재실행. ADR-009 도구 설계 변경이라 **Owner 결정**. 권고: 없앤다.

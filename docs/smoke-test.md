@@ -14,6 +14,8 @@
 > ⚠️ **이 문서의 모든 측정은 `runserver` 위에서 수행됐다.** 저장소에 `docker-compose.override.yml`이 커밋돼 있고(`command: python manage.py runserver`), Compose는 override를 자동으로 병합하므로 그냥 `docker compose up`을 하면 **항상 개발 서버**로 뜬다. 이미지의 `CMD`는 `gunicorn --workers 3`(`Dockerfile:61`)이다. 그 경로(gunicorn + prod 설정)는 compose 밖에서 `docker run`으로 따로 검증했다(2026-11-07, §5 갭 3). 확인 방법: `docker compose ps`의 COMMAND 열, 또는 응답 헤더의 `Server: WSGIServer/...`.
 
 > ⚠️ `down -v`는 **PostgreSQL 볼륨을 삭제**한다. 로컬 데이터가 전부 사라진다. 보존이 필요하면 §6의 백업 절차를 먼저 수행한다.
+>
+> **2026-11-09 맨바닥 재통과(SPEC-006 TASK-004)**: §6대로 백업(완료 마커 1, COPY 21) → `down -v` → `up -d --build` → 아래 2-1·2-2 → §3 여정 15단계 → 읽기 전용 MCP 역할 재생성 → **백업 복원**(테이블 21개의 행 수가 백업 전과 전부 일치). 즉 이 문서의 백업·복원 절차도 이번에 실제로 돌려 확인했다 — 그 과정에서 찾은 순서 문제는 §6 "복원".
 
 ```bash
 docker compose down -v          # 컨테이너 + 네트워크 + named volume 삭제
@@ -52,7 +54,9 @@ docker compose exec app python manage.py migrate
 docker compose exec app python manage.py createcachetable
 ```
 
-요청 횟수 카운터(api.md §1.10)는 DB 테이블 `django_cache`에 쌓인다. 이 테이블은 **마이그레이션이 아니라** `createcachetable`이 만든다. 빠뜨리면 다른 API는 멀쩡한데 **#2·#3·#45·#46만 500**이 나고, 로그에 `relation "django_cache" does not exist`가 찍힌다(local 설정 기준 — prod에서는 이 원인이 로그에 남지 않는다, §5 갭 12). 두 번 실행해도 안전하다(이미 있으면 `already exists`). Phase 3에서는 k8s 마이그레이션 Job에 `migrate` 다음 줄로 넣는다(Owner 손코딩).
+요청 횟수 카운터(api.md §1.10)는 DB 테이블 `django_cache`에 쌓인다. 이 테이블은 **마이그레이션이 아니라** `createcachetable`이 만든다. 빠뜨리면 다른 API는 멀쩡한데 **#2·#3·#45·#46만 500**이 나고, 로그에 `relation "django_cache" does not exist`가 찍힌다(prod도 2026-11-09부터 같다 — §5 갭 12 해소). 두 번 실행해도 안전하다(이미 있으면 `already exists`). Phase 3에서는 k8s 마이그레이션 Job에 `migrate` 다음 줄로 넣는다(Owner 손코딩).
+
+> **`/readyz`는 마이그레이션 전에도 200이다 (2026-11-09 실측).** readiness는 "DB에 붙는가"(`SELECT 1`)만 본다. 스키마가 준비됐는지는 보지 않는다. 그래서 Phase 3에서는 **마이그레이션 Job이 끝난 뒤에** 새 버전의 롤아웃이 시작되게 짠다(Owner 손코딩 매니페스트).
 
 ### 2-2. 관리자 부트스트랩
 
@@ -77,6 +81,15 @@ superuser : root@chamneul.local | is_superuser: True | is_staff: True
 보유 역할 : ['USER', 'ADMIN']
 ```
 
+*(2026-11-09 보충)* 위의 `['USER', 'ADMIN']`은 **API가 보여 주는 값**이다(`GET /api/v1/users/me/roles` → `{"roles":["USER","ADMIN"],...}`). `USER`는 모든 계정의 암묵적 기본 역할이라 **행으로 저장하지 않는다**(model.md §3.2). 그래서 DB에서 직접 보면 `UserRole` 행은 `['ADMIN']` 하나다. 확인해야 할 것은 그 `ADMIN` 행이 있는지다.
+
+```bash
+docker compose exec -T app python manage.py shell --no-imports -c "
+from accounts.models import User
+u = User.objects.get(email='root@chamneul.local')
+print(sorted(u.role_assignments.values_list('role', flat=True)))"   # ['ADMIN']
+```
+
 이 행이 없으면 `IsAdmin`은 `is_superuser`로 통과시키지만, #43의 "마지막 관리자" 판정은 `UserRole` 행만 세므로 관리자 수가 0으로 계산된다.
 
 ### 2-3. 기동 확인
@@ -89,9 +102,11 @@ curl -i http://localhost:8000/healthz
 HTTP 200  (0.0075s)   {"status": "ok"}
 ```
 
-## 3. 사용자 여정 — 12단계 전항 통과
+## 3. 사용자 여정 — 15단계 전항 통과
 
-`curl`로 세 배우(사용자 / 조언가 / 관리자)의 세션을 **동시에** 유지하며 한 줄로 이어 통과시켰다. 각 단계는 직전 응답의 id를 다음 요청에 쓴다.
+`curl`로 세 배우(사용자 / 조언가 / 관리자)의 세션을 **동시에** 유지하며 한 줄로 이어 통과시켰다. 각 단계는 직전 응답의 id를 다음 요청에 쓴다. 스크립트: `SMOKE_ADMIN_PASSWORD='…' bash scripts/smoke-journey.sh`.
+
+> **최근 실행 2026-11-09 (SPEC-006 TASK-004)** — `down -v`로 비운 볼륨 → `migrate`(25개) → `createcachetable` → 관리자 부트스트랩 → **15단계 첫 실행에 전항 통과**. 1~12단계 결과는 아래 표와 같고, 13~15단계가 새로 붙었다. 출력에 실제 재설정 토큰 0개(스크립트가 읽어 쓰기만 하고 찍지 않는다).
 
 세션·CSRF 처리 방식:
 
@@ -125,6 +140,9 @@ curl -s -c user.jar -b user.jar -X POST \
 | 10b | 조언가 알림함 | **200** | 본문이 **고정 문구**(고민 요약 사본 아님) |
 | 11 | 역할 회수 (#43) | **204** | 직후 #20 → **403**, `roles=["USER"]` |
 | 12 | 로그아웃 (#4) | **200** | 직후 `/users/me` → **401**(서버 세션 삭제) |
+| 13 | 재설정 요청 (#45) → 콘솔 메일 링크 → 확정 (#46) | **200 → 200** | 같은 링크 재사용 **400**(한 번만), 옛 비밀번호 로그인 **401**, 새 비밀번호 로그인 **200** |
+| 14 | 고민 수정 (#47) | **200 → 409** | 배정 전 수정 반영, 배정(#24 201) 뒤 수정은 **409** `reason=NOT_EDITABLE` |
+| 15 | 로그인 한도 (#3) | **401×10 → 429** | 같은 주소 11번째에 **429**, `Retry-After: 3599`, `error.code=RATE_LIMITED` |
 
 ### 이번 실행에서 실제로 확인된 설계 판단 3건
 
@@ -273,6 +291,16 @@ docker compose start app
 ```
 
 `ON_ERROR_STOP=1`이 없으면 **부분 복원이 성공처럼 보인다** — psql은 기본적으로 오류를 만나도 계속 진행한다.
+
+**빈 볼륨(`down -v` 뒤)에 복원할 때 — 순서가 있다 (2026-11-09 실측, SPEC-006 TASK-004).** 덤프에는 읽기 전용 MCP 역할(`chamneul_ro`)에 주는 권한 34줄이 들어 있다. 그런데 **역할 자체는 덤프에 없다**(역할은 DB가 아니라 클러스터에 속한다).
+
+| 순서 | 결과 |
+| --- | --- |
+| 역할 없이 바로 복원 | 데이터 21개 테이블은 다 들어간 뒤, 첫 `GRANT`에서 `ERROR: role "chamneul_ro" does not exist` → **exit 3**. 나머지 권한은 빠진 채 멈춘다 — 데이터는 보이는데 복원은 실패한 상태 |
+| 스크립트로 역할을 먼저 만들고 복원 | exit 0. 그러나 **읽기 전용 역할이 비밀번호 해시와 세션을 읽을 수 있게 된다** — 스크립트의 "새 테이블 자동 읽기 허용"이 복원으로 다시 만들어진 테이블 전부에 적용되기 때문 |
+| **맞는 순서** | `up -d` → `migrate` → `./.claude/mcp/setup-postgres-ro-role.sh` → 위 복원 → **스크립트 한 번 더** → `/mcp` Reconnect |
+
+마지막 재실행이 경계를 되돌린다(테이블 권한 회수 → 비밀번호 열을 뺀 열 단위 재부여). 확인 명령은 [AI-TOOLING-SETUP-GUIDE §7.3](00-project/AI-TOOLING-SETUP-GUIDE.md) 4번 — `f|f`여야 한다.
 
 ### DB 안전 초기화
 

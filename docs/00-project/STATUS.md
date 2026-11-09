@@ -12,7 +12,7 @@
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
 | 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현·머지 완료(PR #12)** |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001 완료(후속 2026-11-07), TASK-002·003 완료(2026-11-07, 003 후속 2026-11-09 — 운영 오류 로깅) → TASK-004 진행 중**(스모크 15단계 맨바닥 재통과, Owner Go 2026-11-09) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
+| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001~004 완료**(001 후속 11-07, 003 후속 11-09 — 운영 오류 로깅, 004 맨바닥 15단계 11-09) **→ 다음 TASK-005**(마무리 — 서브에이전트 리뷰 2종·PR). 결정 대기: 읽기 전용 MCP 역할의 "새 테이블 자동 읽기 허용" 제거 여부(리뷰 노트 09 §4-7) → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -107,7 +107,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 | --- | --- |
 | Dependabot alerts·security updates / secret scanning·push protection | **켜짐** (저장소 설정) · 버전 업데이트 `.github/dependabot.yml`(uv·docker·docker-compose) |
 | Semgrep MCP (`semgrep==1.182.1`, local) | **연결됨** · 기준선 스캔 0건(오탐 1건 사유와 함께 억제) |
-| PostgreSQL 읽기 전용 MCP (Google MCP Toolbox 1.15.0, local) | **연결됨** · 역할 `chamneul_ro`(SELECT만, 비밀번호·세션 제외) · 재생성 `.claude/mcp/setup-postgres-ro-role.sh` |
+| PostgreSQL 읽기 전용 MCP (Google MCP Toolbox 1.15.0, local) | 역할 `chamneul_ro`(SELECT만, 비밀번호·세션 제외) · 재생성 `.claude/mcp/setup-postgres-ro-role.sh` · **2026-11-09 재생성 → `/mcp` Reconnect 대기**(비밀번호 교체). 복원 뒤에는 스크립트 재실행 필수(AI-TOOLING-SETUP-GUIDE §7.3) |
 | Playwright MCP | **이미 설치됨**(claude.ai 동기화 공식 플러그인, `@latest`) |
 | CodeQL · Sentry MCP | Phase 3 승인 예정 |
 | hooks · GitHub MCP · Context7 · 내장 리뷰 명령(항목 1~4) | 미결정 |
@@ -123,6 +123,18 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 * **TASK-002 완료 (2026-11-07)** — **ADR-010 Accepted → CLAUDE.md §5·§7·§16 개정**(47 → 48, 비-버전 엔드포인트 둘). #48 `/readyz`: DB `SELECT 1` 성공 200 / 실패 503(본문 고정, 원인은 서버 로그만). `/healthz`는 그대로 DB를 보지 않는다. `HealthCheckMiddleware`(MIDDLEWARE 맨 앞)가 정확한 두 경로의 GET/HEAD만 HTTPS 리다이렉트·Host 검증보다 먼저 답한다. 테스트 6개(전체 **446개**). 변이 10건 전건 검출 — **M9(질의 없이 연결만 확인)를 처음엔 놓쳐** "끊긴 영구 연결" 케이스를 보강했다(`CONN_MAX_AGE=60`이라 운영에서 실제로 생기는 상황). 실제 compose 앱: DB 정지 중 `/readyz` 503·`/healthz` 200, 재기동 직후 200. smoke-test §5 갭 7 해소. 상세 리뷰 노트 09 §2.
 * **TASK-003 완료 (2026-11-07)** — 운영 경로. prod 기동 가드 2개(`DJANGO_EMAIL_BACKEND`가 console·filebased / `PASSWORD_RESET_URL`이 https 아님 → `ImproperlyConfigured`), `wsgi.py`·`asgi.py` 기본값 prod(결정 4), **WhiteNoise 6.12.0**(결정 3 — 패키지 1개 추가). 미들웨어·저장소를 계획의 prod.py가 아니라 **base.py**에 뒀다: 빌드 때 `collectstatic`이 local 설정으로 돌기 때문 — prod에만 두면 Admin이 500인데 헬스체크는 200인 이미지가 된다(반대 사례 이미지로 실측). 테스트 7개(전체 **453개**), 변이 10건 전건 검출. **실제 이미지(gunicorn + prod, Dockerfile·compose 무수정)**: 환경변수 없이 → 워커 기동 실패(fail closed) / 파드 IP Host로 `/healthz`·`/readyz` 200 / Admin CSS 200(해시 이름·gzip·1년 캐시) / XFP https API 200 / http 301 / `check --deploy` 0 issues. smoke-test §5 갭 2·3·11 해소. **새로 발견**: 갭 12 운영에서 500 트레이스백이 어디에도 남지 않는다(`LOGGING` 없음 → Django 기본은 관리자 메일뿐, `ADMINS` 비어 있음 — Owner 결정 대기), 갭 13 gunicorn 26 제어 소켓 ERROR(Dockerfile, Owner 영역). 의존성 추가로 compose 앱을 `up -d --build --no-deps -V app`으로 재생성(`-V` 없으면 옛 `.venv` 볼륨이 새 패키지를 가린다). 상세 리뷰 노트 09 §3.
 * **TASK-003 후속 (2026-11-09, Owner 승인으로 범위 추가)** — 갭 12 해소. `LOGGING`: 모든 로그를 stderr 하나로. `django` 로거는 Django 기본의 "DEBUG 콘솔 + 관리자 메일"을 대체하고 루트로 전파하지 않는다(중복 방지). `django.request`는 ERROR만 남긴다 — 4xx는 액세스 로그에 이미 있다. 테스트 1개(prod·local을 새 인터프리터로, 전체 **454개**), 변이 4건 전부 검출. 테스트 출력이 609줄에서 13줄이 됐다. 실제 이미지를 테이블 없는 DB에 붙여 만든 500의 원인(`relation "django_session" does not exist`)이 컨테이너 로그에 남는 것을 확인했다. 리뷰 노트 09 §3-8.
+* **TASK-004 완료 (2026-11-09)** — 맨바닥 재통과. 실행 순서는 다음과 같다.
+  1. 백업: 저장소 밖 `~/chamneul-backup-20261109.sql`.
+  2. `down -v` → `migrate`(25개) → `createcachetable` → 일회용 관리자.
+  3. **여정 15단계 첫 실행에 전항 통과**. 새로 붙은 단계는 13 재설정(재사용 400·옛 비밀번호 401·새 비밀번호 200), 14 고민 수정(배정 전 200, 후 409), 15 로그인 11번째 429.
+  4. 읽기 전용 역할을 재생성하고 경계를 확인했다. 읽기 전용 설정을 꺼도 쓰기는 권한으로 막힌다.
+  5. **백업 복원 → 21개 테이블 행 수 전부 일치**. Owner 데이터는 원상태다.
+
+  앱 코드 변경은 없다.
+
+  **찾은 것:** ① 역할 없이 복원하면 첫 `GRANT`에서 exit 3. ② 역할을 먼저 만들고 복원하면 **읽기 전용 역할이 비밀번호 해시·세션을 읽게 된다**. 스크립트의 기본 권한이 다시 만들어진 테이블에 붙기 때문이다. 그래서 복원 뒤 스크립트를 재실행하도록 smoke-test §6과 AI-TOOLING-SETUP-GUIDE §7.3을 고쳤고, 지금 상태도 바로잡았다(`f|f`). ③ `/readyz`는 마이그레이션 전에도 200이다(스키마를 보지 않는다).
+
+  **Owner 할 일:** `/mcp` → `postgres-ro` Reconnect. 비밀번호가 바뀌어 지금은 인증 실패가 정상이다. 리뷰 노트 09 §4.
 
 **SPEC-005-api-gaps — 완료·머지 (2026-10-27, PR #12).** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
 
