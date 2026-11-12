@@ -340,7 +340,7 @@ SMOKE_ADMIN_PASSWORD='…' bash scripts/smoke-journey.sh      # 15단계
 
 ## 5. TASK-005 — 마무리: 서브에이전트 리뷰 2종 (2026-11-09)
 
-`security-reviewer`와 `devops-local-platform`을 병렬 백그라운드로 돌렸다. 대상은 `origin/main...HEAD`(커밋 11개)이고, 둘 다 읽기 전용이다.
+`security-reviewer`와 `devops-local-platform`을 병렬 백그라운드로 돌렸다. 대상은 리뷰 시점의 `origin/main...HEAD`(커밋 10개 — 리뷰 반영 커밋 전)이고, 둘 다 읽기 전용이다.
 
 | 리뷰 | 판정 | 건수 |
 | --- | --- | --- |
