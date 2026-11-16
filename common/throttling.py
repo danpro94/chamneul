@@ -98,6 +98,12 @@ class LoginIPThrottle(IPRateThrottle):
     scope = "auth_login_ip"
 
 
+class LoginIPHourThrottle(IPRateThrottle):
+    # The per-minute limit alone lets one IP open 1,200 address counters an
+    # hour, so ~84 IPs could fill MAX_ENTRIES and cull other accounts' counters.
+    scope = "auth_login_ip_hour"
+
+
 class LoginEmailThrottle(EmailRateThrottle):
     scope = "auth_login_email"
 

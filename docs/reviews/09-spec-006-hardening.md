@@ -142,7 +142,7 @@ docker compose start db  # → /readyz 200
 
 ### 2-7. 다음 개선
 
-* Phase 3: probe `timeoutSeconds`와 DB `connect_timeout`을 함께 정한다.
+* ~~Phase 3: probe `timeoutSeconds`와 DB `connect_timeout`을 함께 정한다.~~ → `connect_timeout` 3초는 2026-11-16 앞당김(§5-6). probe `timeoutSeconds`는 Phase 3.
 * Phase 3: AWS ALB는 대상이 **전부** unhealthy이면 모든 대상에 요청을 보낸다(fail open). Ingress·대상 그룹 구성을 정할 때 확인한다.
 * ~~TASK-003: 실제 이미지(gunicorn + prod 설정)로 두 경로를 파드 IP Host·HTTP로 다시 확인한다.~~ → **완료**(3-4 #1·#2).
 
@@ -366,9 +366,9 @@ SMOKE_ADMIN_PASSWORD='…' bash scripts/smoke-journey.sh      # 15단계
 
 | # | 출처 | 쟁점 | 권고 |
 | --- | --- | --- | --- |
-| 1 | devops M-2 | **DB `connect_timeout`이 없다.** DB가 패킷을 버리는 장애(보안그룹 차단 등)면 `/readyz`가 연결을 기다리며 sync 워커 3개를 다 잡는다. 그러면 같은 워커가 답하는 `/healthz`도 응답하지 못한다. liveness가 실패해 모든 파드가 재시작된다 — **ADR-010이 막으려던 연쇄 그대로다.** ADR-010은 `connect_timeout`을 Phase 3로 미뤘다 | **이 PR에서** `DATABASES OPTIONS connect_timeout: 3`(+ `CONN_HEALTH_CHECKS: True`). `docker compose pause db`로 재현 확인 |
-| 2 | 보안 M-2 | 컬링으로 계정 한도를 지우는 데 IP 약 84개면 된다. 쓰기마다 `SELECT COUNT(*)`도 돈다 | 로그인에 **시간당 IP 한도**를 하나 더(예: 200회/시간 → 필요한 IP 약 500개). 근본 해결은 Phase 3 Redis. 결정 2의 수치 변경이라 Owner 몫 |
-| 3 | 보안 M-3 | `.env.example` 4행 `DJANGO_SETTINGS_MODULE=config.settings.local` — 이 파일을 배포 환경변수로 그대로 쓰면 `wsgi.py`의 prod 기본값이 무력화된다(DEBUG=True, 콘솔 메일, prod 가드 미실행). compose는 `docker-compose.yml:31`에서 이미 지정하므로 이 줄은 필요 없다 | **Owner가 그 줄 삭제**(Owner 파일). `local.py`의 배포 환경 감지는 Phase 3에 |
+| 1 | devops M-2 | **DB `connect_timeout`이 없다.** DB가 패킷을 버리는 장애(보안그룹 차단 등)면 `/readyz`가 연결을 기다리며 sync 워커 3개를 다 잡는다. 그러면 같은 워커가 답하는 `/healthz`도 응답하지 못한다. liveness가 실패해 모든 파드가 재시작된다 — **ADR-010이 막으려던 연쇄 그대로다.** ADR-010은 `connect_timeout`을 Phase 3로 미뤘다 | **이 PR에서** `DATABASES OPTIONS connect_timeout: 3`(+ `CONN_HEALTH_CHECKS: True`). `docker compose pause db`로 재현 확인 → **`connect_timeout` 3초만 승인·반영 2026-11-16(§5-6)**. `CONN_HEALTH_CHECKS`는 넣지 않았다(요청마다 질의 1회 추가 — 따로 결정할 것) |
+| 2 | 보안 M-2 | 컬링으로 계정 한도를 지우는 데 IP 약 84개면 된다. 쓰기마다 `SELECT COUNT(*)`도 돈다 | 로그인에 **시간당 IP 한도**를 하나 더(예: 200회/시간 → 필요한 IP 약 500개). 근본 해결은 Phase 3 Redis. 결정 2의 수치 변경이라 Owner 몫 → **승인·반영 2026-11-16, 200회/시간(§5-6)** |
+| 3 | 보안 M-3 | `.env.example` 4행 `DJANGO_SETTINGS_MODULE=config.settings.local` — 이 파일을 배포 환경변수로 그대로 쓰면 `wsgi.py`의 prod 기본값이 무력화된다(DEBUG=True, 콘솔 메일, prod 가드 미실행). compose는 `docker-compose.yml:31`에서 이미 지정하므로 이 줄은 필요 없다 | **Owner가 그 줄 삭제**(Owner 파일). `local.py`의 배포 환경 감지는 Phase 3에 → **이번에 한해 AI 수정 허락(2026-11-16), 삭제·반영(§5-6)** |
 | 4 | 보안 L-3 | 역할 스크립트는 재실행 때 금지 목록(비밀번호 열·세션) 밖의 **새 테이블을 전부** 다시 연다 — fail closed는 다음 재실행까지만 | 허용 목록 방식은 ADR-009 도구 설계라 Phase 3 전 검토. 그때까지 테이블을 추가하는 마이그레이션은 스크립트 재실행 전에 금지 목록을 확인 |
 
 ### 5-3. Owner 인프라 파일 — 코멘트만 (devops)
@@ -391,3 +391,13 @@ SMOKE_ADMIN_PASSWORD='…' bash scripts/smoke-journey.sh      # 15단계
 
 * **리뷰가 잡은 가장 큰 것은 코드가 아니라 절차였다.** `createcachetable`을 §2-1에는 넣었다. 하지만 README와 초기화 절차에는 넣지 않았다. 같은 절차가 문서 여러 곳에 있으면, 하나를 바꿀 때 나머지가 낡는다.
 * **분리는 자원까지 분리돼야 분리다.** liveness와 readiness를 나눠도 같은 sync 워커 3개가 둘 다 답한다. 느린 readiness 하나가 liveness를 함께 죽일 수 있다(5-2 #1).
+
+### 5-6. 후속 (2026-11-16) — Owner 승인 3건 반영
+
+| 항목 | 구현 | 확인 |
+| --- | --- | --- |
+| DB `connect_timeout` 3초 | `DATABASES["default"]["OPTIONS"]` | 테스트 2개: 연결 인자에 실제로 들어가는가 + 새 인터프리터에서 DB를 패킷만 버리는 주소(`10.255.255.1`)로 돌렸을 때 `/readyz`가 6초 안에 503을 내는가. 넣기 전에는 **20초 안에 돌아오지 않았다**. 넣은 뒤 실측 **503, 3.0초** |
+| 로그인 시간당 IP 한도 200회 | `LoginIPHourThrottle`(`auth_login_ip_hour`)을 분당 IP 한도 다음, 주소 한도 **앞**에 | 테스트 1개 + 결정 표 테스트 갱신. 변이 2건 검출: 한도 제거 / 주소 한도 뒤로 옮김(그러면 거절된 요청이 주소 카운터를 연다). 10만 행을 채우는 데 필요한 IP: 약 84개 → **약 500개** |
+| `.env.example` | `DJANGO_SETTINGS_MODULE` 줄을 지우고 이유를 주석으로. 운영 전용 값(`DJANGO_EMAIL_BACKEND`·`DRF_NUM_PROXIES`)은 **주석으로만** 안내한다 — 미리 채운 값이 배포로 복사되면 틀린 숫자가 조용히 통과한다. 값 뒤 같은 줄 주석(`docker run --env-file`은 주석을 값으로 읽는다)과 끝 줄바꿈 정리 | 로컬 compose·호스트 테스트 영향 없음(compose가 local을 직접 지정, `manage.py` 기본값 local). Owner의 실제 `.env`에 같은 줄이 있다면 지워도 된다 |
+
+**남은 것**: `connect_timeout`은 **새 연결**만 지킨다. 이미 열린 영구 연결(`CONN_MAX_AGE` 60초) 위의 질의가 매달리는 경우는 막지 못한다. Phase 3에서 probe `timeoutSeconds`와 `tcp_user_timeout`을 함께 검토한다(ADR-010 후속 기록).

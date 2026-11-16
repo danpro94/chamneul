@@ -300,3 +300,50 @@ class ErrorLoggingTests(SimpleTestCase):
                 # 두 번이면 핸들러가 겹친 것이다(django 로거 + 루트 로거).
                 self.assertEqual(result.stderr.count("Traceback"), 1)
                 self.assertNotIn("Not Found: /no-such-page", result.stderr)
+
+
+# 패킷을 버리기만 하는 주소(응답도 거절도 없다) — 보안그룹이 막은 DB의 모양.
+SILENT_DB_HOST = "10.255.255.1"
+
+READYZ_AGAINST_A_SILENT_DB = """
+import time
+import django
+django.setup()
+from django.test import Client
+start = time.monotonic()
+status = Client().get("/readyz").status_code
+print(status, round(time.monotonic() - start, 1))
+"""
+
+
+class SilentDatabaseTests(SimpleTestCase):
+    """TASK-005 devops 리뷰 M-2 — DB가 패킷을 버리면 연결 시도가 OS 타임아웃까지
+    매달린다(1분 이상). 그동안 sync 워커가 묶이고, 같은 워커가 답하는 /healthz까지
+    막혀 liveness가 모든 파드를 재시작한다 — ADR-010이 막으려던 연쇄다."""
+
+    def test_the_connection_gives_up_after_three_seconds(self):
+        params = connections["default"].get_connection_params()
+
+        self.assertEqual(params["connect_timeout"], 3)
+
+    def test_readyz_answers_503_within_seconds_when_the_database_is_silent(self):
+        """실제 설정을 새 인터프리터에 올려 DB만 버리는 주소로 돌린다. 망이 그 주소를
+        즉시 거절하면 이 테스트는 빨리 통과할 뿐 증명하지 못한다 — 위의 값 확인이
+        함께 있는 이유다."""
+        result = subprocess.run(
+            [sys.executable, "-c", READYZ_AGAINST_A_SILENT_DB],
+            cwd=settings.BASE_DIR,
+            env={
+                **{k: v for k, v in os.environ.items() if k != "DJANGO_SETTINGS_MODULE"},
+                "DJANGO_SETTINGS_MODULE": "config.settings.local",
+                "DB_HOST": SILENT_DB_HOST,
+                "DB_PORT": "5432",
+            },
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        status, seconds = result.stdout.split()
+
+        self.assertEqual(status, "503", result.stderr)
+        self.assertLess(float(seconds), 6)

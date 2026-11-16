@@ -105,6 +105,12 @@ DATABASES = {
         "HOST": os.environ.get("DB_HOST", "localhost"),
         "PORT": os.environ.get("DB_PORT", "5432"),
         "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", "60")),
+        # A database that drops packets would otherwise hold a connection
+        # attempt for the OS TCP timeout (over a minute). The sync worker stays
+        # stuck, /healthz on the same worker stops answering, and liveness
+        # restarts every pod — what ADR-010 split the probes to prevent.
+        # 3 s: well inside gunicorn's 30 s and a typical probe timeout.
+        "OPTIONS": {"connect_timeout": 3},
     }
 }
 
@@ -220,6 +226,9 @@ REST_FRAMEWORK = {
     # reads it per request). DRF counts every request, failed logins included.
     "DEFAULT_THROTTLE_RATES": {
         "auth_login_ip": "20/min",
+        # Caps how many address counters one IP can open (TASK-005 review M-2):
+        # 200 an hour means ~500 IPs to fill MAX_ENTRIES, not ~84.
+        "auth_login_ip_hour": "200/hour",
         "auth_login_email": "10/hour",
         "auth_signup_ip": "10/hour",
         "password_reset_ip": "10/hour",

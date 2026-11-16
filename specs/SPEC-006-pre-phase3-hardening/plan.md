@@ -77,7 +77,7 @@ config/health.py
 
 **미들웨어가 왜 필요한가**: kubelet과 ALB는 `http://<파드IP>:8000/healthz`로 묻는다. Django 기본 흐름이면 ① `SecurityMiddleware`가 `SECURE_SSL_REDIRECT`로 **301**을 돌려주고(ALB 헬스체크는 기본 200만 성공) ② `CommonMiddleware`가 `ALLOWED_HOSTS`에 없는 파드 IP를 **400**(DisallowedHost)으로 막는다. 두 검사보다 앞에서, 데이터가 없는 두 경로만 받는다.
 
-DB 체크는 짧게 끝나야 한다 — 연결 시도가 길어지면 probe 타임아웃이 먼저 온다. `connect_timeout`은 Phase 3 probe 설정(`timeoutSeconds`)과 함께 정한다(기록만).
+DB 체크는 짧게 끝나야 한다 — 연결 시도가 길어지면 probe 타임아웃이 먼저 온다. `connect_timeout`은 Phase 3 probe 설정(`timeoutSeconds`)과 함께 정한다(기록만). → **2026-11-16 3초로 앞당김**(Owner 승인, TASK-005 devops 리뷰 M-2 — ADR-010 후속).
 
 ## 4. 운영 경로 설계 (TASK-003)
 

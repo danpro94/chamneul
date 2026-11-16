@@ -6,6 +6,50 @@
 
 ---
 
+## 2026-11-16 — SPEC-006/TASK-005 후속: 리뷰 결정 3건 반영 [위임 · `.env.example`은 Owner가 이번에 한해 허락]
+
+### 작업
+
+TASK-005 리뷰에서 남은 결정 가운데 Owner가 승인한 3건을 PR #20에 더했다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)
+
+### Owner 결정
+
+다음 세 가지를 승인했다. 역할 허용 목록 방식은 Phase 3 전에 검토한다.
+
+* DB 연결 대기 3초 제한
+* 로그인 시간당 IP 한도
+* `.env.example` 수정(이번 한 번만 AI 허락)
+
+### 생성 산출물
+
+* 코드: `config/settings/base.py`(`connect_timeout`, 한도 표), `common/throttling.py`·`accounts/views.py`(`LoginIPHourThrottle`)
+* 테스트: `accounts/tests.py`(+1, 결정 표 갱신), `config/tests.py`(+2)
+* 설정 예시: `.env.example`
+* 문서: api.md §1.10, ADR-010 후속, SPEC-006 spec·plan·tasks, 리뷰 노트 09 §5-6, STATUS
+
+### 검증 결과
+
+* 기본 검증: 테스트 458개 OK, `check`, `makemigrations --check`, `ruff check` 모두 통과.
+* 선-실패를 확인했다. 대기 제한 테스트는 넣기 전에 20초 시간 초과로 끝났다.
+* 실측: 패킷을 버리는 DB에 대해 `/readyz` 503이 3.0초에 나온다.
+* 변이 2건(한도 제거, 순서 뒤바꿈) 모두 검출했다.
+
+### 이번에 드러난 것
+
+* Owner가 `.env.example`에 붙인 값 뒤 같은 줄 주석은 `docker run --env-file`이 값의 일부로 읽는다. 재설정 링크가 깨질 형태였다.
+* 운영 전용 값을 예시 파일에 미리 채우면, 그 파일이 배포로 복사될 때 틀린 숫자가 기동 가드를 통과한다(가드는 "있는가"만 본다). 그래서 주석으로만 안내했다.
+
+### 잔여 리스크
+
+* 이미 열린 영구 연결 위의 질의가 매달리는 경우는 `connect_timeout`이 막지 못한다(Phase 3 `tcp_user_timeout`).
+* Owner의 실제 `.env`에 `DJANGO_SETTINGS_MODULE` 줄이 남아 있을 수 있다. 로컬에는 영향이 없다.
+
+---
+
 ## 2026-11-09 — SPEC-006/TASK-005 마무리: 서브에이전트 리뷰 2종 + PR [위임 · 머지는 Owner]
 
 ### 작업

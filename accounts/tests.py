@@ -2560,8 +2560,28 @@ class RateLimitTests(AuthTestBase):
                     )
                     self.assertEqual(cursor.fetchone()[0], 2)
 
+    @with_rates(auth_login_ip="1000/min", auth_login_ip_hour="3/hour")
+    def test_login_also_has_an_hourly_ip_cap(self):
+        """분당 한도만으로는 IP 하나가 시간당 1,200개의 주소 카운터를 만든다 —
+        IP 약 84개면 10만 행을 채워 컬링으로 남의 계정 한도를 지운다(TASK-005
+        보안 리뷰 M-2). 시간당 한도가 행 수를 그 IP 한도로 묶는다. 거절된
+        요청은 주소 카운터를 만들지 않아야 한다(시간당 IP 스로틀이 주소보다 앞)."""
+        ip = "192.0.2.77"
+        statuses = [
+            self.login_from(ip, email=f"spray{n}@example.com").status_code for n in range(5)
+        ]
+
+        self.assertEqual(statuses, [401, 401, 401, 429, 429])
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) FROM django_cache WHERE cache_key LIKE %s",
+                ["%throttle_auth_login_email_%"],
+            )
+            self.assertEqual(cursor.fetchone()[0], 3)
+
     def test_real_table_matches_decision_2(self):
-        """결정 2(2026-11-04 승인). 테스트 설정은 한도를 크게 덮어쓰므로 원본
+        """결정 2(2026-11-04 승인) + 로그인 시간당 IP 한도(2026-11-16 승인,
+        TASK-005 보안 리뷰 M-2). 테스트 설정은 한도를 크게 덮어쓰므로 원본
         설정 모듈을 직접 본다 — 누가 한도를 슬쩍 풀면 여기서 걸린다."""
         from config.settings import base
 
@@ -2569,6 +2589,7 @@ class RateLimitTests(AuthTestBase):
             base.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"],
             {
                 "auth_login_ip": "20/min",
+                "auth_login_ip_hour": "200/hour",
                 "auth_login_email": "10/hour",
                 "auth_signup_ip": "10/hour",
                 "password_reset_ip": "10/hour",

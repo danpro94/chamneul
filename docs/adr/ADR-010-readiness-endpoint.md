@@ -77,6 +77,7 @@ probe 경로는 **인프라 계약**이다(k8s 매니페스트·ALB 대상 그�
 * **보안 헤더가 붙지 않는다.** `SecurityMiddleware`보다 앞에서 답하므로 HSTS·nosniff가 없다. JSON 고정 본문이라 실익이 없다.
 * **probe가 DB에 질의를 더한다.** 파드당 probe 주기마다 `SELECT 1` 한 번이다. 무시할 수준이다.
 * **연결이 오래 매달리면 워커가 묶인다.** DB 호스트가 응답 없이 패킷만 버리면 연결 시도가 OS 기본 타임아웃까지 걸린다. gunicorn sync 워커가 그동안 묶인다. `connect_timeout`은 Phase 3 probe 설정(`timeoutSeconds`)과 함께 정한다(SPEC-006 plan §3, 기록만).
+  * *후속 2026-11-16 (Owner 승인, SPEC-006 TASK-005 devops 리뷰 M-2)*: **3초로 앞당겼다.** 미루면 이 ADR의 목적 자체가 깨진다는 것이 드러났기 때문이다. `/healthz`도 같은 sync 워커가 답한다. 그래서 매달린 readiness가 워커 3개를 다 잡으면 liveness도 실패하고, DB 장애 한 번에 모든 파드가 재시작된다. 패킷을 버리는 주소로 실측하니 `/readyz` 503이 3.0초에 나왔다. 아직 남은 것도 있다. **이미 열린 연결 위의 질의가 매달리는 경우**는 `connect_timeout`이 막지 못한다. 이것은 Phase 3에서 probe `timeoutSeconds`와 함께 `tcp_user_timeout`을 검토한다.
 * **DB 장애 때 모든 파드가 not-ready가 된다.** 의도한 동작이다. 사용자는 Django의 500 대신 로드밸런서의 503을 받는다. 다만 AWS ALB는 대상이 전부 unhealthy이면 **모든 대상에 요청을 보내는**(fail open) 동작이 있다. Phase 3에서 Service·Ingress 구성을 정할 때 확인한다.
 
 ## Consequences

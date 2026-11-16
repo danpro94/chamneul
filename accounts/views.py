@@ -17,6 +17,7 @@ from common.exceptions import Conflict
 from common.permissions import IsAdmin
 from common.throttling import (
     LoginEmailThrottle,
+    LoginIPHourThrottle,
     LoginIPThrottle,
     PasswordResetConfirmIPThrottle,
     PasswordResetEmailThrottle,
@@ -130,8 +131,9 @@ class LoginView(StopAtFirstLimit, APIView):
 
     permission_classes = [AllowAny]
     # The per-account limit is the real brute-force guard: changing IPs does
-    # not reset it. The IP limit is generous for shared campus/office IPs.
-    throttle_classes = [LoginIPThrottle, LoginEmailThrottle]
+    # not reset it. The IP limits are generous for shared campus/office IPs.
+    # Both IP limits come first, so a refused request opens no address counter.
+    throttle_classes = [LoginIPThrottle, LoginIPHourThrottle, LoginEmailThrottle]
 
     @method_decorator(sensitive_variables())
     def post(self, request):
