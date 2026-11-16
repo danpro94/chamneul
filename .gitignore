@@ -8,6 +8,11 @@
 # public 저장소에는 가공 요약본만 공개한다.
 docs/_private/
 
+# --- Owner 로컬 전용 기록 (Owner 요청 2026-11-04) ---
+# 내 AWS·도메인 계정의 실제 진행 현황(B-5~B-8). 절차는 추적되는
+# OWNER-ACTIONS-GUIDE.md에 두고, 개인 계정 상태만 저장소 밖에 둔다.
+docs/00-project/OWNER-ACTIONS-STATUS.local.md
+
 # --- Python virtual env (uv-managed) ---
 .venv/
 

@@ -173,7 +173,7 @@ Authentication:
 
 ## 5. MVP Scope Boundaries
 
-Owner decision (2026-06-22): Phase 2 v1 implements the **full API surface** derived from Notion v0 (41 original − 1 refresh-token removed + `/healthz` + admin-role grant/revoke = 43), **extended to 44 endpoints on 2026-07-08 (D-1)** with the CSRF-bootstrap endpoint (`GET /api/v1/csrf`), and **extended again to 47 on 2026-09-22 (ADR-008)** — see docs/api.md §3 for the authoritative count. Outcome tracking and trust score are the only domain capabilities deferred to a later phase.
+Owner decision (2026-06-22): Phase 2 v1 implements the **full API surface** derived from Notion v0 (41 original − 1 refresh-token removed + `/healthz` + admin-role grant/revoke = 43), **extended to 44 endpoints on 2026-07-08 (D-1)** with the CSRF-bootstrap endpoint (`GET /api/v1/csrf`), **extended again to 47 on 2026-09-22 (ADR-008)**, and **to 48 on 2026-11-07 (ADR-010)** with the readiness probe `GET /readyz` — see docs/api.md §3 for the authoritative count. Outcome tracking and trust score are the only domain capabilities deferred to a later phase.
 
 The three endpoints added by ADR-008 close gaps that the MVP UI prototype surfaced — both are capabilities a user assumes exist, and neither was visible while reading the spec alone:
 
@@ -182,7 +182,7 @@ The three endpoints added by ADR-008 close gaps that the MVP UI prototype surfac
 
 In scope for Phase 2:
 
-* `/healthz`
+* `/healthz` (liveness) and `/readyz` (readiness, ADR-010)
 * local account signup / login / logout (Session-based, see §4)
 * Google OAuth login (callback issues the same session)
 * user profile read / update, role list, active-role switch
@@ -372,7 +372,7 @@ Soft delete (project-wide convention):
 
 URI rules:
 
-* All versioned APIs use the `/api/v1/` prefix. `/healthz` is the only unversioned endpoint.
+* All versioned APIs use the `/api/v1/` prefix. `/healthz` (liveness) and `/readyz` (readiness, ADR-010) are the only unversioned endpoints.
 * Do not include trailing slash.
 * Use hyphen instead of underscore in URI segments and in path-parameter placeholder names.
 * Use nouns, not verbs.
@@ -385,6 +385,7 @@ Examples:
 Good:
 
 * `/healthz`
+* `/readyz`
 * `/api/v1/users/me/concerns`
 * `/api/v1/users/me/concerns/{concern-id}`
 * `/api/v1/admin/concerns/{concern-id}/assignments`
@@ -571,6 +572,7 @@ Constitutional lock (Owner directive):
 * The 2026-06-26 edit explicitly absorbed the SQLite-exclusion rule (§4) and the `deleted_at` soft-delete convention with partial-unique enforcement (§6.6) directly into CLAUDE.md, so no separate supersession ADR is required for these clauses.
 * ADR-006 (AI-Native / Spec-Driven skeleton, Accepted 2026-09-10) explicitly supersedes §2 (Source of Truth Order), §3 (Current Known Project Tree), §5 (endpoint count 43→44), §9-§12 (split into `.claude/rules/*.md`), §13 (STATUS.md/specs maintenance added), and §17 (workflow replaced) per the process this section requires. The edits are applied verbatim from ADR-006's Consequences section.
 * ADR-008 (password reset + concern edit, Accepted 2026-09-22) explicitly supersedes §5's endpoint count (44 → 47) and adds the three endpoints' domain rules to that section. The gaps were found by building the MVP UI, not by reading the spec — **a screen needs a button for every capability a user assumes exists, and that assumption is not visible in an endpoint list.**
+* ADR-010 (readiness endpoint `/readyz`, Accepted 2026-11-07) explicitly supersedes §5's endpoint count (47 → 48) and §7's "`/healthz` is the only unversioned endpoint" sentence. Liveness and readiness stay separate on purpose: **a DB outage must take pods out of rotation, not restart every one of them.**
 * ADR-007 (`advice.version` counts body revisions, Accepted 2026-09-14) explicitly supersedes the second bullet of §6.7. It was written *after* the implementation already followed the new rule — a 2026-09-11 SPEC decision changed behaviour without an ADR, and the gap was caught by an `api-architect` review on 2026-09-13. The lesson is recorded here deliberately: **a SPEC decision that contradicts a CLAUDE.md clause needs an ADR at the moment of the decision, not at review time.**
 
 ---

@@ -21,9 +21,9 @@ chamneul/
 ├── .claude/rules/         # CLAUDE.md §9~§12 세부 체크리스트 (coding/security/testing/infrastructure)
 ├── accounts/ advisors/ concerns/ advice/ notifications/  # 도메인 앱 (Django 관용 구조, src/ 미도입)
 ├── common/                # 앱 간 공유 유틸 (permissions, pagination, uuid7, taxonomy)
-├── config/                # settings(local/test/prod 분리), urls, /healthz
+├── config/                # settings(local/test/prod 분리), urls, /healthz·/readyz
 ├── docs/
-│   ├── api.md             # API 계약 (44 엔드포인트, 단일 파일 유지)
+│   ├── api.md             # API 계약 (48 엔드포인트, 단일 파일 유지)
 │   ├── model.md            # 데이터 모델 / ERD / 제약
 │   ├── adr/                # Architecture Decision Records
 │   ├── 00-project/STATUS.md  # 현재 구현 상태 — 세션 시작 시 먼저 읽을 곳
@@ -39,15 +39,23 @@ chamneul/
 cp .env.example .env   # 값 채우기 (CLAUDE.md §10 — .env는 절대 커밋하지 않는다)
 docker compose up -d
 docker compose exec app python manage.py migrate        # 없으면 첫 쓰기 API가 500난다
+docker compose exec app python manage.py createcachetable   # 없으면 가입·로그인·재설정만 500난다
 docker compose exec -it app python manage.py createsuperuser
-curl http://localhost:8000/healthz   # {"status": "ok"} 기대
+curl http://localhost:8000/healthz   # {"status": "ok"} 기대 — liveness, DB를 보지 않는다
+curl http://localhost:8000/readyz    # {"status": "ok", "checks": {"database": "ok"}} — readiness
 ```
 
-`migrate`를 건너뛰면 `/healthz`는 200인데 데이터를 쓰는 API만 500이 난다(`relation ... does not exist`). 그 증상의 진단법은 [docs/smoke-test.md](docs/smoke-test.md) §4-1에 있다.
+`migrate`를 건너뛰면 `/healthz`는 200인데 데이터를 쓰는 API만 500이 난다(`relation ... does not exist`). 그 증상의 진단법은 [docs/smoke-test.md](docs/smoke-test.md) §4-1에 있다. `createcachetable`은 마이그레이션이 아니다 — 요청 횟수 제한 카운터 테이블(`django_cache`)을 만든다(smoke-test §2-1).
 
-리셋: `docker compose down -v` (named volume `pgdata` 포함 삭제 — DB 초기화).
+**패키지(의존성)가 바뀐 뒤에는** 앱 이미지를 다시 만들고 익명 볼륨 `/app/.venv`도 새로 만든다. `-V`가 없으면 예전 `.venv`가 다시 붙어 `ModuleNotFoundError`가 난다.
 
-맨바닥에서 사용자 여정 전체를 통과시키는 절차, DB 장애 시 거동, 운영 체크리스트(로그·백업·복원·포트)는 **[docs/smoke-test.md](docs/smoke-test.md)** 를 본다. 자동 테스트(291개)는 테스트 전용 DB에서 돌아 "코드가 의도대로 동작하는가"를 답하고, 스모크 테스트는 실제 볼륨 위에서 **"시스템이 맨바닥에서 일어서는가"** 를 답한다.
+```bash
+docker compose up -d --build -V app
+```
+
+리셋: `docker compose down -v` (named volume `pgdata` 포함 삭제 — DB 초기화). 다시 올린 뒤 위의 `migrate` → `createcachetable` → `createsuperuser`. 지우기 전 백업·복원은 smoke-test §6.
+
+맨바닥에서 사용자 여정 전체를 통과시키는 절차, DB 장애 시 거동, 운영 체크리스트(로그·백업·복원·포트)는 **[docs/smoke-test.md](docs/smoke-test.md)** 를 본다. 자동 테스트(455개)는 테스트 전용 DB에서 돌아 "코드가 의도대로 동작하는가"를 답하고, 스모크 테스트는 실제 볼륨 위에서 **"시스템이 맨바닥에서 일어서는가"** 를 답한다.
 
 ## 문서 지도
 

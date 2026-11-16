@@ -6,6 +6,471 @@
 
 ---
 
+## 2026-11-16 — SPEC-006/TASK-005 후속: 리뷰 결정 3건 반영 [위임 · `.env.example`은 Owner가 이번에 한해 허락]
+
+### 작업
+
+TASK-005 리뷰에서 남은 결정 가운데 Owner가 승인한 3건을 PR #20에 더했다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)
+
+### Owner 결정
+
+다음 세 가지를 승인했다. 역할 허용 목록 방식은 Phase 3 전에 검토한다.
+
+* DB 연결 대기 3초 제한
+* 로그인 시간당 IP 한도
+* `.env.example` 수정(이번 한 번만 AI 허락)
+
+### 생성 산출물
+
+* 코드: `config/settings/base.py`(`connect_timeout`, 한도 표), `common/throttling.py`·`accounts/views.py`(`LoginIPHourThrottle`)
+* 테스트: `accounts/tests.py`(+1, 결정 표 갱신), `config/tests.py`(+2)
+* 설정 예시: `.env.example`
+* 문서: api.md §1.10, ADR-010 후속, SPEC-006 spec·plan·tasks, 리뷰 노트 09 §5-6, STATUS
+
+### 검증 결과
+
+* 기본 검증: 테스트 458개 OK, `check`, `makemigrations --check`, `ruff check` 모두 통과.
+* 선-실패를 확인했다. 대기 제한 테스트는 넣기 전에 20초 시간 초과로 끝났다.
+* 실측: 패킷을 버리는 DB에 대해 `/readyz` 503이 3.0초에 나온다.
+* 변이 2건(한도 제거, 순서 뒤바꿈) 모두 검출했다.
+
+### 이번에 드러난 것
+
+* Owner가 `.env.example`에 붙인 값 뒤 같은 줄 주석은 `docker run --env-file`이 값의 일부로 읽는다. 재설정 링크가 깨질 형태였다.
+* 운영 전용 값을 예시 파일에 미리 채우면, 그 파일이 배포로 복사될 때 틀린 숫자가 기동 가드를 통과한다(가드는 "있는가"만 본다). 그래서 주석으로만 안내했다.
+
+### 잔여 리스크
+
+* 이미 열린 영구 연결 위의 질의가 매달리는 경우는 `connect_timeout`이 막지 못한다(Phase 3 `tcp_user_timeout`).
+* Owner의 실제 `.env`에 `DJANGO_SETTINGS_MODULE` 줄이 남아 있을 수 있다. 로컬에는 영향이 없다.
+
+---
+
+## 2026-11-09 — SPEC-006/TASK-005 마무리: 서브에이전트 리뷰 2종 + PR [위임 · 머지는 Owner]
+
+### 작업
+
+Owner가 TASK-005를 Go했다. `security-reviewer`와 `devops-local-platform`을 병렬 백그라운드로 돌렸다(읽기 전용). 지적은 직접 재확인했다. 결정이 필요 없는 것은 고쳤고, 나머지는 결정 항목으로 정리한 뒤 PR을 만들었다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)와 서브에이전트 `security-reviewer`·`devops-local-platform`
+
+### Owner 결정
+
+* TASK-005 진행 승인.
+* prod `DRF_NUM_PROXIES` 가드는 "보안 우선" 방향에 따라 이 PR에 넣었다. 값은 배포 구성이 정한다.
+* 결정 대기 4건: 리뷰 노트 09 §5-2.
+
+### 생성 산출물
+
+* 코드: `config/settings/{prod,base}.py`(가드, 빈 값 처리), `config/tests.py`(+1)
+* 스크립트: `scripts/smoke-journey.sh`
+* 문서: README, smoke-test §2-1·§6, AI-TOOLING-SETUP-GUIDE §7.3, 리뷰 노트 09 §1-8 정정·§5, SPEC-006 tasks·acceptance, STATUS
+
+### 검증 결과
+
+* 기본 검증: 테스트 455개 OK, `check`, `makemigrations --check`, `ruff` 모두 통과.
+* 가드 제거 변이 검출.
+* 스모크 임시 폴더: 700/600, 종료 후 삭제 확인.
+* 복원 검증 명령: `f|f|0`.
+* Dockerfile·compose 변경 0줄.
+
+### 이번에 드러난 것
+
+* **내가 쓴 리뷰 노트의 숫자가 틀렸다.** 분당 한도를 시간으로 환산하지 않아 공격에 필요한 IP를 "수천 개"로 적었다. 실제로는 약 84개다. 리뷰어가 Django 소스와 계산으로 잡았다. 자기 검증만으로는 놓친다.
+* **가장 큰 지적은 코드가 아니라 절차였다.** 같은 절차가 문서 세 곳에 있는데, 한 곳만 고쳤다.
+* liveness와 readiness를 나눴지만, 둘 다 같은 sync 워커가 답한다. DB `connect_timeout`이 없으면 느린 readiness가 liveness까지 죽일 수 있다. ADR-010이 미룬 항목이 실제로는 그 ADR의 목적을 지키는 데 필요했다.
+
+### 잔여 리스크
+
+* 머지 전 결정 4건이 남았다. 특히 `connect_timeout`.
+* Owner 인프라 코멘트 4건이 남았다. 이미지에 `.playwright-mcp/`·`.claude/`가 들어가는 문제 등이다.
+* 스모크 스크립트의 바뀐 부분(임시 폴더·관리자 로그아웃)은 부분 검증만 했다. 전체 재실행은 Owner DB에 계정을 만들기 때문이다. 다음 맨바닥 실행 때 확인한다.
+
+---
+
+## 2026-11-09 — SPEC-006/TASK-004 후속: 읽기 전용 MCP 역할을 fail closed로 [위임 · Owner 결정 "보안 우선"]
+
+### 작업
+
+`setup-postgres-ro-role.sh`에서 "새 테이블 자동 읽기 허용"을 없앴다. 남아 있는 규칙은 명시적으로 회수하도록 바꿨다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)
+
+### Owner 결정
+
+리뷰 노트 09 §4-7의 권고(fail closed)를 승인했다.
+
+### 생성 산출물
+
+`.claude/mcp/setup-postgres-ro-role.sh`, AI-TOOLING-SETUP-GUIDE §7.2·§7.3, smoke-test §6, 리뷰 노트 09 §4-8, SPEC-006 tasks, STATUS
+
+### 검증 결과
+
+* 자동 규칙: 1개 → 0개.
+* 기존 경계는 그대로다.
+* 새로 만든 테이블은 읽히지 않는다(`false`).
+* 지금 스키마 덤프에 규칙 줄이 0개다.
+* 옛 덤프를 연습용 DB에 복원해도 비밀번호 열과 세션이 거부된다.
+
+### 잔여 리스크
+
+* 옛 덤프는 끝부분에서 규칙을 되살린다. 복원 뒤 스크립트 재실행은 계속 필수다.
+* 마이그레이션으로 테이블이 생기면 MCP에서 안 보이다가 스크립트를 다시 돌려야 보인다. 의도한 불편이다.
+
+---
+
+## 2026-11-09 — SPEC-006/TASK-004 스모크 15단계 맨바닥 재통과 + 백업·복원 실증 [위임 · 인프라 파일 무수정]
+
+### 작업
+
+Owner가 TASK-004를 Go했다. 진행 순서는 다음과 같다.
+
+1. 스모크 스크립트에 13~15단계를 추가했다.
+2. 백업을 받고 볼륨을 비운 뒤, 빈 DB에서 15단계를 돌렸다.
+3. 읽기 전용 MCP 역할을 다시 만들었다.
+4. 백업을 복원해 Owner 데이터를 되돌렸다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)
+
+### Owner 결정
+
+* TASK-004 Go.
+* 결정 대기: 역할 스크립트의 "새 테이블 자동 읽기 허용"을 없앨지(리뷰 노트 09 §4-7, 권고는 없앤다).
+
+### 생성 산출물
+
+`scripts/smoke-journey.sh`(13~15단계), smoke-test §2·§3·§6, AI-TOOLING-SETUP-GUIDE §7.3, 리뷰 노트 09 §4, SPEC-006 tasks·acceptance, STATUS
+
+### 검증 결과
+
+* 15단계 첫 실행에 전항 통과.
+* 출력에 실제 토큰이 하나도 없다.
+* 복원 뒤 21개 테이블의 행 수가 백업 전과 전부 일치한다.
+* 읽기 전용 역할의 경계를 호스트에서 비밀번호 인증으로 확인했다. 컨테이너 안 연결은 비밀번호를 보지 않기 때문이다.
+
+### 이번에 드러난 것
+
+* **복원이 읽기 전용 역할의 권한을 조용히 넓혔다.** 복원은 exit 0이고 오류도 없었다. 그런데 비밀번호 해시와 세션이 읽혔다. "exit 0"으로 복원을 판정했다면 놓쳤다. 이번에는 복원 후 검증에 행 수 비교와 권한 확인을 넣었기 때문에 잡았다.
+* 문서의 복원 절차는 한 번도 끝까지 돌려 본 적이 없었다. 처음 돌리자 순서 조건 2개가 나왔다.
+* smoke-test §2-2의 `['USER','ADMIN']`은 API의 표시값이다. DB에는 `ADMIN` 행만 있는 것이 설계대로다. 회귀로 오인하기 쉬워 문서에 보충했다.
+
+### 잔여 리스크
+
+* 역할 스크립트의 기본 권한은 여전히 fail open이다. 앞으로 민감한 테이블이 생기면 자동으로 읽힌다(Owner 결정 대기).
+* 백업 파일 `~/chamneul-backup-20261109.sql`에는 비밀번호 해시와 세션이 들어 있다. 권한은 600이다. 필요 없으면 Owner가 지운다.
+
+---
+
+## 2026-11-09 — SPEC-006/TASK-003 후속: 운영 500의 원인을 컨테이너 로그에 [위임 · Owner가 범위 추가 승인]
+
+### 작업
+
+TASK-003에서 발견한 갭 12를 고쳤다. 운영에서 500의 트레이스백이 어디에도 남지 않던 문제다. 해결은 Django 내장 `LOGGING` 설정 한 블록이고, 패키지는 추가하지 않았다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)
+
+### Owner 결정
+
+"Production에서 500 에러의 원인이 로그에 남도록 SPEC-006에 넣기" 승인. 4xx 줄을 끄는 것은 그 범위 안의 구현 판단이다. 근거는 리뷰 노트 09 §3-8에 적었다.
+
+### 생성 산출물
+
+`config/settings/base.py`(LOGGING), `config/settings/test.py`, `config/tests.py`(+1), 리뷰 노트 09 §3-8, smoke-test 갭 12, SPEC-006 tasks·acceptance, STATUS
+
+### 검증 결과
+
+* 기본 검증: 테스트 454개 OK, `check`, `makemigrations --check`, `ruff` 모두 통과.
+* 변이 4건 전부 검출.
+* 실제 이미지를 테이블 없는 DB에 붙여 500을 만들고, 원인 줄이 로그에 남는 것을 확인했다.
+
+### 이번에 드러난 것
+
+* **틀린 이유로 "검출"된 변이가 있었다.** `LOGGING`을 지우는 변이는 테스트가 아니라 설정 로딩에서 죽었다. 결과 줄이 `?`인 것을 보고 알아챘고, 종전과 동작이 같은 빈 설정으로 다시 쟀다. 변이 결과는 "실패했다"만이 아니라 **어떤 테스트가 왜 실패했는지**까지 봐야 한다.
+* 실제 이미지에서 요청 하나에 ERROR가 두 번 남았다. 핸들러가 겹친 것이 아니었다. 프레임을 보니 예외가 두 번 난 것이었다(뷰 인증 단계와 `SessionMiddleware` 응답 단계). 중복처럼 보이는 것은 출처부터 확인한다.
+
+### 잔여 리스크
+
+* 트레이스백의 예외 메시지에 개인정보가 섞일 수 있다(예: DB 중복 키 오류의 값). Phase 3 로그 보존 기간은 처리방침과 함께 정한다.
+* 잘못된 Host로 오는 스캐너 요청은 ERROR와 트레이스백을 남긴다. ALB에서 Host를 먼저 거르는 일은 Phase 3에 한다.
+
+---
+
+## 2026-11-07 — SPEC-006/TASK-003 운영 경로 (prod 가드 · 진입점 · WhiteNoise · 실제 이미지 기동) [위임 · 인프라 파일 무수정]
+
+### 작업
+
+Owner가 TASK-003 진행을 승인했다. 다음을 구현했다.
+
+* prod 기동 가드 2개
+* wsgi/asgi 진입점 기본값 prod
+* WhiteNoise
+
+빌드한 이미지는 compose를 고치지 않고 `docker run`으로 한 번 띄웠다. 같은 턴에 C-3의 결정 3건 승인을 기록했다. Owner가 물은 "CLI를 가장 안전하게 계정에 연결하는 법"은 AWS 공식 문서로 확인해 가이드 B-3a로 남겼다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code)와 web-fetch 서브에이전트(AWS 공식 문서 읽기)
+
+### Owner 결정
+
+* TASK-003 진행 승인.
+* C-3 §0 3건 권고안대로 승인: 민감정보 별도 동의, 만 14세 미만 가입 차단, 조언가 제공 동의.
+* 결정 대기 1건: 새로 발견한 갭 12(운영에서 500 원인이 로그에 남지 않는다)를 SPEC-006에 넣을지.
+
+### 생성 산출물
+
+* 코드: `config/settings/{prod,base,test}.py`, `config/{wsgi,asgi}.py`, `config/tests.py`(+7), `pyproject.toml`·`uv.lock`(whitenoise 6.12.0)
+* 문서: 리뷰 노트 09 §3, smoke-test §5(갭 2·3·11 해소, 12·13 추가), SPEC-006 plan·tasks·acceptance, STATUS, C-3 §0, OWNER-ACTIONS-GUIDE B-3a
+
+### 검증 결과
+
+* 기본 검증: 테스트 453개 OK, `check` 0 issues, `makemigrations --check` No changes, `ruff` passed.
+* 변이 10건 전부 검출.
+* 실제 이미지 12항목 통과. `check --deploy` 0 issues.
+* 계획과 다르게 저장소를 base.py에 둔 근거는 **반대 사례 이미지를 실제로 빌드해** 확인했다. 계획대로 두면 Admin과 DRF 화면이 500이고 헬스체크는 200이다.
+
+### 이번에 드러난 것
+
+* **빌드 산출물은 빌드 때의 설정으로 만들어진다.** 실행할 때 prod를 지정해도 `collectstatic`은 local로 돌았다. 계획서를 그대로 구현했다면 테스트는 전부 통과하고 Admin만 깨진 이미지가 나갔을 것이다.
+* **운영 500의 원인이 어디에도 남지 않는다.** `LOGGING` 설정이 없으면 Django는 `DEBUG=False`에서 요청 오류를 관리자 메일로만 보낸다. 반대 사례에서 500이 3번 났는데 트레이스백은 0줄이었다.
+* gunicorn 26의 제어 소켓이 홈 디렉터리 없는 사용자에게 매번 ERROR를 낸다(Dockerfile은 Owner 영역).
+* 의존성을 추가하면 로컬 compose 앱이 `ModuleNotFoundError`로 멈춘다. 고치려면 `-V`로 익명 `.venv` 볼륨을 새로 만들어야 한다.
+* `aws login`은 IAM Identity Center를 지원하지 않는다. 이 프로젝트의 일상 로그인은 Identity Center라 `aws configure sso`가 맞다.
+
+### 잔여 리스크
+
+* 갭 12가 남아 있는 한 Phase 3 운영 장애의 원인을 로그로 볼 수 없다.
+* compose 안의 운영 프로필(`-f docker-compose.yml` + prod)은 여전히 미검증이다(Owner 영역).
+* `GOOGLE_OAUTH_REDIRECT_URI`의 prod http 기본값은 범위 밖으로 남겼다.
+
+---
+
+## 2026-11-07 — C-1~C-3 개인정보 처리방침·이용약관·민감정보/14세 정책 완성본 [조사·초안 위임 · 결정과 법률 검토는 Owner]
+
+### 작업
+
+Owner가 C-1~C-3을 "복사·붙여넣기 가능한 수준의 완성본"으로 요청했다. 근거는 공식 원문으로 모으라는 조건이었다. Playwright로 다음 원문을 직접 읽었다.
+
+* 국가법령정보센터: 개인정보 보호법·시행령, 안전성 확보조치 기준, 약관법
+* 개인정보보호위원회: 처리방침 작성지침 2026.4판 PDF 185쪽 — 서버가 curl을 막아 브라우저 안에서 받았고, 텍스트 추출에는 macOS 내장 PDFKit을 썼다
+* 공정위 표준약관 97종 목록과 전자상거래 표준약관
+* 한국생명존중희망재단 상담전화
+
+그다음 코드에서 실제 수집 항목과 동작을 대조했다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code), Playwright MCP(공개 문서 읽기 전용)
+
+### Owner 결정
+
+C-3 §0의 3건이다. ① 민감정보는 (b) 별도 동의로 할지 ② 만 14세 미만은 가입을 차단할지 ③ 고민을 조언가에게 보여 주는 것에 동의를 받을지. **같은 날 권고안대로 전부 승인됐다**(위 TASK-003 항목).
+
+### 생성 산출물
+
+`docs/legal/C-1-privacy-policy.md`, `C-2-terms-of-service.md`, `C-3-sensitive-info-and-minors.md`(신규). OWNER-ACTIONS-GUIDE C-1~C-3에는 링크를 걸고 작성지침 판을 바로잡았다. STATUS에도 반영했다.
+
+### 검증 결과
+
+* 작성지침의 기재 사항 24개를 하나씩 대조했다(C-1 §D).
+* 약관법 제3·6·7·9·11·12·14조로 불공정 여부를 점검했다(C-2 §D).
+* 인용한 조문은 전부 원문으로 확인했다. 초안을 쓴 뒤 스스로 검토하다 원문으로 확인하지 않은 인용 5건을 찾았다. 위임장 서식 번호, 명칭 규정 조문, 브라우저 쿠키 경로, 약관법 제14조, 개인정보 보호법 제22조다. 앞의 3건은 원문과 달라 원문대로 고쳤고, 뒤의 2건은 원문과 맞았다(제22조는 더 정확한 인용으로 보강했다).
+
+### 이번에 드러난 것
+
+* **처리방침이 약속해야 할 것 가운데 7가지를 지금 시스템이 하지 못한다.** 그중 가장 큰 것은 탈퇴·파기다. 탈퇴 API가 없고, 사용자 FK가 `PROTECT`라 계정을 지울 수 없다. 문서보다 기능이 먼저다.
+* **법 제17조①2는 제3자 제공의 근거에서 계약 이행을 뺐다.** 그래서 고민을 조언가에게 보여 주려면 동의가 필요하다. 처음 가이드(C-1~C-3)에는 이 쟁점이 없었다.
+* 가이드가 가리키던 작성지침 2025.4판은 이미 2026.4판으로 바뀌어 있었다.
+
+### 잔여 리스크
+
+* 법률 자문이 아니다. 전문가에게 물을 항목을 ★로 표시했다(C-1 4건, C-2 2건, C-3 2건).
+* Phase 3에서 해외 처리 서비스(CloudFront, Sentry 등)를 붙이면 처리방침의 국외 이전 조항을 다시 써야 한다.
+
+---
+
+## 2026-11-07 — SPEC-006/TASK-002 readiness 분리(`/readyz`) + ADR-010 [위임 · 결정은 Owner]
+
+### 작업
+
+1. ADR-010을 Accepted로 작성하고, 그 Consequences 문구를 그대로 CLAUDE.md §5·§7·§16에 옮겼다(헌법 잠금 절차, diff 5곳).
+2. `/readyz`(#48)와 `HealthCheckMiddleware`를 테스트 먼저 구현했다.
+3. 실제 compose 앱에서 DB를 멈췄다가 다시 켜며 확인했다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code). 변이 검증 스크립트는 저장소 밖(scratchpad)에서 돌렸다.
+
+### Owner 결정
+
+* SPEC-006 결정 5(a) `/readyz` 신설을 승인했다(2026-11-04).
+* "ADR-010 추가하여 공식 절차대로" CLAUDE.md 개정과 TASK-002 진행을 승인했다(2026-11-07).
+
+### 생성 산출물
+
+* ADR: `docs/adr/ADR-010-readiness-endpoint.md`(신규), CLAUDE.md §5·§7·§16
+* 코드: `config/health.py`, `config/urls.py`, `config/settings/base.py`(`MIDDLEWARE` 맨 앞)
+* 테스트: `config/tests.py`(신규, 6개)
+* 문서: api.md(머리말·§1.1·§3 요약표 총계 정정·#1·#48 신설), smoke-test §4-2·§5 갭 7·§6, 리뷰 노트 09 §2, SPEC-006 tasks·acceptance(AC-2), STATUS(48/48)
+
+### 검증 결과
+
+* 선-실패: 6개 중 3개 실패를 확인했다(파드 IP로 400, `/readyz` 404, 원인 로그 없음). 나머지 3개는 회귀 방지용이라 처음부터 통과했다.
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / `test` **446개 OK**.
+* 변이 10건을 전부 검출했다. 처음에는 **M9**(질의 없이 연결만 확인)를 놓쳤다. 그래서 "질의 단계 실패" 케이스를 추가했다.
+* 실제 앱: DB가 정상일 때 200, 파드 IP Host도 200, HEAD도 200. `docker compose stop db` 중에는 `/readyz` 503(0.05초)·`/healthz` 200이었고, 서버 로그에만 원인 한 줄이 남았다. `start db` 직후 `/readyz`는 200이었다.
+
+### 이번에 드러난 것
+
+* **변이 검증이 테스트의 빈틈을 찾았다.** 연결 실패만 흉내 낸 테스트는 "연결은 있는데 끊긴" 상태를 증명하지 못했다. `CONN_MAX_AGE=60`이라 DB 재시작 뒤 운영에서 실제로 생기는 상태다.
+* api.md §3 요약표의 "총 44"가 ADR-008 이후 갱신되지 않은 채 남아 있었다. 48로 바로잡았다.
+* ADR-008이 검증 명령으로 적은 `grep -c "^### [0-9]"`는 소제목까지 세서 63이 나온다. ADR-010에는 정확한 명령을 적었다.
+
+### 잔여 리스크
+
+* 패킷만 버리는 장애에서는 연결 시도가 OS 타임아웃까지 매달려 워커가 묶인다. `connect_timeout`은 Phase 3 probe 설정과 함께 정한다.
+* AWS ALB는 대상이 전부 unhealthy이면 모든 대상에 요청을 보낸다(fail open). Phase 3에서 확인이 필요하다.
+* 실제 이미지(gunicorn + prod)로는 아직 확인하지 않았다. TASK-003에서 확인한다.
+
+---
+
+## 2026-11-07 — SPEC-006/TASK-001 후속(첫 거절에서 멈춤) + Owner 계정·도메인 현황 갱신 [위임 · 결정은 Owner]
+
+### 작업
+
+1. Owner 보고를 로컬 현황 문서(git 미추적)에 반영했다. 예전 부트캠프 IAM 계정으로 잘못 진행했던 B-2~B-4를 본인 계정에서 다시 했고, B-5 NS를 교체했고, B-8은 "한도 200"이다.
+2. 공개 DNS를 다시 쟀다. 위임이 정상이다(새 NS 4곳 NOERROR+`aa`, DMARC·MAIL FROM 공개 확인).
+3. Playwright로 AWS 공식 문서를 읽고 B-8 판정 기준을 확인했다. 하루 200통·초당 1통은 샌드박스 한도이고, 신청 양식에는 "Use case description" 칸이 없으며, 언어는 English·Japanese만 있다. 이에 맞춰 가이드 B-8을 정정했다.
+4. Owner가 좁힌 테스트를 조건부 승인했다("운영에 치명적 영향이 없으면"). 그 조건을 확인하는 중에 TASK-001의 구멍을 발견해 테스트 먼저 고쳤다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code), Playwright MCP(공개 문서 읽기 전용), `dig`(읽기 전용).
+
+### Owner 결정
+
+* 좁힌 테스트를 조건부로 승인했다. AI는 예외를 #45 카운터 2개로 다시 좁혀 사각지대를 없앤 뒤 조건 충족을 보고했다.
+* TASK-002 진행을 승인했다(ADR-010을 공식 절차대로).
+
+### 생성 산출물
+
+* 코드: `common/throttling.py` `StopAtFirstLimit`, `accounts/views.py`(인증 뷰 4개)
+* 테스트: 새 1개 + `test_changes_nothing_in_the_database` 강화
+* 문서: 리뷰 노트 09 §1-6 정정·§1-8 신설, SPEC-006 plan·tasks·acceptance(AC-5 체크), STATUS, OWNER-ACTIONS-GUIDE(B-2 흔한 실수, B-5~B-8 상태, B-8 양식·완료 확인), 로컬 현황 문서
+
+### 검증 결과
+
+* 선-실패: 한 IP에서 주소 5개로 요청하면 3번째부터 429인데 주소 카운터 행은 **5개**였다(기대 2개).
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / `test` **440개 OK**.
+* 변이 5건 전건 검출. 처음에는 M4(같은 길이의 이름 맞바꿈)가 낡은 바이트코드 때문에 "놓침"으로 잘못 나왔다. 손으로 확인하니 실패했고, 스크립트를 고쳐 다시 돌렸다.
+
+### 이번에 드러난 것
+
+* **11-04에 "닫았다"고 보고한 컬링 우회는 반만 닫혀 있었다.** DRF는 한 스로틀이 거절한 뒤에도 나머지 스로틀을 평가하고 기록한다. 그래서 한 IP가 주소만 바꿔도 행을 늘릴 수 있었다. 이 결함은 Owner의 조건부 승인을 따져 보는 과정에서 나왔다. 조건을 구체적으로 물으면 검토가 깊어진다.
+* "Free plan 크레딧 소진"(10-25) 기록은 다른 계정 기준이었을 수 있다. 본인 계정에서 재확인이 필요하다.
+
+### 잔여 리스크
+
+* IP가 많은 공격자는 여전히 카운터 행을 늘릴 수 있다. 대응은 Redis나 WAF이며 Phase 3 과제다.
+* 만료된 카운터 행이 테이블에 남는다(키를 다시 읽거나 컬링할 때만 지워진다). Phase 3에 정리 CronJob이 필요하다.
+
+---
+
+## 2026-11-04 — SPEC-006/TASK-001 요청 횟수 제한 + Owner 도메인 작업 현황 기록 [위임 · 결정은 Owner]
+
+### 작업
+
+1. Owner가 SPEC-006 §7 결정 6건을 전부 권고안대로 승인 → 명세에 기록.
+2. Owner가 직접 진행한 B-5~B-8(Route 53·ACM·SES·프로덕션 액세스)의 현황을 **git이 추적하지 않는 로컬 문서**로 정리(`docs/00-project/OWNER-ACTIONS-STATUS.local.md`, `.gitignore` 등록 — Owner 요청). 공개 DNS 실측을 함께 넣었다.
+3. TASK-001(요청 횟수 제한)을 테스트 먼저 구현.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code). `dig`로 공개 DNS 실측(읽기 전용). 변이 검증·쿼리 수 측정 스크립트는 저장소 밖(scratchpad)에서 돌렸다.
+
+### Owner 결정
+
+* SPEC-006 결정 1~6 승인. WhiteNoise 패키지 추가(§16)와 ADR-010·`/readyz` 포함.
+* 도메인 작업은 Owner가 직접 진행했다. ACM(B-6)과 SES 프로덕션 액세스(B-8)는 가이드가 미루자고 했던 단계지만 Owner 판단으로 진행했다 — 결과와 주의점은 로컬 문서에 정리했다.
+
+### 생성 산출물
+
+* 코드: `common/throttling.py`(신규), `accounts/views.py`, `common/exceptions.py`, `config/settings/{base,test}.py`
+* 테스트: `accounts/tests.py` `RateLimitTests` 15개 + 기존 1개 단언 범위 조정
+* 문서: api.md §1.10 신설 + #2·#3·#45·#46, smoke-test §2-1·§5·§6, 리뷰 노트 09(신규), SPEC-006 plan·tasks·acceptance, STATUS, OWNER-ACTIONS-GUIDE(B-5 완료 확인 기준 정정, B-6·B-8 보강), `.gitignore`
+
+### 검증 결과
+
+* 선-실패: 15개 중 13개 실패 확인. 나머지 2개는 회귀 방지용이라 처음부터 통과.
+* `check` 0 issues / `makemigrations --check` No changes / `ruff check` passed / `test` **439개 OK**.
+* 변이 15건 전건 검출 — 그중 **M14**(스로틀이 본문을 지역변수에 담으면 오류 리포트에 비밀번호가 찍힌다)는 실제 노출 경로를 테스트가 잡은 것이다.
+* 실제 compose 앱: 같은 계정으로 10×401 → 11번째 **429**, `Retry-After: 3599`. 캐시 테이블에는 HMAC 키만 있고 원문 주소는 0행.
+* 비용: 스로틀 1개 = SQL 6문. #3·#45는 요청당 +12문.
+
+### 이번에 드러난 것
+
+* **DatabaseCache의 기본 컬링(300개 초과 시 키 순서로 1/3 삭제)은 보안 카운터를 지우는 우회가 된다.** 명세에도 없던 위험으로, Django 소스를 읽다가 찾았다 → `MAX_ENTRIES` 100,000 + 테스트.
+* **B-5 위임 불일치(레임 위임)**: .com 레지스트리는 Route 53 NS 4개를 가리키는데, 그 4곳이 모두 `REFUSED`를 돌려준다. 가이드의 완료 확인(`dig NS +short` 한 줄)으로는 이 상태를 걸러내지 못했다 → 부모·자식 분리 점검으로 가이드를 정정했다. 원인 확인·수정은 Owner 콘솔 작업이다.
+* `.claude/settings.json`(프로젝트 공용 권한 파일)이 승인 창의 "항상 허용"으로 생기고 있다 — `docker compose *`·`uv run *` 같은 넓은 규칙 포함. 커밋하지 않았다.
+
+### 잔여 리스크
+
+* 계정 기준 한도는 남이 일부러 다 써 버릴 수 있다(잠금형 DoS, 1시간) — Phase 3에서 실패만 세기·CAPTCHA.
+* 기존 테스트 1개의 단언 범위 조정은 Owner 확인 대상이다.
+* `DRF_NUM_PROXIES`는 Phase 3 배포 구성(ALB 수)과 맞춰야 한다. `.env.example` 추가는 Owner 손코딩.
+
+---
+
+## 2026-11-02 — SPEC-006 명세(Phase 3 진입 전 하드닝) + 도메인·메일 시작 준비 [위임 · 결정은 Owner]
+
+### 작업
+
+Owner 승인 순서("①~④ 하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수")에 따라 SPEC-006 명세 4종을 썼다. 병행 요청(도메인·인증서·메일을 Phase 3 직전에 시작하는 방법 + Playwright로 직접 진행)에 대해 가이드의 시작 순서를 확정하고, Playwright 창에 AWS·Namecheap 로그인 페이지를 열어 Owner 로그인을 기다리는 상태로 두었다.
+
+### AI 도구
+
+Claude Opus 5.5 (Claude Code) + Playwright MCP(동기화 플러그인). 로그인 대기 시간 동안 명세를 병렬로 작성했다.
+
+### Owner 결정
+
+진행 순서 승인. SPEC-006 §7 결정 6건(카운터 저장소·제한 수치·정적파일·진입점 기본값·readiness·스모크 방식)은 **승인 대기**.
+
+### 생성 산출물
+
+* `specs/SPEC-006-pre-phase3-hardening/{spec,plan,tasks,acceptance}.md`
+* `docs/00-project/OWNER-ACTIONS-GUIDE.md` — "B-5~B-8 시작 순서"(지금 할 것 vs 미룰 것), B-6 ACM을 Phase 3 Terraform으로, B-8 시점 확정
+
+### 검증 결과 (명세를 쓰며 코드·문서로 확인한 사실)
+
+* **DRF 3.18.2 `get_ident()`**: `NUM_PROXIES` 미설정이면 클라이언트가 보낸 `X-Forwarded-For` 전체를 식별자로 쓴다 → 요청마다 XFF를 바꾸면 IP 기준 제한 우회. 명세 §1·§3에 반영.
+* `CACHES` 미설정 = 프로세스별 `LocMemCache` → 제한이 워커·파드 수만큼 풀림.
+* `prod.py`의 `SECURE_SSL_REDIRECT` + `ALLOWED_HOSTS` → kubelet·ALB 헬스체크(파드 IP, HTTP)가 301·400을 받는다 → 헬스 미들웨어 설계.
+* **AWS ACM 문서**: 다른 AWS 서비스에 연결되지 않은 공인 인증서는 **자동 갱신 대상이 아님** → 콘솔 선발급 대신 Phase 3 Terraform으로.
+* readiness 신설은 CLAUDE.md §5·§7과 충돌 → **ADR-010 선행**을 명세에 박았다(ADR-007의 교훈).
+
+### 이번에 드러난 것
+
+**로컬 main이 PR #16 머지를 당겨오지 않은 상태**였다(behind 2). 그 결과 `.claude/mcp/`가 작업 트리에 없어 `postgres-ro` MCP의 실행 스크립트가 사라진 상태였다 — `git pull --ff-only`로 복구 후 `claude mcp list` ✔ 재확인. 머지 후 `git pull`을 빠뜨리면 **설정이 저장소에 있는 도구가 조용히 꺼진다.**
+
+### 잔여 리스크
+
+* 도메인·메일 작업(B-5·B-7)은 Owner 로그인 대기로 미착수.
+* SPEC-006 결정 3(WhiteNoise)은 서드파티 패키지 추가 — §16 승인 필요.
+
+---
+
 ## 2026-10-27 — ADR-009 AI 도구 적용: Dependabot · Semgrep MCP · Postgres 읽기 전용 MCP · Playwright [위임 · 승인은 Owner]
 
 ### 작업

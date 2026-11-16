@@ -1,7 +1,7 @@
 # STATUS — chamneul 프로젝트 현황판
 
 > 이 파일은 **Git이 유일한 source of truth**라는 원칙(ADR-006)의 실행판이다. 실제 코드(`config/urls.py`, 각 앱 `views.py`)를 읽고 사실로만 채운다 — 추측·계획 값은 적지 않는다. **구현 커밋에는 이 파일 갱신이 반드시 동반된다.**
-> 마지막 실측: 2026-10-27 (ADR-009 도구 적용 기준. PR #3~#12 머지 완료 — SPEC-005 머지됨)
+> 마지막 실측: 2026-11-09 (SPEC-006 TASK-005 후속 기준 — 테스트 **458개**, 엔드포인트 **48/48**. PR #3~#16 머지 완료 — Dependabot 보안 PR #13~#15 포함)
 
 ---
 
@@ -12,7 +12,7 @@
 | Phase | **Phase 2 완료 (2026-09-17)** → Phase 3 대기 |
 | 현재 마일스톤 | M5 완료. **ADR-008의 엔드포인트 3건(44 → 47) SPEC-005에서 구현·머지 완료(PR #12)** |
 | M4 진행률 | **8/8 모듈, 44/44 엔드포인트 — 구현·검증 완료.** PR 머지 후 M4 종료 |
-| 다음 | **Owner 결정 대기 (2026-10-27)**: Phase 2 마무리 범위(레이트 리밋·운영 경로 1회 기동·진입점 기본값·프론트엔드 1개 여정)와 Phase 3 착수 순서(CI → 이미지 → IaC → 배포). 진입 전 확인 목록은 [리뷰 노트 07 §3](../reviews/07-phase2-closeout.md)·[리뷰 노트 08](../reviews/08-spec-005-api-gaps.md) |
+| 다음 | **SPEC-006(Phase 3 진입 전 하드닝) 진행 중** — 결정 6건 승인(2026-11-04), **TASK-001~004 완료**(001 후속 11-07, 003 후속 11-09 — 운영 오류 로깅, 004 맨바닥 15단계 11-09) **→ TASK-005 완료 — PR #20 머지 요청 중(2026-11-16).** 리뷰 결정 3건 반영(DB `connect_timeout` 3초, 로그인 시간당 IP 한도, `.env.example`), 역할 허용 목록은 Phase 3 전 검토 → 프론트엔드 범위 ADR → Phase 3 착수 (Owner 승인 순서, 2026-11-02). 병행: 도메인·메일 B-5~B-7 완료, B-8 SES 심사 중([OWNER-ACTIONS-GUIDE](OWNER-ACTIONS-GUIDE.md)) |
 
 | MS | 내용 | 상태 |
 | --- | --- | --- |
@@ -24,7 +24,7 @@
 
 ---
 
-## 2. 구현된 엔드포인트 (47 / 47)
+## 2. 구현된 엔드포인트 (48 / 48)
 
 실측 근거: [config/urls.py](../../config/urls.py) — `accounts.urls`, `advisors.urls`, `concerns.urls`, `advice.urls`, `notifications.urls` 5개 include.
 
@@ -77,8 +77,9 @@
 | 45 | POST | `/api/v1/auth/password-reset` | `PasswordResetView` + [accounts/emails.py](../../accounts/emails.py) (SPEC-005/TASK-003) |
 | 46 | POST | `/api/v1/auth/password-reset/confirm` | `PasswordResetConfirmView` (SPEC-005/TASK-004) |
 | 47 | PATCH | `/api/v1/users/me/concerns/{concern-id}` | [concerns/views.py](../../concerns/views.py) `ConcernDetailView.patch` (SPEC-005/TASK-005) |
+| 48 | GET | `/readyz` | [config/health.py](../../config/health.py) `readyz` + `HealthCheckMiddleware` (SPEC-006/TASK-002, ADR-010) |
 
-## 3. 미구현 엔드포인트 (0 / 47)
+## 3. 미구현 엔드포인트 (0 / 48)
 
 없음. ADR-008로 추가된 #45~#47(2026-09-22, MVP UI 프로토타입을 만들며 드러난 공백 — 명세로만 읽을 때는 보이지 않다가 **화면에 버튼을 놓으려는 순간** 드러났다)은 SPEC-005 TASK-003~005에서 구현했다(2026-10-14). SPEC-005는 TASK-006(마무리 + 결정 대기 항목)이 남았다.
 
@@ -88,7 +89,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 | 지표 | 값 |
 | --- | --- |
-| 엔드포인트 | **44 / 44** — Phase 2 기준. ADR-008로 총계가 47이 되어 현재는 **47/47** (2026-10-14) |
+| 엔드포인트 | **44 / 44** — Phase 2 기준. ADR-008로 총계가 47이 되어 **47/47** (2026-10-14), ADR-010으로 48이 되어 현재는 **48/48** (2026-11-07) |
 | 자동 테스트 | **292** |
 | 검증 4종 | check 0 issues / makemigrations No changes / ruff passed / test OK |
 | 맨바닥 기동 | 볼륨 삭제 후 사용자 여정 12단계 통과 ([smoke-test.md](../smoke-test.md)) |
@@ -98,7 +99,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 
 **Owner 승인 후 처리 5건** (2026-09-17, 리뷰 노트 07 §3-5): compose app healthcheck / Dockerfile gunicorn 액세스 로그 / compose `db`의 `env_file` 제거(앱 시크릿 미주입) / `.env.example` 누락 키 3개 / `restart: unless-stopped` — **§16 불가침 파일이라 승인 후에만 수정**했고, 재빌드 후 두 서비스 `healthy` + 스모크 여정 재통과로 검증했다.
 
-> **Owner 작업 현황 (2026-10-25)** — 단계별 절차: [OWNER-ACTIONS-GUIDE.md](OWNER-ACTIONS-GUIDE.md). 완료: `.env.example` 키 추가, GitHub 2FA + ruleset, AWS 계정·루트 MFA·Identity Center·결제 알림. **남음**: ① Google OAuth secret 회전 마무리(새 secret으로 로그인 성공 확인됨 → 옛 secret 사용 중지·삭제) ② SPEC-005 PR 머지 ③ (Phase 3 직전) 도메인 B-5~B-8 — Route 53·네임서버·ACM·SES. AWS Free plan 크레딧은 소진 상태라 Phase 3 인프라는 첫날부터 과금된다. ①의 원본 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md) — 회전이 필요한 이유: Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
+> **Owner 작업 현황 (2026-11-07)** — 단계별 절차: [OWNER-ACTIONS-GUIDE.md](OWNER-ACTIONS-GUIDE.md). 완료: `.env.example` 키 추가, GitHub 2FA + ruleset, AWS 계정·루트 MFA·Identity Center·결제 알림(2026-11-07 본인 계정으로 재진행), PR #12~#16 머지, **도메인 위임·ACM·SES 도메인 인증(B-5~B-7, 공개 DNS로 확인)**. **남음**: ① Google OAuth secret 회전 마무리(새 secret으로 로그인 성공 확인됨 → 옛 secret 사용 중지·삭제) ② B-8 SES 프로덕션 액세스 심사 결과 확인(하루 200통이 보이면 아직 샌드박스) ③ 예전 계정에 남은 자원 정리·본인 계정 크레딧 재확인(세부 현황은 Owner 로컬 기록, git 미추적). ④ **C-1~C-3 완성본**([docs/legal/](../legal/C-1-privacy-policy.md), 2026-11-07) — Owner 결정 3건(C-3 §0) **승인 완료(2026-11-07, 권고안대로)**, 남은 것: 채울 칸, 전문가 검토. ⑤ CLI 연결 — 기본 프로필에 자격 증명 없음 확인 → 가이드 B-3a(`aws configure sso`, 액세스 키 없이). 공개 전 시스템이 갖출 것 7건(C-1 §A — 탈퇴·파기가 첫째)은 Phase 3 전 SPEC 후보. 크레딧 확인 전까지 Phase 3 인프라는 첫날부터 과금된다고 가정한다. ①의 원본 절차는 [리뷰 노트 07 §3-5-1](../reviews/07-phase2-closeout.md) — 회전이 필요한 이유: Git 이력에는 없으나 리뷰 중 `docker compose config`가 평문 출력해 세션 로그에 남았다.
 
 ## 3-2. AI 도구 (ADR-009, 2026-10-27 부분 Accepted)
 
@@ -106,7 +107,7 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 | --- | --- |
 | Dependabot alerts·security updates / secret scanning·push protection | **켜짐** (저장소 설정) · 버전 업데이트 `.github/dependabot.yml`(uv·docker·docker-compose) |
 | Semgrep MCP (`semgrep==1.182.1`, local) | **연결됨** · 기준선 스캔 0건(오탐 1건 사유와 함께 억제) |
-| PostgreSQL 읽기 전용 MCP (Google MCP Toolbox 1.15.0, local) | **연결됨** · 역할 `chamneul_ro`(SELECT만, 비밀번호·세션 제외) · 재생성 `.claude/mcp/setup-postgres-ro-role.sh` |
+| PostgreSQL 읽기 전용 MCP (Google MCP Toolbox 1.15.0, local) | 역할 `chamneul_ro`(SELECT만, 비밀번호·세션 제외) · 재생성 `.claude/mcp/setup-postgres-ro-role.sh` · **2026-11-09 재생성·fail closed 전환**(새 테이블은 스크립트를 다시 돌려야 보인다) → `/mcp` Reconnect 대기(비밀번호 교체). 복원 뒤·테이블 추가 마이그레이션 뒤 스크립트 재실행(AI-TOOLING-SETUP-GUIDE §7.3) |
 | Playwright MCP | **이미 설치됨**(claude.ai 동기화 공식 플러그인, `@latest`) |
 | CodeQL · Sentry MCP | Phase 3 승인 예정 |
 | hooks · GitHub MCP · Context7 · 내장 리뷰 명령(항목 1~4) | 미결정 |
@@ -114,6 +115,43 @@ CLAUDE.md §1의 9개 조건 **전항 충족**. 증거(명령 + 실제 출력)�
 절차·롤백: [AI-TOOLING-SETUP-GUIDE.md](AI-TOOLING-SETUP-GUIDE.md) §5~§8.
 
 ## 4. Active SPEC
+
+**SPEC-006-pre-phase3-hardening — Approved (2026-11-04), 진행 중.** §7 결정 6건 전건 권고안 승인(WhiteNoise §16, ADR-010·`/readyz` 포함). Phase 3 전에 앱이 localhost를 떠나면 처음 깨지는 넷을 닫는다: ① 요청 횟수 제한(#2·#3·#45·#46, 공유 카운터, `NUM_PROXIES` 명시) ② 운영 경로(prod 가드·진입점·정적파일·실제 이미지 기동) ③ readiness `/readyz`(ADR-010 필요) ④ 스모크 여정 15단계 맨바닥 재통과. 명세 작성 중 확인한 추가 위험: **DRF가 `NUM_PROXIES` 미설정 시 `X-Forwarded-For`를 그대로 식별자로 써 IP 제한이 우회 가능**, **캐시가 프로세스별(LocMem)이라 제한이 워커·파드 수만큼 풀림**. 상세 [specs/SPEC-006-pre-phase3-hardening/](../../specs/SPEC-006-pre-phase3-hardening/spec.md).
+
+* **TASK-001 완료 (2026-11-04)** — #2·#3·#45·#46 요청 횟수 제한. 테스트 15개(전체 **439개**). IP 기준 + #3·#45는 계정(이메일) 기준. 카운터는 PostgreSQL 캐시 테이블(`createcachetable` — 마이그레이션 밖, smoke-test §2-1)에 HMAC 키로 둔다. `NUM_PROXIES` 명시(`DRF_NUM_PROXIES`, 기본 0). 구현 중 위험 2건 추가로 닫음: **DatabaseCache 기본 `MAX_ENTRIES=300` 컬링으로 남의 카운터를 지우는 우회**, **스로틀 프레임이 오류 리포트에 비밀번호를 노출할 수 있는 경로**. 변이 15건 전건 검출. 실제 compose 앱에서 10×401 → 11번째 429. 비용 실측: 스로틀 2개 = 요청당 +12 SQL문. 기존 1개 테스트(#45 "DB 쓰기 없음")의 단언 범위를 좁힘 → Owner 조건부 승인(2026-11-07). 상세 [리뷰 노트 09](../reviews/09-spec-006-hardening.md) §1.
+* **TASK-001 후속 (2026-11-07)** — DRF가 스로틀 하나가 거절한 뒤에도 나머지를 평가·기록해, **IP 한도에 막힌 요청도 주소 카운터 행을 만들던** 문제(한 IP가 행을 끝없이 늘려 컬링으로 계정 한도를 지울 수 있었다 — 11-04의 "닫음"은 반만 닫힌 것이었다). 첫 거절에서 멈추는 `StopAtFirstLimit`. 좁힌 테스트의 예외도 #45 카운터 2개로 다시 좁혀 사각지대 제거. 테스트 **440개**, 변이 5건 전건 검출. 리뷰 노트 09 §1-8.
+* **TASK-002 완료 (2026-11-07)** — **ADR-010 Accepted → CLAUDE.md §5·§7·§16 개정**(47 → 48, 비-버전 엔드포인트 둘). #48 `/readyz`: DB `SELECT 1` 성공 200 / 실패 503(본문 고정, 원인은 서버 로그만). `/healthz`는 그대로 DB를 보지 않는다. `HealthCheckMiddleware`(MIDDLEWARE 맨 앞)가 정확한 두 경로의 GET/HEAD만 HTTPS 리다이렉트·Host 검증보다 먼저 답한다. 테스트 6개(전체 **446개**). 변이 10건 전건 검출 — **M9(질의 없이 연결만 확인)를 처음엔 놓쳐** "끊긴 영구 연결" 케이스를 보강했다(`CONN_MAX_AGE=60`이라 운영에서 실제로 생기는 상황). 실제 compose 앱: DB 정지 중 `/readyz` 503·`/healthz` 200, 재기동 직후 200. smoke-test §5 갭 7 해소. 상세 리뷰 노트 09 §2.
+* **TASK-003 완료 (2026-11-07)** — 운영 경로. prod 기동 가드 2개(`DJANGO_EMAIL_BACKEND`가 console·filebased / `PASSWORD_RESET_URL`이 https 아님 → `ImproperlyConfigured`), `wsgi.py`·`asgi.py` 기본값 prod(결정 4), **WhiteNoise 6.12.0**(결정 3 — 패키지 1개 추가). 미들웨어·저장소를 계획의 prod.py가 아니라 **base.py**에 뒀다: 빌드 때 `collectstatic`이 local 설정으로 돌기 때문 — prod에만 두면 Admin이 500인데 헬스체크는 200인 이미지가 된다(반대 사례 이미지로 실측). 테스트 7개(전체 **453개**), 변이 10건 전건 검출. **실제 이미지(gunicorn + prod, Dockerfile·compose 무수정)**: 환경변수 없이 → 워커 기동 실패(fail closed) / 파드 IP Host로 `/healthz`·`/readyz` 200 / Admin CSS 200(해시 이름·gzip·1년 캐시) / XFP https API 200 / http 301 / `check --deploy` 0 issues. smoke-test §5 갭 2·3·11 해소. **새로 발견**: 갭 12 운영에서 500 트레이스백이 어디에도 남지 않는다(`LOGGING` 없음 → Django 기본은 관리자 메일뿐, `ADMINS` 비어 있음 — Owner 결정 대기), 갭 13 gunicorn 26 제어 소켓 ERROR(Dockerfile, Owner 영역). 의존성 추가로 compose 앱을 `up -d --build --no-deps -V app`으로 재생성(`-V` 없으면 옛 `.venv` 볼륨이 새 패키지를 가린다). 상세 리뷰 노트 09 §3.
+* **TASK-003 후속 (2026-11-09, Owner 승인으로 범위 추가)** — 갭 12 해소. `LOGGING`: 모든 로그를 stderr 하나로. `django` 로거는 Django 기본의 "DEBUG 콘솔 + 관리자 메일"을 대체하고 루트로 전파하지 않는다(중복 방지). `django.request`는 ERROR만 남긴다 — 4xx는 액세스 로그에 이미 있다. 테스트 1개(prod·local을 새 인터프리터로, 전체 **454개**), 변이 4건 전부 검출. 테스트 출력이 609줄에서 13줄이 됐다. 실제 이미지를 테이블 없는 DB에 붙여 만든 500의 원인(`relation "django_session" does not exist`)이 컨테이너 로그에 남는 것을 확인했다. 리뷰 노트 09 §3-8.
+* **TASK-004 완료 (2026-11-09)** — 맨바닥 재통과. 실행 순서는 다음과 같다.
+  1. 백업: 저장소 밖 `~/chamneul-backup-20261109.sql`.
+  2. `down -v` → `migrate`(25개) → `createcachetable` → 일회용 관리자.
+  3. **여정 15단계 첫 실행에 전항 통과**. 새로 붙은 단계는 13 재설정(재사용 400·옛 비밀번호 401·새 비밀번호 200), 14 고민 수정(배정 전 200, 후 409), 15 로그인 11번째 429.
+  4. 읽기 전용 역할을 재생성하고 경계를 확인했다. 읽기 전용 설정을 꺼도 쓰기는 권한으로 막힌다.
+  5. **백업 복원 → 21개 테이블 행 수 전부 일치**. Owner 데이터는 원상태다.
+
+  앱 코드 변경은 없다.
+
+  **찾은 것:** ① 역할 없이 복원하면 첫 `GRANT`에서 exit 3. ② 역할을 먼저 만들고 복원하면 **읽기 전용 역할이 비밀번호 해시·세션을 읽게 된다**. 스크립트의 기본 권한이 다시 만들어진 테이블에 붙기 때문이다. 그래서 복원 뒤 스크립트를 재실행하도록 smoke-test §6과 AI-TOOLING-SETUP-GUIDE §7.3을 고쳤고, 지금 상태도 바로잡았다(`f|f`). ③ `/readyz`는 마이그레이션 전에도 200이다(스키마를 보지 않는다).
+
+  **Owner 할 일:** `/mcp` → `postgres-ro` Reconnect. 비밀번호가 바뀌어 지금은 인증 실패가 정상이다. 리뷰 노트 09 §4.
+* **TASK-004 후속 (2026-11-09, Owner 결정 "보안 우선")** — 읽기 전용 MCP 역할을 fail closed로 바꿨다. 새 테이블은 스크립트를 다시 돌려야 읽힌다. 남은 자동 규칙은 회수한다. 리뷰 노트 09 §4-8.
+* **TASK-005 (2026-11-09)** — `security-reviewer`·`devops-local-platform`을 병렬로 돌렸다. **Blocker 0**.
+  * **이 PR에서 고친 것**
+    * devops High: README와 초기화 절차에 `createcachetable`이 빠져 있던 것(이 브랜치가 만든 회귀).
+    * 보안 Medium: prod가 `DRF_NUM_PROXIES` 없이 조용히 0으로 뜨던 것 → 기동 가드. 테스트 +1, 전체 **455개**.
+    * 리뷰 노트의 컬링 계산 실수: "IP 수천 개" → 약 84개.
+    * 복원마다 역할 재실행과 `f|f|0` 검증.
+    * 스모크 쿠키를 사적 임시 폴더에 두고 종료 때 삭제, 관리자 로그아웃. 덤프는 umask 077.
+    * `-V` 재생성 절차.
+  * **Owner 결정 4건**(§5-2): ① DB `connect_timeout`(패킷 유실 장애 때 readiness가 liveness까지 죽이는 연쇄) ② 로그인 시간당 IP 한도 ③ `.env.example`의 `DJANGO_SETTINGS_MODULE` 줄 삭제 ④ 역할 스크립트 허용 목록.
+  * **Owner 인프라 코멘트 4건**(§5-3): prod 프로필 bind mount, `.dockerignore`, `--no-control-socket`, 런타임 `ENV DJANGO_SETTINGS_MODULE`.
+  * 상세: 리뷰 노트 09 §5.
+* **TASK-005 후속 (2026-11-16, Owner 승인 3건)** — 다음 세 가지를 반영했다. 테스트 +3, 전체 **458개**. 상세는 리뷰 노트 09 §5-6.
+  * ① DB `connect_timeout` 3초. 패킷만 버리는 DB에 대해 `/readyz`가 3.0초에 503을 낸다. 넣기 전에는 20초 안에 돌아오지 않았다.
+  * ② 로그인 IP 한도를 시간당 200회로 추가. 컬링 우회에 필요한 IP가 약 84개에서 약 500개로 늘었다.
+  * ③ `.env.example`에서 `DJANGO_SETTINGS_MODULE` 줄을 지웠다. 운영 전용 값은 주석으로만 안내한다. 이번 한 번만 AI 수정을 허락받았다.
+  * 남은 것: 이미 열린 연결 위에서 질의가 멈추는 경우는 Phase 3에서 `tcp_user_timeout`으로 다룬다.
 
 **SPEC-005-api-gaps — 완료·머지 (2026-10-27, PR #12).** ADR-008의 #45~#47 + `accounts`의 M4-1~M4-3 회귀 테스트를 한 SPEC으로 묶는다. #46이 **로그인·세션을 직접 건드리는데**(성공 시 기존 세션 전부 무효화) 그 동작을 지키는 테스트가 0건이라, **회귀 기반을 먼저 깔고 새 엔드포인트를 그 위에 올린다.** OAuth(#5·#6)는 이 프로젝트에서 자동 테스트도 스모크도 없는 유일한 영역이었다.
 

@@ -8,7 +8,7 @@
 
 ## 0. 한 화면 체크리스트
 
-> 상태 갱신 2026-10-25: ☑ 완료 · ◐ 진행 중 · ⏸ Owner 결정으로 연기
+> 상태 갱신 2026-11-07: ☑ 완료 · ◐ 진행 중 · ⏸ Owner 결정으로 연기
 
 | 순서 | 작업 | 소요 | 마감 권장 | 상태 |
 | --- | --- | --- | --- | --- |
@@ -18,16 +18,16 @@
 | A-4 | "붙여넣기 금지" 출력 2종 숙지 | 2분 | 오늘 | □ |
 | A-5 | Google 로그인 계정 연결 변화(F-5) 숙지 | 5분 | 베타 전 | □ |
 | B-1 | GitHub 계정 2FA + 저장소 보호 설정 | 30분 | 이번 주 | ☑ (2FA + ruleset) |
-| B-2 | AWS 계정 생성 + 루트 MFA | 40분 | Phase 3 시작 전 | ☑ (기존 계정 — Free plan 크레딧 **소진**) |
-| B-3 | IAM Identity Center 관리자 사용자 | 30분 | B-2 직후 | ☑ |
-| B-4 | 결제 알림 (AWS Budgets) | 15분 | B-2 직후 (**필수**) | ☑ |
-| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | ⏸ MVP 완료 후 Phase 3 직전 |
-| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | ⏸ MVP 완료 후 Phase 3 직전 |
-| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | ⏸ MVP 완료 후 Phase 3 직전 |
-| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 1일~수일) | B-7 직후 | ⏸ MVP 완료 후 Phase 3 직전 |
-| C-1 | 개인정보 처리방침 초안 | 반나절 | 베타 공개 전 | □ |
-| C-2 | 이용약관 초안 | 반나절 | 베타 공개 전 | □ |
-| C-3 | 민감정보·14세 미만 정책 결정 | 1시간 | 베타 공개 전 | □ |
+| B-2 | AWS 계정 생성 + 루트 MFA | 40분 | Phase 3 시작 전 | ☑ (2026-11-07 본인 계정으로 재진행 — 플랜·크레딧 재확인 필요) |
+| B-3 | IAM Identity Center 관리자 사용자 | 30분 | B-2 직후 | ☑ (2026-11-07 재진행) |
+| B-4 | 결제 알림 (AWS Budgets) | 15분 | B-2 직후 (**필수**) | ☑ (2026-11-07 재진행) |
+| B-5 | Route 53 호스팅 영역 + Namecheap 네임서버 위임 | 30분 (+전파 최대 48시간) | 배포 2주 전 | ☑ (2026-11-07 공개 DNS 실측 — 위임 정상) |
+| B-6 | ACM 인증서 (DNS 검증) | 15분 | B-5 직후 | ☑ (콘솔로 발급 — 만료일 기록 필요) |
+| B-7 | Amazon SES 도메인 인증 (DKIM·SPF·DMARC) | 40분 | 배포 2주 전 | ☑ (2026-11-07 공개 DNS 확인) |
+| B-8 | SES 프로덕션 액세스(샌드박스 해제) 요청 | 20분 (+심사 첫 답 96시간 이내) | B-7 직후 | ◐ 제출함 — 하루 200통이 보이면 아직 샌드박스 |
+| C-1 | 개인정보 처리방침 | 반나절 | 베타 공개 전 | ◐ 완성본 작성(2026-11-07, [docs/legal/C-1](../legal/C-1-privacy-policy.md)) — 채울 칸·선결 조건 7건·전문가 검토 남음 |
+| C-2 | 이용약관 | 반나절 | 베타 공개 전 | ◐ 완성본 작성(2026-11-07, [docs/legal/C-2](../legal/C-2-terms-of-service.md)) — 변호사 검토 남음 |
+| C-3 | 민감정보·14세 미만 정책 결정 | 1시간 | 베타 공개 전 | ◐ 권고안 + 화면 문구(2026-11-07, [docs/legal/C-3](../legal/C-3-sensitive-info-and-minors.md)) — **Owner 결정 3건** |
 | C-4 | 사업자등록·통신판매업 필요 여부 판단 | 1시간 | 유료화 전 | □ |
 | C-5 | 도메인 WHOIS 보호·자동갱신 확인 | 5분 | 이번 주 | □ |
 | D | 나중에 내릴 결정 목록 | — | Phase 3 계획 시 | □ |
@@ -162,7 +162,7 @@
   - 예전의 "12개월 t2.micro 750시간" 혜택은 신규 계정에 없다.
   - **EKS 컨트롤 플레인은 시간당 과금**이다. NAT Gateway와 로드밸런서도 켜 두는 동안 계속 과금되므로 크레딧이 빨리 준다. 실습이 끝나면 반드시 지운다(`terraform destroy`).
   - 최신 조건은 https://aws.amazon.com/free/ 에서 직접 확인한다. 위 내용은 2차 자료로 교차 확인했다.
-  - **이 프로젝트의 계정은 크레딧을 이미 소진했다(2026-10-25 Owner 확인).** Phase 3의 EKS·NAT·로드밸런서는 **첫날부터 실제 요금**이다 — B-4 예산 알림을 먼저 확인하고, 실습 뒤 즉시 지운다.
+  - 2026-10-25의 "크레딧 소진" 확인은 **다른 계정으로 로그인한 상태**에서 한 것일 수 있다(2026-11-07 Owner 보고 — 아래 "흔한 실수"). 본인 계정의 **Billing and Cost Management → Credits**에서 다시 확인한다. 확인 전까지는 Phase 3의 EKS·NAT·로드밸런서를 **첫날부터 실제 요금**으로 잡는다 — B-4 예산 알림을 먼저 확인하고, 실습 뒤 즉시 지운다.
 - **사전 준비**: 이 용도 전용 이메일(별칭도 됨), 해외결제가 되는 카드, 휴대폰.
 - **단계**
   1. https://signin.aws.amazon.com/signup?request_type=register 에 들어가 루트 이메일과 계정 이름(예: `chamneul`)을 넣고 이메일 인증 코드를 입력한다.
@@ -175,6 +175,7 @@
   - 보안이 약한 개인 메일로 루트를 만든다.
   - 루트 계정으로 일상 작업을 한다.
   - 루트 액세스 키를 만든다.
+  - **다른 AWS 계정으로 로그인한 채 진행한다**(예전 교육·회사에서 받은 IAM 사용자). 브라우저에 그 로그인이 남아 있으면 자연스럽게 그 계정으로 들어간다. 작업 전마다 콘솔 오른쪽 위의 **계정 이름·ID**를 보고, CLI는 `aws sts get-caller-identity`의 `Account`로 확인한다. 이미 남의 계정에 만들었다면 그쪽 자원(호스팅 영역·인증서·SES Identity·지원 케이스)을 지우고 내 계정에서 다시 한다.
 
 ### B-3. IAM Identity Center 관리자 사용자
 
@@ -187,8 +188,31 @@
   4. 왼쪽 **Permission sets → Create permission set → Predefined permission set → AdministratorAccess**를 고르고, 세션 시간은 기본값으로 만든다.
   5. 왼쪽 **AWS accounts**에서 계정을 체크하고 **Assign users or groups** → `dan-admin` → `AdministratorAccess` → **Submit**.
   6. **Dashboard**(또는 Settings)에 있는 **AWS access portal URL**을 북마크한다(`⌘+D`).
-- **완료 확인**: 포털 URL로 로그인 → 계정 → AdministratorAccess를 눌러 콘솔에 들어간다. CLI는 `brew install awscli` → `aws configure sso` → `aws sts get-caller-identity`가 성공하면 된다.
+- **완료 확인**: 포털 URL로 로그인 → 계정 → AdministratorAccess를 눌러 콘솔에 들어간다. CLI는 아래 **B-3a**가 끝나면 된다.
 - **흔한 실수**: IAM의 "Users"(오래 쓰는 액세스 키 방식)와 헷갈린다. 이 프로젝트는 Identity Center를 쓴다.
+
+#### B-3a. CLI를 Identity Center로 연결 (액세스 키 없이) — 2026-11-07 추가
+
+- **왜 이 방법인가**: 디스크에 남는 것은 **짧게 사는 토큰**뿐이다(`~/.aws/sso/cache`). 오래 사는 액세스 키를 만들지 않는다. 새 CLI의 `aws login`(콘솔 세션 재사용)은 루트·IAM 사용자용이고 **Identity Center는 지원하지 않는다** — 공식 문서가 Identity Center 사용자는 `aws configure sso`로 가라고 한다. 루트로 `aws login`을 하면 되긴 하지만, 루트로 일상 작업을 하지 않는다는 B-2 원칙에 어긋난다.
+- **준비물 2개**(비밀 아님): 포털 URL(B-3 6단계에서 북마크한 `https://d-xxxxxxxxxx.awsapps.com/start` 형태), Identity Center 리전(B-3 1단계에서 고른 리전 — 이 가이드대로면 `ap-northeast-2`). 리전이 헷갈리면 포털 → AdministratorAccess 옆 **Access keys** → **IAM Identity Center credentials** 탭에 `SSO Start URL`·`SSO Region`이 함께 나온다(이 화면의 다른 탭에 있는 키는 쓰지 않는다).
+- **단계**
+  1. 터미널에서 `aws configure sso`. 묻는 순서대로 입력한다.
+     - `SSO session name (Recommended)`: `chamneul`
+     - `SSO start URL`: 포털 URL
+     - `SSO region`: Identity Center 리전
+     - `SSO registration scopes`: `sso:account:access`(공식 문서 예시값 — 계정·역할 목록을 읽는 권한)
+  2. 브라우저가 열린다. **포털에 로그인한 사용자가 맞는지** 보고 허용한다. 포털 로그인이 필요하면 비밀번호·MFA도 이 브라우저에서 한다(터미널에는 입력하지 않는다). 계정·역할이 하나뿐이면 선택 화면 없이 넘어간다.
+  3. 이어서 묻는다: `Default client Region` → `ap-northeast-2`, `CLI default output format` → `json`, `Profile name` → `chamneul-admin`(기본 제안값 대신 짧은 이름).
+  4. 확인: `aws sts get-caller-identity --profile chamneul-admin`
+- **완료 확인** — 출력의 두 값을 **콘솔과 눈으로 대조한다**(채팅·문서에 붙여넣지 않는다):
+  - `Account` = 콘솔 오른쪽 위 메뉴의 계정 ID. **다르면 부트캠프 계정 등 다른 계정이다** — 진행을 멈춘다.
+  - `Arn`에 `AWSReservedSSO_AdministratorAccess_…/dan-admin`처럼 **역할 이름과 사용자 이름**이 보여야 한다. `:root`나 `:user/…`가 보이면 Identity Center가 아닌 다른 경로로 인증된 것이다.
+- **매일 쓸 때**: `aws sso login --profile chamneul-admin`(세션이 끝나면 다시). 명령마다 `--profile`을 붙이기 싫으면 그 터미널에서 `export AWS_PROFILE=chamneul-admin`.
+- **끝낼 때**: `aws sso logout` — 캐시된 토큰을 지운다. 노트북을 다른 사람과 쓰거나 오래 자리를 비울 때.
+- **흔한 실수**
+  - `aws configure`(SSO 없는 것)에 액세스 키를 붙여넣는다 — 그 순간 오래 사는 키가 `~/.aws/credentials`에 평문으로 남는다. 이 프로젝트는 만들지 않는다.
+  - 예전 교육 계정 프로필이 남아 있어 `--profile` 없이 엉뚱한 계정에 명령이 간다. `aws configure list-profiles`로 목록을 보고, 모르는 프로필은 `~/.aws/config`에서 지운다.
+- **출처**(2026-11-07 확인): AWS CLI 사용 설명서 — Identity Center 연결 https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html (PKCE 브라우저 인증은 CLI 2.22.0부터 기본), 콘솔 자격 증명 로그인 `aws login` https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html (2.32.0부터, Identity Center 미지원). 세션 길이: 포털 기본 8시간, 권한 세트 기본 1시간(최대 12시간) — https://docs.aws.amazon.com/singlesignon/latest/userguide/howtosessionduration.html
 
 ### B-4. 결제 알림 (AWS Budgets) — 필수
 
@@ -203,21 +227,48 @@
 - **완료 확인**: Budgets 목록에 2개가 있고 상태가 OK다.
 - **흔한 실수**: 알림만 믿고 리소스를 방치한다. 비용 데이터는 하루에 몇 번만 갱신되므로 알림이 늦게 온다. 실습이 끝나면 바로 지운다.
 
+### B-5~B-8 시작 순서 — Phase 3 직전 (2026-11-02 확정)
+
+Owner가 "하드닝 SPEC → 프론트엔드 범위 ADR → Phase 3 착수"를 승인하면서 이 묶음을 **지금** 시작하기로 했다. 네 단계가 모두 "지금"인 것은 아니다 — **기다리는 시간(리드타임)이 있는 것만 먼저** 한다.
+
+| 단계 | 언제 | 이유 |
+| --- | --- | --- |
+| **B-5** Route 53 + Namecheap 위임 | **지금** | DNS 전파에 몇 시간~최대 48시간. B-7의 전제 |
+| **B-7** SES 도메인 인증(DKIM·MAIL FROM·DMARC) | **지금** (B-5 직후) | DNS 검증에 최대 72시간. 메일이 스팸으로 가지 않으려면 이게 먼저 |
+| **B-6** ACM 인증서 | **Phase 3 Terraform에서** — 콘솔로 미리 만들지 않는다 | AWS 문서상 **ALB 등에 연결되지 않은 공인 인증서는 자동 갱신 대상이 아니다** → 미리 발급하면 ALB가 생기기 전에 만료될 수 있다. 호스팅 영역만 있으면 발급은 몇 분이라 기다릴 이유도 없다. ALB와 같은 Terraform 코드(`aws_acm_certificate` + 검증 레코드)로 만드는 것이 업계 표준이다 |
+| **B-8** SES 프로덕션 액세스 | **랜딩 페이지 + 개인정보 처리방침(C-1)이 열린 뒤** | 웹사이트가 없으면 거절 가능성이 높다. 그 전에도 **샌드박스**에서 인증한 주소(본인 메일)로는 테스트 발송이 된다 |
+
+- **비용**: 호스팅 영역 월 $0.50(+조회량 소액) — 크레딧이 없으므로 실제 청구된다. SES 도메인 인증 자체는 무료.
+- **Terraform과의 관계**: 호스팅 영역은 도메인 수명 동안 유지되는 "기반 자원"이라 콘솔로 먼저 만들어도 된다. Phase 3 Terraform에서는 `data "aws_route53_zone"`으로 **참조**하거나, 직접 관리하고 싶으면 `terraform import`로 가져온다(손코딩 학습 과제로 좋다). **같은 도메인의 호스팅 영역을 두 번 만들지 않는다.**
+- **두 가지 진행 방법**: ① 아래 단계를 직접 따라 한다(macOS + Chrome). ② AI가 Playwright 브라우저 창에서 대신 클릭한다 — **로그인(비밀번호·MFA)은 Owner가 그 창에 직접** 입력하고, AI에게 비밀번호를 알려주지 않는다.
+
 ### B-5. Route 53 호스팅 영역 + Namecheap 네임서버 위임
 
 - **목적**: `chamneul.com`의 DNS를 AWS에서 관리한다. 그러면 ACM·SES·로드밸런서를 연결하기 쉬워진다.
 - **소요·비용**: 30분 + 전파에 최대 48시간 · 호스팅 영역 월 $0.50 + 조회량에 따른 소액
 - **단계**
   1. AWS 검색창에 `Route 53` → **Hosted zones → Create hosted zone** → Domain name `chamneul.com`, **Public hosted zone** → Create.
-     - Phase 3에서 이걸 Terraform `aws_route53_zone`으로 **직접 손코딩**할 계획이라면 콘솔로는 만들지 않는다. 같은 도메인 영역은 하나만 둔다.
+     - Terraform과의 관계는 위 "시작 순서"를 본다 — 콘솔로 만들고 Terraform에서는 참조(`data`)하거나 `import`한다. 같은 도메인 영역은 하나만 둔다.
   2. 만들어진 영역의 **NS 레코드 값 4개**(`ns-123.awsdns-xx.com` 형태)를 적어 둔다.
   3. https://ap.www.namecheap.com/domains/list/ → `chamneul.com` 옆 **MANAGE** → **Domain** 탭 → **NAMESERVERS** 드롭다운에서 **Custom DNS**를 고른다. 값 4개를 넣고(끝의 점 `.`은 빼고) 초록 체크로 저장한다.
   4. Namecheap **Advanced DNS** 탭에 기존 레코드가 있었다면, 위임하기 **전에** Route 53에 같은 레코드를 먼저 만들어 둔다.
   5. ⚠️ Namecheap의 무료 **메일 포워딩**(예: `support@chamneul.com` → 개인 메일)은 Namecheap 네임서버를 쓸 때만 동작한다. **Custom DNS로 바꾸는 순간 멈춘다.** 받는 주소가 필요하면 위임 전에 대안(메일 호스팅 서비스의 MX 레코드를 Route 53에 등록 등)을 정해 둔다. (메뉴명이 다를 수 있음 — Namecheap 검색창에 `email forwarding`)
-- **완료 확인**: 터미널에서 `dig NS chamneul.com +short` → awsdns 4개가 나온다.
-- **흔한 실수**: 호스팅 영역을 지웠다가 다시 만든다. 그러면 **NS 값이 바뀌어서** Namecheap도 다시 고쳐야 한다.
+- **완료 확인** (2026-11-04 정정 — 종전 `dig NS chamneul.com +short` 한 줄로는 아래 "레임 위임"을 걸러내지 못했다): **부모 쪽과 자식 쪽을 따로** 본다.
+  ```bash
+  # ① 부모(.com 레지스트리)가 Route 53을 가리키는가 → awsdns 4개
+  dig +norec +noall +authority NS chamneul.com @a.gtld-servers.net
+  # ② 자식(호스팅 영역)이 실제로 답하는가 → status: NOERROR, flags에 aa  (①의 서버 중 하나에 묻는다)
+  dig +norec SOA chamneul.com @ns-XXX.awsdns-XX.com | grep -E "status|flags"
+  # ③ 일반 인터넷에서 보이는가 → SOA 한 줄 (awsdns-hostmaster.amazon.com 포함)
+  dig +short SOA chamneul.com @8.8.8.8
+  ```
+- **흔한 실수**
+  - 호스팅 영역을 지웠다가 다시 만든다. 그러면 **NS 값이 바뀌어서** Namecheap도 다시 고쳐야 한다.
+  - **레임 위임(lame delegation)**: ①은 정상인데 ②가 `REFUSED`, ③이 `SERVFAIL`이면 Namecheap에 넣은 NS 4개가 **지금 있는 공개 영역의 NS와 다르다**. 영역을 다시 만들었거나, 두 개 만들었거나, Type을 Private으로 만든 경우다. 해결: Route 53 → Hosted zones에서 레코드가 든 **Public** 영역 하나를 고르고, 그 영역의 NS 값을 Namecheap Custom DNS에 다시 넣는다. 이 상태에서는 ACM 검증·SES DKIM 확인도 함께 막힌다.
 
-### B-6. ACM 인증서 (DNS 검증)
+### B-6. ACM 인증서 (DNS 검증) — ⏸ Phase 3 Terraform에서
+
+> **2026-11-02 변경**: 콘솔로 미리 발급하지 않는다. ALB 등에 연결되지 않은 공인 인증서는 **자동 갱신 대상이 아니라서**(AWS ACM 문서 "Managed certificate renewal"), ALB를 만들기 전에 발급하면 쓰기도 전에 만료될 수 있다. Phase 3에서 ALB·Ingress와 **같은 Terraform 코드**로 만든다. 아래 콘솔 절차는 원리를 이해하기 위한 참고용이다.
 
 - **목적**: `https://`에 쓸 인증서를 받는다.
 - **소요·비용**: 15분 · 로드밸런서 등 AWS 서비스에 붙여 쓰는 공인 인증서는 무료
@@ -228,6 +279,11 @@
   4. 인증서 상세에서 **Create records in Route 53** → Create.
 - **완료 확인**: Status가 **Issued**가 된다. 보통 몇 분에서 30분쯤 걸린다.
 - **흔한 실수**: 리전을 착각한다. 발급은 됐는데 ALB 화면에서 안 보인다.
+- **이미 콘솔로 발급했다면**: 지우지 않아도 된다. 대신 세 가지를 지킨다.
+  - 인증서 상세의 **만료일(Not after)** 을 적어 둔다.
+  - Route 53의 **검증 CNAME을 지우지 않는다.** ALB에 붙은 뒤의 자동 갱신에 다시 쓰인다.
+  - Phase 3 Terraform에서는 `data "aws_acm_certificate"`로 참조하거나 `terraform import`로 가져오고, 같은 도메인 인증서를 **하나 더 만들지 않는다.**
+  - ALB에 붙이기 전에 만료되면 새로 요청하면 된다(무료). 요청 후 72시간 안에 검증되지 않으면 **Validation timed out**이 되는데, 이것도 새로 요청하면 된다.
 
 ### B-7. Amazon SES 도메인 인증 (DKIM·SPF·DMARC)
 
@@ -251,11 +307,18 @@
 
 - **목적**: 샌드박스에서는 인증된 주소로만, 하루 200통·초당 1통까지만 보낼 수 있다. 실제 사용자에게 보내려면 리전마다 해제 신청을 해야 한다.
 - **소요·비용**: 20분 + 심사(보통 하루 안팎이지만 보장되지 않음) · 무료
-- **사전 준비**: B-7을 끝낸다. 최소한의 웹사이트(랜딩 페이지와 개인정보 처리방침)가 열려 있으면 승인될 확률이 올라간다.
+- **사전 준비**: B-7을 끝낸다. **랜딩 페이지와 개인정보 처리방침(C-1)이 `https://chamneul.com`에서 열린 뒤에** 신청한다(2026-11-02 확정 — 웹사이트 없이 신청하면 거절 가능성이 높다).
 - **단계**
-  1. SES → **Account dashboard** → **Request production access**(또는 Get set up 페이지의 같은 버튼).
-  2. Mail type은 **Transactional**, Website URL은 `https://chamneul.com`, 언어는 Korean/English로 한다.
-  3. Use case description 예시다(영문 권장). 실제 상황에 맞게 고쳐 쓴다.
+  1. SES → **Account dashboard** → 맨 위 "Your Amazon SES account is in the sandbox" 경고의 **View Get set up page** → **Request production access**.
+  2. 양식 칸은 다섯 개다(AWS 공식 절차, 2026-11-07 확인).
+     - **Mail type**: **Transactional** — 사용자 행동(비밀번호 재설정 등)으로 한 사람에게 가는 메일.
+     - **Website URL**: `https://chamneul.com`
+     - **Additional contacts**: 심사 연락을 받을 메일(쉼표로 최대 4개).
+     - **Preferred contact language**: **English**. 선택지는 English와 Japanese 두 개뿐이다.
+     - **Acknowledgement**: "명시적으로 요청한 사람에게만 보내고, 바운스·불만 처리 절차가 있다"는 동의 체크.
+  3. `Use case description` 예시다(영문 권장). 실제 상황에 맞게 고쳐 쓴다.
+     - **지금 양식에는 이 입력란이 없다**(Owner 확인 2026-11-04, AWS 공식 절차로 재확인 2026-11-07). 그대로 제출한다. AWS가 Support 케이스로 사용 사례를 물어오면 **그 케이스에 답장으로** 아래 문구를 쓴다.
+     - 웹사이트가 아직 없으면 사실대로 적는다. 예: "The website is under development; the landing page and privacy policy will be published before launch."
      ```text
      chamneul.com is an early-stage advice platform for Korean users. We send only
      transactional emails triggered by the user's own action: password reset links
@@ -266,8 +329,13 @@
      the SES account-level suppression list. The domain is verified with DKIM, a
      custom MAIL FROM domain (SPF) and DMARC.
      ```
-  4. AWS 이용 정책(AUP) 동의에 체크하고 Submit. 결과는 AWS Support 케이스와 메일로 온다.
-- **완료 확인**: Account dashboard에 프로덕션 액세스가 표시되고 일일 발송 한도가 늘어난다.
+  4. **Submit request**를 누른다. "under review" 배너가 뜨면 접수된 것이다(**승인이 아니다**). 심사 중에는 내용을 고칠 수 없다. AWS Support의 첫 답은 **96시간 안에** 오고, 추가 정보를 요청하면 더 걸린다. 결과는 Support 케이스와 메일로 온다.
+- **완료 확인**: Account dashboard 맨 위의 sandbox 경고가 **사라진다.** CLI로 확정하려면:
+  ```bash
+  aws sesv2 get-account --region ap-northeast-2 \
+    --query '{prod:ProductionAccessEnabled,review:Details.ReviewDetails.Status,quota:SendQuota}'
+  ```
+  `prod: true`, `review: GRANTED`면 끝이다. **하루 200통·초당 1통이 보이면 아직 샌드박스다** — `review`가 `PENDING`(심사 중)·`DENIED`(거절)·`FAILED`(접수 실패, 다시 제출) 중 무엇인지 본다. 승인 뒤의 한도는 사용 사례에 따라 정해진다(고정값이 아니다). 콘솔 오른쪽 위 리전이 **Seoul**인지도 본다 — 샌드박스는 리전마다 따로라서 다른 리전은 계속 샌드박스로 보인다.
 - **흔한 실수**
   - "나중에 뉴스레터도…"처럼 마케팅 계획을 언급해서 거절된다.
   - 바운스 처리 계획을 빼먹어서 거절된다.
@@ -277,12 +345,18 @@
 
 ## C. 한국 법·사업 (법률 자문 아님 — 확정 전 전문가 검토 권장)
 
+> **2026-11-07 — C-1~C-3 완성본이 생겼다.** 공식 원문(법률 제21445호·시행령 제36671호, 2026. 9. 11. 시행 / 작성지침 **2026. 4.판** / 안전성 확보조치 기준 고시 제2026-9호 / 약관법)을 Playwright로 읽고 썼다.
+> - [C-1 개인정보 처리방침](../legal/C-1-privacy-policy.md) · [C-2 이용약관](../legal/C-2-terms-of-service.md) · [C-3 민감정보·14세 미만](../legal/C-3-sensitive-info-and-minors.md)
+> - 각 문서에 "▼ 여기부터 복사 ▲ 여기까지" 본문 + 채울 칸 + 검토표 + 출처가 있다.
+> - **바로 공개하면 안 된다.** 처리방침이 약속하는 7가지(탈퇴·파기, 고민 동의 2종, 배정 조언가 표시, 만 14세 확인, 삭제 고민 30일 파기, 로그·카운터 정리, 관리자 열람 기록)를 시스템이 먼저 갖춰야 한다 — C-1 §A.
+> - 아래 단계 설명은 원리 이해용으로 남긴다.
+
 ### C-1. 개인정보 처리방침
 
 - **목적**: 개인정보 보호법 제30조에 따라 **공개해야 하는** 문서다. 가입 화면과 사이트 하단에 링크를 둔다.
 - **소요·비용**: 반나절 · 무료(전문가 검토는 유료)
 - **단계**
-  1. https://www.privacy.go.kr (개인정보 포털)의 검색창에 `처리방침 작성지침` → **개인정보 처리방침 작성지침(2025.4 개정)** 을 내려받는다. 같은 포털의 처리방침 만들기(생성기) 메뉴도 활용할 수 있다. (메뉴명이 다를 수 있음)
+  1. https://www.privacy.go.kr (개인정보 포털)의 검색창에 `처리방침 작성지침` → **개인정보 처리방침 작성지침(2026.4 개정)** 을 내려받는다(2026-11-07 확인 — 개인정보보호위원회 누리집 법령 > 법령정보 > 안내서에도 있다). 같은 포털의 처리방침 만들기(생성기) 메뉴도 활용할 수 있다. (메뉴명이 다를 수 있음)
   2. https://www.pipc.go.kr (개인정보보호위원회)에서 `작성지침`을 검색해 원문 공지를 확인한다.
   3. 지침의 **법정 필수 기재 사항**을 표로 채운다. 처리 목적, 처리 항목, 보유기간, 제3자 제공·위탁, 파기, 정보주체 권리, 안전성 확보조치, 개인정보 보호책임자 연락처가 여기에 들어간다. 항목은 `docs/model.md`의 실제 컬럼을 기준으로 적는다.
   4. **위탁·국외 이전**을 정리한다. AWS(호스팅), Amazon SES(메일), Google(로그인)이 대상이다. 서버가 서울 리전이라도 Google 로그인 같은 부분은 국외 이전 고지 대상일 수 있으니 전문가에게 확인한다.
@@ -301,6 +375,7 @@
 
 ### C-3. 민감정보 · 14세 미만
 
+- **2026-11-07 권고**: (b) 별도 동의 + 만 14세 미만 가입 차단, 그리고 고민을 조언가에게 보여 주는 것에도 동의가 필요하다(법 제17조①2가 계약 이행을 제외) — [C-3](../legal/C-3-sensitive-info-and-minors.md) §0.
 - **민감정보**: 법 제23조의 민감정보(건강, 성생활 등)는 **별도 동의**를 받아야 처리할 수 있다. 2025.4 작성지침은 "계약 이행에 필요한 정보는 동의 없이 처리할 수 있지만, 민감정보는 계약 관계여도 동의가 필요하다"고 정리한다. 참늘의 고민 본문(번아웃, 관계 등)에는 사용자가 건강이나 정신건강 정보를 **스스로 적어 넣을 수 있다.** 다음 중 하나를 전문가와 상의해 정한다.
   - (a) "민감정보를 적지 말라"고 안내하고 별도 동의 없이 운영한다.
   - (b) 고민을 쓸 때 **민감정보 처리 별도 동의** 체크박스를 둔다.
@@ -348,8 +423,10 @@
   - https://docs.aws.amazon.com/ses/latest/dg/creating-identities.html
   - https://docs.aws.amazon.com/ses/latest/dg/mail-from.html
   - https://docs.aws.amazon.com/ses/latest/dg/send-email-authentication-dmarc.html
-- SES 샌드박스 해제:
+- SES 샌드박스 해제 (2026-11-07 재확인 — 양식 칸·96시간·언어 선택지):
   - https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html
+  - https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_GetAccount.html (`ProductionAccessEnabled`)
+  - https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_ReviewDetails.html (`PENDING`·`GRANTED`·`DENIED`·`FAILED`)
   - https://repost.aws/knowledge-center/ses-production-access-request-faq
 - Google OAuth 클라이언트·secret 회전:
   - https://support.google.com/cloud/answer/6158849
@@ -358,7 +435,8 @@
   - https://docs.github.com/en/authentication/securing-your-account-with-two-factor-authentication-2fa
   - https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets
   - https://docs.github.com/en/code-security/secret-scanning
-- 개인정보 처리방침 작성지침(2025.4):
+- 개인정보 처리방침 작성지침 — **2026.4판이 최신**(2026-11-07 확인). 2025.4판은 이전 판:
+  - https://www.pipc.go.kr/np/cop/bbs/selectBoardArticle.do?bbsId=BS217&mCode=D010030000&nttId=12018 (2026.4판)
   - https://www.pipc.go.kr
   - https://www.privacy.go.kr
   - 해설: https://www.daeryunlaw.com/newsletter/news/151

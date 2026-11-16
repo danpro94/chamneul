@@ -57,7 +57,14 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # First on purpose: probes arrive as plain HTTP with the pod IP as Host, so
+    # they must be answered before the HTTPS redirect and host check (ADR-010).
+    "config.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # Static files with DEBUG=False (SPEC-006 결정 3). After SecurityMiddleware
+    # so plain http is still redirected; before the rest because a CSS file
+    # needs no session, CSRF or auth.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -98,6 +105,12 @@ DATABASES = {
         "HOST": os.environ.get("DB_HOST", "localhost"),
         "PORT": os.environ.get("DB_PORT", "5432"),
         "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", "60")),
+        # A database that drops packets would otherwise hold a connection
+        # attempt for the OS TCP timeout (over a minute). The sync worker stays
+        # stuck, /healthz on the same worker stops answering, and liveness
+        # restarts every pod — what ADR-010 split the probes to prevent.
+        # 3 s: well inside gunicorn's 30 s and a typical probe timeout.
+        "OPTIONS": {"connect_timeout": 3},
     }
 }
 
@@ -124,6 +137,14 @@ USE_TZ = True
 # --- Static ------------------------------------------------------------
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# Hashed file names (cache forever, safe to change) + pre-compressed copies.
+# Here, not in prod.py: the Dockerfile runs collectstatic at build time with
+# manage.py's default settings (local). If only prod used this storage, the
+# image would hold no manifest and every admin page would 500 under prod.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -170,6 +191,23 @@ PASSWORD_RESET_URL = os.environ.get("PASSWORD_RESET_URL", "http://localhost:3000
 # the request path (Phase 3 queue) — final review L-5.
 EMAIL_TIMEOUT = 10
 
+# --- Cache (SPEC-006 결정 1) -------------------------------------------
+# Rate-limit counters must be shared by every gunicorn worker and pod. Django's
+# default LocMemCache lives inside one process (3 workers x N pods = limits 3N
+# times looser), so the cache is a PostgreSQL table. `manage.py
+# createcachetable` creates it — not a migration, so it is a deploy step next
+# to `migrate` (smoke-test §2-1). The test runner creates it by itself.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache",
+        # Past MAX_ENTRIES (default 300) Django deletes a third of the rows in
+        # key order. Anyone can add rows (one per address tried), so a low cap
+        # would let an attacker wipe other people's counters.
+        "OPTIONS": {"MAX_ENTRIES": 100_000},
+    }
+}
+
 # --- DRF ---------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -184,4 +222,50 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     # api.md §1.5: errors are {error: {code, message, details}}.
     "EXCEPTION_HANDLER": "common.exceptions.api_exception_handler",
+    # SPEC-006 결정 2 — the only place the numbers live (common/throttling.py
+    # reads it per request). DRF counts every request, failed logins included.
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_login_ip": "20/min",
+        # Caps how many address counters one IP can open (TASK-005 review M-2):
+        # 200 an hour means ~500 IPs to fill MAX_ENTRIES, not ~84.
+        "auth_login_ip_hour": "200/hour",
+        "auth_login_email": "10/hour",
+        "auth_signup_ip": "10/hour",
+        "password_reset_ip": "10/hour",
+        "password_reset_email": "3/hour",
+        "password_reset_confirm_ip": "20/hour",
+    },
+    # X-Forwarded-For hops to trust when finding the client IP: 0 = ignore the
+    # header (local: nothing sits in front of Django), 1 behind one ALB. Left
+    # unset, DRF trusts the whole client-supplied header — a new "IP" per
+    # request, i.e. no IP limit at all.
+    # An empty value counts as unset. prod.py refuses to start without one.
+    "NUM_PROXIES": int(os.environ.get("DRF_NUM_PROXIES") or "0"),
+}
+
+# --- Logging (SPEC-006, smoke-test §5 갭 12) ----------------------------
+# Everything goes to stderr, which the container runtime collects (docker logs,
+# later CloudWatch) — no log files inside the container. Without this, Django's
+# default sends request errors only to ADMINS by mail when DEBUG=False, and
+# ADMINS is empty: a production 500 left no traceback anywhere.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "{asctime} {levelname} {name} {message}", "style": "{"},
+    },
+    "handlers": {
+        "stderr": {"class": "logging.StreamHandler", "formatter": "plain"},
+    },
+    # App loggers (accounts.emails, config.health) only write WARNING and up.
+    "root": {"handlers": ["stderr"], "level": "WARNING"},
+    "loggers": {
+        # Replaces Django's pair of a DEBUG-only console and mail_admins. Not
+        # propagated, or every Django record would print twice via root.
+        "django": {"handlers": ["stderr"], "level": "INFO", "propagate": False},
+        # Every request is already in the access log (gunicorn, runserver) with
+        # its status, so Django's extra WARNING per 4xx only adds volume — and in
+        # production anyone can make it. 5xx keep their line and traceback.
+        "django.request": {"level": "ERROR"},
+    },
 }

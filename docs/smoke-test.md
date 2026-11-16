@@ -11,9 +11,11 @@
 
 ## 2. 맨바닥 기동
 
-> ⚠️ **이 문서의 모든 측정은 `runserver` 위에서 수행됐다.** 저장소에 `docker-compose.override.yml`이 커밋돼 있고(`command: python manage.py runserver`), Compose는 override를 자동으로 병합하므로 그냥 `docker compose up`을 하면 **항상 개발 서버**로 뜬다. 이미지의 `CMD`는 `gunicorn --workers 3`(`Dockerfile:61`)이며 **그 경로는 아직 한 번도 검증하지 않았다**(§5 갭 3). 확인 방법: `docker compose ps`의 COMMAND 열, 또는 응답 헤더의 `Server: WSGIServer/...`.
+> ⚠️ **이 문서의 모든 측정은 `runserver` 위에서 수행됐다.** 저장소에 `docker-compose.override.yml`이 커밋돼 있고(`command: python manage.py runserver`), Compose는 override를 자동으로 병합하므로 그냥 `docker compose up`을 하면 **항상 개발 서버**로 뜬다. 이미지의 `CMD`는 `gunicorn --workers 3`(`Dockerfile:61`)이다. 그 경로(gunicorn + prod 설정)는 compose 밖에서 `docker run`으로 따로 검증했다(2026-11-07, §5 갭 3). 확인 방법: `docker compose ps`의 COMMAND 열, 또는 응답 헤더의 `Server: WSGIServer/...`.
 
 > ⚠️ `down -v`는 **PostgreSQL 볼륨을 삭제**한다. 로컬 데이터가 전부 사라진다. 보존이 필요하면 §6의 백업 절차를 먼저 수행한다.
+>
+> **2026-11-09 맨바닥 재통과(SPEC-006 TASK-004)**: §6대로 백업(완료 마커 1, COPY 21) → `down -v` → `up -d --build` → 아래 2-1·2-2 → §3 여정 15단계 → 읽기 전용 MCP 역할 재생성 → **백업 복원**(테이블 21개의 행 수가 백업 전과 전부 일치). 즉 이 문서의 백업·복원 절차도 이번에 실제로 돌려 확인했다 — 그 과정에서 찾은 순서 문제는 §6 "복원".
 
 ```bash
 docker compose down -v          # 컨테이너 + 네트워크 + named volume 삭제
@@ -46,6 +48,22 @@ docker compose exec app python manage.py migrate
 
 25개 마이그레이션이 적용된다(contenttypes/auth → accounts → admin → concerns → advice → advisors → notifications → sessions). `accounts.0001_initial`이 `admin.0001_initial`보다 먼저 와야 한다 — 커스텀 User 모델이기 때문이다.
 
+**이어서 캐시 테이블을 만든다 (2026-11-04, SPEC-006 TASK-001).**
+
+```bash
+docker compose exec app python manage.py createcachetable
+```
+
+요청 횟수 카운터(api.md §1.10)는 DB 테이블 `django_cache`에 쌓인다. 이 테이블은 **마이그레이션이 아니라** `createcachetable`이 만든다. 빠뜨리면 다른 API는 멀쩡한데 **#2·#3·#45·#46만 500**이 나고, 로그에 `relation "django_cache" does not exist`가 찍힌다(prod도 2026-11-09부터 같다 — §5 갭 12 해소). 두 번 실행해도 안전하다(이미 있으면 `already exists`). Phase 3에서는 k8s 마이그레이션 Job에 `migrate` 다음 줄로 넣는다(Owner 손코딩).
+
+> **`/readyz`는 마이그레이션 전에도 200이다 (2026-11-09 실측).** readiness는 "DB에 붙는가"(`SELECT 1`)만 본다. 스키마가 준비됐는지는 보지 않는다. 그래서 Phase 3에서는 다음 세 가지를 지킨다(Owner 손코딩 매니페스트).
+>
+> * **마이그레이션 Job이 끝난 뒤에** 새 버전의 롤아웃이 시작되게 짠다.
+> * Job에는 `migrate` 다음 줄로 `createcachetable`을 넣는다.
+> * 롤링 업데이트 동안은 **옛 파드가 새 스키마를 본다.** 그래서 컬럼 삭제·이름 변경은 한 번에 하지 않는다. 먼저 새 것을 더하고(expand), 옛 코드가 다 빠진 다음 배포에서 지운다(contract).
+>
+> 이미지 안에서 `manage.py`를 직접 부를 때(Job·`migrate --check`)는 `DJANGO_SETTINGS_MODULE=config.settings.prod`를 명시한다. `manage.py`의 기본값은 local이다.
+
 ### 2-2. 관리자 부트스트랩
 
 ```bash
@@ -69,6 +87,15 @@ superuser : root@chamneul.local | is_superuser: True | is_staff: True
 보유 역할 : ['USER', 'ADMIN']
 ```
 
+*(2026-11-09 보충)* 위의 `['USER', 'ADMIN']`은 **API가 보여 주는 값**이다(`GET /api/v1/users/me/roles` → `{"roles":["USER","ADMIN"],...}`). `USER`는 모든 계정의 암묵적 기본 역할이라 **행으로 저장하지 않는다**(model.md §3.2). 그래서 DB에서 직접 보면 `UserRole` 행은 `['ADMIN']` 하나다. 확인해야 할 것은 그 `ADMIN` 행이 있는지다.
+
+```bash
+docker compose exec -T app python manage.py shell --no-imports -c "
+from accounts.models import User
+u = User.objects.get(email='root@chamneul.local')
+print(sorted(u.role_assignments.values_list('role', flat=True)))"   # ['ADMIN']
+```
+
 이 행이 없으면 `IsAdmin`은 `is_superuser`로 통과시키지만, #43의 "마지막 관리자" 판정은 `UserRole` 행만 세므로 관리자 수가 0으로 계산된다.
 
 ### 2-3. 기동 확인
@@ -81,9 +108,11 @@ curl -i http://localhost:8000/healthz
 HTTP 200  (0.0075s)   {"status": "ok"}
 ```
 
-## 3. 사용자 여정 — 12단계 전항 통과
+## 3. 사용자 여정 — 15단계 전항 통과
 
-`curl`로 세 배우(사용자 / 조언가 / 관리자)의 세션을 **동시에** 유지하며 한 줄로 이어 통과시켰다. 각 단계는 직전 응답의 id를 다음 요청에 쓴다.
+`curl`로 세 배우(사용자 / 조언가 / 관리자)의 세션을 **동시에** 유지하며 한 줄로 이어 통과시켰다. 각 단계는 직전 응답의 id를 다음 요청에 쓴다. 스크립트: `SMOKE_ADMIN_PASSWORD='…' bash scripts/smoke-journey.sh`.
+
+> **최근 실행 2026-11-09 (SPEC-006 TASK-004)** — `down -v`로 비운 볼륨 → `migrate`(25개) → `createcachetable` → 관리자 부트스트랩 → **15단계 첫 실행에 전항 통과**. 1~12단계 결과는 아래 표와 같고, 13~15단계가 새로 붙었다. 출력에 실제 재설정 토큰 0개(스크립트가 읽어 쓰기만 하고 찍지 않는다).
 
 세션·CSRF 처리 방식:
 
@@ -117,6 +146,9 @@ curl -s -c user.jar -b user.jar -X POST \
 | 10b | 조언가 알림함 | **200** | 본문이 **고정 문구**(고민 요약 사본 아님) |
 | 11 | 역할 회수 (#43) | **204** | 직후 #20 → **403**, `roles=["USER"]` |
 | 12 | 로그아웃 (#4) | **200** | 직후 `/users/me` → **401**(서버 세션 삭제) |
+| 13 | 재설정 요청 (#45) → 콘솔 메일 링크 → 확정 (#46) | **200 → 200** | 같은 링크 재사용 **400**(한 번만), 옛 비밀번호 로그인 **401**, 새 비밀번호 로그인 **200** |
+| 14 | 고민 수정 (#47) | **200 → 409** | 배정 전 수정 반영, 배정(#24 201) 뒤 수정은 **409** `reason=NOT_EDITABLE` |
+| 15 | 로그인 한도 (#3) | **401×10 → 429** | 같은 주소 11번째에 **429**, `Retry-After: 3599`, `error.code=RATE_LIMITED` |
 
 ### 이번 실행에서 실제로 확인된 설계 판단 3건
 
@@ -166,7 +198,11 @@ docker compose stop db
 django.db.utils.OperationalError: failed to resolve host 'db': [Errno -2] Name or service not known
 ```
 
-**중요**: `/healthz`는 **DB 장애 중에도 200을 반환한다.** 이는 버그가 아니라 설계다 — [config/health.py](../config/health.py)의 주석이 명시하듯 liveness 프로브(앱 프로세스가 살아 있는가)이지 readiness 프로브(요청을 처리할 수 있는가)가 아니다. **운영 함의**: 로드밸런서가 `/healthz`만 보면 DB가 죽은 인스턴스에도 트래픽을 보낸다. DB 인지 readiness 프로브(`/healthz/db`)는 의도된 후속 과제다(§5 갭 7).
+**중요**: `/healthz`는 **DB 장애 중에도 200을 반환한다.** 이는 버그가 아니라 설계다 — [config/health.py](../config/health.py)의 주석이 명시하듯 liveness 프로브(앱 프로세스가 살아 있는가)이지 readiness 프로브(요청을 처리할 수 있는가)가 아니다. **운영 함의**: 로드밸런서가 `/healthz`만 보면 DB가 죽은 인스턴스에도 트래픽을 보낸다. 그래서 DB를 보는 readiness 프로브 **`/readyz`**(api.md #48, ADR-010)가 따로 있다 — 2026-11-07 실측: `docker compose stop db` 중 `/readyz` **503**·`/healthz` **200**, `start db` 직후 `/readyz` 200 복귀.
+
+```bash
+curl -s -w "  [%{http_code}]\n" http://localhost:8000/readyz   # DB 정상: {"status": "ok", "checks": {"database": "ok"}}  [200]
+```
 
 ### 4-3. DB를 다시 켰을 때 — 앱 재시작이 필요한가
 
@@ -192,17 +228,19 @@ docker compose start db      # healthy까지 6초
 
 | # | 갭 | 영향 | 처리 |
 | --- | --- | --- | --- |
-| 1 | **브루트포스 로그인 방어 부재** — IP·계정 기준 레이트 리밋 없음 | 비밀번호 대입 공격에 무방비. 로컬 전용이라 현재 노출 없음 | Phase 3 (`.claude/rules/security.md` 명시) |
-| 2 | **정적파일이 서빙되지 않는다** — `collectstatic`은 **빌드 때 수행된다**(`Dockerfile:31`). 문제는 ① bind mount `.:/app`(`docker-compose.yml`)이 이미지의 `/app/staticfiles`를 **가리고**, ② `DEBUG=False`에서 정적파일을 서빙할 주체(WhiteNoise·리버스프록시)가 없다는 것 | `DEBUG=False`에서 Django Admin CSS가 깨진다. API 응답에는 영향 없음 | Phase 3. *(2026-09-17 정정: 종전 서술 "collectstatic 없음"은 사실이 아니었다 — 원인이 틀리면 이미 있는 것을 다시 추가하게 된다)* |
-| 3 | **운영 경로(gunicorn + prod settings)를 한 번도 띄워보지 않았다** — override를 빼는 것만으로는 부족하다. `docker-compose.yml`이 `DJANGO_SETTINGS_MODULE: config.settings.local`을 **고정**하므로, override만 제거하면 `gunicorn + local settings`라는 어느 쪽도 아닌 조합이 된다. 진짜 운영 경로는 **둘 다** 필요하다: `docker compose -f docker-compose.yml up -d` + `DJANGO_SETTINGS_MODULE=config.settings.prod` 주입 | gunicorn 실기동·정적파일·HTTPS 리다이렉트가 전부 미검증 | Phase 3 |
+| 1 | ~~**브루트포스 로그인 방어 부재** — IP·계정 기준 레이트 리밋 없음~~ | **해소 (2026-11-04, SPEC-006 TASK-001)**: #2·#3·#45·#46에 요청 횟수 제한을 걸었다(IP 기준 + #3·#45는 계정 기준, api.md §1.10). 카운터는 공유 DB 캐시에 둔다. **남은 것**: 계정 기준 한도는 남이 일부러 다 써 버릴 수 있다 — 그 계정은 1시간 동안 로그인 429(잠금형 서비스 거부, 잠금보다는 약하다) | 해소 (잠금형 DoS 감수 — 실패만 세기·CAPTCHA는 Phase 3) |
+| 2 | ~~**정적파일이 서빙되지 않는다**~~ | **해소 (2026-11-07, SPEC-006 TASK-003)**: WhiteNoise(`SecurityMiddleware` 다음) + 해시·압축 저장소. 빌드 때의 `collectstatic`(`Dockerfile:31`)은 `manage.py` 기본값인 **local** 설정으로 돌기 때문에 저장소 설정은 base.py에 둔다 — prod에만 두면 이미지에 매니페스트가 없어 Admin이 500이다(반대 사례로 실측, 리뷰 노트 09 §3-2). 로컬 compose는 bind mount가 `/app/staticfiles`를 가리지만 `runserver`가 앱 폴더에서 직접 내주므로 문제없다 | — |
+| 3 | ~~**운영 경로(gunicorn + prod settings)를 한 번도 띄워보지 않았다**~~ | **해소 (2026-11-07, SPEC-006 TASK-003)**: compose를 고치지 않고 빌드한 이미지를 `docker run`으로 띄워 확인했다 — 파드 IP Host로 `/healthz`·`/readyz` 200, Admin CSS 200(gzip·1년 캐시), XFP https로 API 200, 평문 http 301, `check --deploy` 0 issues(절차·결과: 리뷰 노트 09 §3-4). **남은 것**: compose 안의 운영 경로(`-f docker-compose.yml` + prod 주입)는 여전히 Owner 영역이고 이번에 쓰지 않았다 | 해소 (compose 운영 프로필은 Phase 3 매니페스트와 함께) |
 | 4 | **고민 종료(`CLOSED`) 사용자 API 부재** | CLAUDE.md §6.6은 "사용자가 명시적으로 닫는다"고 서술하나 그 API가 없다. Phase 2는 **Django Admin으로만** 닫는다(Owner 결정 2026-09-16, D-4) | Phase 3 후보 |
 | 5 | **회수된 조언가의 배정 잔존** | 자격을 잃은 조언가의 배정이 남고 concern은 `ASSIGNED` 유지. #23 admin 상세에서 식별 가능하며 관리자가 #25로 해제한다 | 의도된 동작(SPEC-003 §7 결정 3) |
 | 6 | **실제 경합 미재현** | 잠금의 *존재*는 SQL 수준 테스트(`StateTransitionLockingTests`)로 고정했으나, 두 요청을 실제로 동시에 보내본 적은 없다 | Phase 3 (`TransactionTestCase` + 스레드) |
-| 7 | **DB 인지 readiness 프로브 부재** | §4-2 참조. `/healthz`가 DB 장애 중에도 초록 | Phase 3 (`/healthz/db`) |
+| 7 | ~~**DB 인지 readiness 프로브 부재**~~ | **해소 (2026-11-07, SPEC-006 TASK-002)** — `/readyz`(api.md #48, ADR-010). k8s readiness probe·ALB 헬스체크에는 `/readyz`, liveness probe에는 `/healthz`를 쓴다. compose healthcheck는 지금처럼 `/healthz`(Owner 영역, 바꿀지는 Phase 3 매니페스트와 함께 결정) | — |
 | 8 | **`DEBUG=True`에서 500이 전체 트레이스백 HTML** | 로컬 전용. 운영은 `DEBUG=False` 강제(§10) | 의도된 동작 |
 | 9 | ~~**`accounts`의 M4-1~M4-3 자동 테스트 0건**~~ | **해소 (2026-10-22, SPEC-005 TASK-001·002)**: 인증 회귀 테스트(#2·#3·#4·#7·#8·#9)와 Google OAuth 회귀 테스트(#5·#6)를 깔았다. OAuth는 mock 경계를 **네트워크(`urlopen`)**에 둬서 발급자·audience·이메일 인증 검증과 계정 연결 로직은 실제 코드가 돈다. **남은 것**: 진짜 Google과의 왕복 1회 — secret 회전(리뷰 노트 07 §3-5-1) 때 함께 확인한다 | 해소 (실제 Google 왕복만 남음) |
 | 10 | **로컬 로그에 살아 있는 재설정 토큰이 찍힌다** — local 설정은 메일을 콘솔로 보내므로, #45를 부르면 `docker compose logs app`에 재설정 링크(uid·token)가 그대로 남는다 | 그 로그를 이슈·채팅·AI 대화에 붙여넣으면 30분 안에 그 계정의 비밀번호를 바꿀 수 있다. **로그를 공유하기 전에 `token=` 이후를 가린다** | 의도된 동작(Phase 2 메일 = 콘솔, ADR-008) — 아래 §6 경고 |
-| 11 | **실행 진입점의 기본 설정이 `local`이다** — `manage.py`·`config/wsgi.py`의 기본값이 `config.settings.local`. 배포 때 `DJANGO_SETTINGS_MODULE` 지정을 빠뜨리면 운영이 `DEBUG=True` + 콘솔 메일로 돈다 | 로그 읽기 권한만으로 재설정 링크를 얻어 계정을 탈취할 수 있다(보안 리뷰 S-3) | **Phase 3 배포 체크리스트 1번** — 진입점 기본값을 prod로 바꾸거나 prod에서 콘솔 메일을 금지하는 검사 |
+| 11 | ~~**실행 진입점의 기본 설정이 `local`이다**~~ | **해소 (2026-11-07, SPEC-006 TASK-003)**: 두 가지를 다 했다. ① `config/wsgi.py`·`config/asgi.py` 기본값 → **prod**(`manage.py`는 개발용으로 local 유지). 지정을 빠뜨린 이미지는 워커가 `KeyError: 'DJANGO_SECRET_KEY'`로 뜨지 않는다(실측). ② prod는 `DJANGO_EMAIL_BACKEND`가 console·filebased이거나 `PASSWORD_RESET_URL`이 https가 아니면 `ImproperlyConfigured`로 기동을 거부한다 | — |
+| 12 | ~~**운영(`DEBUG=False`)에서 500의 원인이 로그에 남지 않는다**~~ | **해소 (2026-11-09, SPEC-006 TASK-003 후속, Owner 승인)**: `LOGGING`으로 모든 로그를 stderr 하나에. 5xx는 트레이스백과 함께 남고, 4xx는 액세스 로그에만 남는다(Django의 4xx WARNING 줄은 끔). 실제 이미지에서 테이블 없는 DB로 만든 500의 원인 `relation "django_session" does not exist`가 컨테이너 로그에 찍히는 것을 확인했다(리뷰 노트 09 §3-8) | — |
+| 13 | **gunicorn 26 기동마다 `[ERROR] Control server error: Permission denied: '/home/appuser'`** — gunicorn 25.1부터 제어 소켓을 `$HOME/.gunicorn/`에 만드는데, 이미지 사용자는 홈이 없다(`--no-create-home`) | 서비스는 정상. ERROR 로그에 알람을 걸면 매 기동이 오탐 | Owner 영역(Dockerfile `CMD`에 `--no-control-socket`) |
 
 ## 6. 운영 체크리스트
 
@@ -225,18 +263,30 @@ docker compose logs app 2>&1 | grep -iE "error|exception"
 >
 > `docker compose config`도 같은 이유로 공유 금지다 — `.env`의 시크릿을 평문으로 풀어 출력한다.
 
+### 요청 횟수 카운터 (로컬에서 429에 막혔을 때)
+
+```bash
+# 몇 개가 쌓였나 — 키는 HMAC이라 주소·IP 원문은 보이지 않는다
+docker compose exec -T db psql -U chamneul -d chamneul -c "SELECT count(*) FROM django_cache"
+# 전부 비운다 (로컬 전용 — 운영에서는 모든 사용자의 카운터가 함께 지워진다)
+docker compose exec app python manage.py shell -c "from django.core.cache import cache; cache.clear()"
+```
+
+로컬 compose는 호스트의 모든 요청이 **같은 IP**(Docker 게이트웨이)로 보인다. 브라우저·curl·스모크 스크립트가 IP 한도를 함께 쓰므로, 로그인을 1분에 20번 넘게 시도하면 다 같이 막힌다.
+
 ### DB 백업 (볼륨 삭제 전 필수)
 
 ```bash
-# 자격증명을 화면에 찍지 않고 컨테이너 환경변수를 그대로 쓴다
-docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
-  > ~/chamneul-backup-$(date +%Y%m%d).sql
+# 자격증명을 화면에 찍지 않고 컨테이너 환경변수를 그대로 쓴다.
+# umask 077: 덤프에는 비밀번호 해시와 살아 있는 세션이 들어 있다 — 나만 읽게(600) 만든다.
+(umask 077; docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
+  > ~/chamneul-backup-$(date +%Y%m%d).sql)
 
 # 검증: 정상 종료 마커가 있어야 한다
 grep -c "PostgreSQL database dump complete" ~/chamneul-backup-*.sql
 ```
 
-> **덤프를 저장소에 두지 말 것.** CLAUDE.md §10이 로컬 DB 덤프를 커밋 금지 대상으로 규정한다. 프로젝트 디렉터리 바깥에 둔다.
+> **덤프를 저장소에 두지 말 것.** CLAUDE.md §10이 로컬 DB 덤프를 커밋 금지 대상으로 규정한다. 프로젝트 디렉터리 바깥에 둔다. 다 쓴 덤프는 지운다(`rm ~/chamneul-backup-YYYYMMDD.sql`) — 로컬 개발 데이터라도 비밀번호 해시와 세션 키가 들어 있다.
 
 ### 복원
 
@@ -245,18 +295,49 @@ docker compose stop app          # 앱이 잡은 연결 때문에 --clean의 DRO
 cat ~/chamneul-backup-YYYYMMDD.sql | \
   docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 docker compose start app
+./.claude/mcp/setup-postgres-ro-role.sh   # 복원할 때마다 — 이유는 아래 표
 ```
 
 `ON_ERROR_STOP=1`이 없으면 **부분 복원이 성공처럼 보인다** — psql은 기본적으로 오류를 만나도 계속 진행한다.
 
+복원 뒤 읽기 전용 역할 확인(`f|f|0`이어야 한다 — 비밀번호 열 읽기 불가 · 세션 읽기 불가 · 자동 읽기 규칙 없음):
+
+```bash
+docker compose exec -T db sh -c 'psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT has_column_privilege('chamneul_ro', 'accounts_user', 'password', 'SELECT'),
+       has_table_privilege('chamneul_ro', 'django_session', 'SELECT'),
+       (SELECT count(*) FROM pg_default_acl);
+SQL
+```
+
+**빈 볼륨(`down -v` 뒤)에 복원할 때 — 순서가 있다 (2026-11-09 실측, SPEC-006 TASK-004).** 덤프에는 읽기 전용 MCP 역할(`chamneul_ro`)에 주는 권한 34줄이 들어 있다. 그런데 **역할 자체는 덤프에 없다**(역할은 DB가 아니라 클러스터에 속한다).
+
+| 순서 | 결과 |
+| --- | --- |
+| 역할 없이 바로 복원 | 데이터 21개 테이블은 다 들어간 뒤, 첫 `GRANT`에서 `ERROR: role "chamneul_ro" does not exist` → **exit 3**. 나머지 권한은 빠진 채 멈춘다 — 데이터는 보이는데 복원은 실패한 상태 |
+| 스크립트로 역할을 먼저 만들고 복원 | exit 0. 그러나 **읽기 전용 역할이 비밀번호 해시와 세션을 읽을 수 있게 됐다** — 예전 스크립트의 "새 테이블 자동 읽기 허용"이 복원으로 다시 만들어진 테이블 전부에 적용됐기 때문. *같은 날 그 규칙을 없앤 스크립트로 다시 재 보니, 옛 덤프를 복원해도 경계는 지켜졌다. 다만 옛 덤프가 끝부분에서 규칙을 되살린다* |
+| **맞는 순서** | `up -d` → `migrate` → `./.claude/mcp/setup-postgres-ro-role.sh` → 위 복원 → **스크립트 한 번 더** → `/mcp` Reconnect |
+
+마지막 재실행은 옛 덤프가 되살린 규칙을 회수하고 열 단위 권한을 다시 맞춘다. 확인은 바로 위의 `f|f|0`이다. 이 재실행은 빈 볼륨에서만이 아니라 **기존 DB에 복원할 때도** 똑같이 필요하다 — 옛 덤프는 어디에 복원하든 규칙을 되살린다.
+
 ### DB 안전 초기화
 
 ```bash
-docker compose down -v          # 볼륨 삭제
+docker compose down -v          # 볼륨 삭제 — 지우기 전에 위의 백업
 docker compose up -d
 docker compose exec app python manage.py migrate
+docker compose exec app python manage.py createcachetable   # 빠뜨리면 #2·#3·#45·#46만 500 (§2-1)
 docker compose exec -it app python manage.py createsuperuser
+./.claude/mcp/setup-postgres-ro-role.sh                     # 읽기 전용 MCP 역할 → /mcp Reconnect
 ```
+
+### 패키지가 바뀐 뒤 앱 다시 만들기
+
+```bash
+docker compose up -d --build -V app
+```
+
+`-V`(`--renew-anon-volumes`)가 없으면 예전 컨테이너의 익명 볼륨 `/app/.venv`가 새 컨테이너에 다시 붙어 **새 이미지의 패키지를 가린다**. 2026-11-07 WhiteNoise를 추가했을 때 실제로 `ModuleNotFoundError: No module named 'whitenoise'`로 앱이 멈췄다(리뷰 노트 09 §3-5).
 
 ### ⚠️ 화면 캡처 전 확인
 
@@ -284,7 +365,7 @@ docker compose exec app python manage.py migrate --check          # 미적용 �
 
 > **두 서비스 모두 `healthy`가 표시된다** (2026-09-17, Owner 승인 후 app healthcheck 추가). app은 `/healthz`를 10초 간격으로 호출하며 기동 유예 20초를 둔다.
 >
-> 다만 **app의 `healthy`는 "프로세스가 요청을 받는다"까지만 뜻한다** — `/healthz`는 DB를 건드리지 않는 liveness 프로브이므로 **DB가 죽어도 healthy가 유지된다**(§4-2). DB까지 포함한 판정은 여전히 `/healthz/db`(갭 7)가 필요하다.
+> 다만 **app의 `healthy`는 "프로세스가 요청을 받는다"까지만 뜻한다** — `/healthz`는 DB를 건드리지 않는 liveness 프로브이므로 **DB가 죽어도 healthy가 유지된다**(§4-2). DB까지 포함한 판정은 `/readyz`로 한다(갭 7 해소, 2026-11-07).
 
 ## 7. 재실행
 
